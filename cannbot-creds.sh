@@ -26,7 +26,10 @@ PERSONAL_API="https://cannbot.hicann.cn/cannbot/api/models/personal"
 GATEWAY_BASE="https://cannbot.hicann.cn/gateway/compatible-mode/v1"
 # 本地代理常驻地址（launchd: cn.hicann.cannbot-gateway-proxy），
 # 自行注入 JWT+VK；zcode 配置一律指向代理，不再烘真实凭证。
-PROXY_URL="${CANNBOT_PROXY_URL:-http://127.0.0.1:8484/v1}"
+# 端口默认读 install.sh 记录的运行时 port 文件，未安装或内容异常时退回 8484
+RECORDED_PORT="$(cat "$HOME/.local/share/cannbot-gateway-proxy/port" 2>/dev/null || echo 8484)"
+[[ "$RECORDED_PORT" =~ ^[0-9]+$ ]] || RECORDED_PORT=8484
+PROXY_URL="${CANNBOT_PROXY_URL:-http://127.0.0.1:${RECORDED_PORT}/v1}"
 # creds.json 含实时 JWT+VK，默认写到运行时目录（不进桌面源目录/版本库/同步盘）；
 # 需要落在别处时：CANNBOT_CREDS_FILE=/path/to/creds.json ./cannbot-creds.sh
 CREDS_DIR="${CANNBOT_CREDS_DIR:-$HOME/.local/share/cannbot-gateway-proxy}"
@@ -87,13 +90,15 @@ fi
 if [ -z "$VK" ]; then
   VK_RESP=$(curl -fsS -m 20 -H "Authorization: Bearer $JWT" "$VK_API" 2>/dev/null) || VK_RESP=""
   if [ -n "$VK_RESP" ]; then
-    VK=$(echo "$VK_RESP" | jq -r '.data.vk // empty')
-    VK_SRC="ai-keys"
+    # body 非 JSON 时 jq 失败不能带倒整个脚本（server.mjs 侧同场景有 .catch 容错）
+    VK=$(echo "$VK_RESP" | jq -r '.data.vk // empty' 2>/dev/null) || VK=""
+    [ -n "$VK" ] && VK_SRC="ai-keys"
   fi
 fi
 if [ -z "$VK" ] && [ -n "$LEGACY_RESP" ]; then
-  VK=$(echo "$LEGACY_RESP" | jq -r '[.data.personalModels[], .data.builtinModels[]][] | select(.apiKey) | .apiKey' | head -1)
-  VK_SRC="legacy apiKey"
+  # jq 内 first() 短路取首个 apiKey：jq|head 管道在大输出（>64KB 缓冲）时会触发 SIGPIPE（set -o pipefail 下 141 退出）
+  VK=$(echo "$LEGACY_RESP" | jq -r 'first([.data.personalModels[], .data.builtinModels[]][] | select(.apiKey != null) | .apiKey) // empty' 2>/dev/null) || VK=""
+  [ -n "$VK" ] && VK_SRC="legacy apiKey"
 fi
 [ -n "$VK" ] || die "没有取到 VK（auth.json / ai-keys 接口 / 遗留接口均未取到）"
 
@@ -113,7 +118,11 @@ msg "凭证有效 → ${CREDS}（${COUNT} 个模型，来源 ${MODELS_SRC}；VK 
 
 if [ "${1:-}" = "--sync-zcode" ]; then
   [ -f "$ZCODE_CONFIG" ] || die "未找到 $ZCODE_CONFIG"
-  cp "$ZCODE_CONFIG" "$ZCODE_CONFIG.bak-cannbot"
+  # 只在尚无备份时备份：重复运行 --sync-zcode 时若无条件覆盖，
+  # 会把「已指向代理」的配置备份成原始备份，uninstall --revert-configs 将回滚出死配置
+  if [ ! -f "$ZCODE_CONFIG.bak-cannbot" ]; then
+    cp "$ZCODE_CONFIG" "$ZCODE_CONFIG.bak-cannbot"
+  fi
   ZCODE_MODELS=$(echo "$MODELS_JSON" | jq 'map({key: .slug, value: {name: .title}}) | from_entries')
   TMP=$(mktemp)
   # 只替换 provider.cannbot 条目（指向本地代理，代理负责注入凭证），其余键一概不动

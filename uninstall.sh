@@ -40,6 +40,11 @@ if [ "${1:-}" = "--revert-configs" ]; then
       msg "已回滚 $target ← $(basename "$backup")"
     else
       msg "跳过 $target（无备份 $backup）"
+      # v2 的改接是手动做的（本仓库脚本从不写它的备份）：明确提示而非静默跳过
+      if [ "$target" = "$HOME/.zcode/v2/provider_config.json" ] && [ -f "$target" ] \
+        && grep -q '127.0.0.1' "$target" 2>/dev/null; then
+        msg "警告: $target 仍指向本地代理但无备份可回滚，请手动检查/改回 bigmodel"
+      fi
     fi
   done
   msg "注意: 回滚后 zcode CLI 回到接入前状态（glm provider → bigmodel 按量 key，无余额会报 429）"

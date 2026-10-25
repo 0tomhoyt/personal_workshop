@@ -23,6 +23,11 @@ RUNTIME_DIR="$HOME/.local/share/cannbot-gateway-proxy"
 msg()  { printf '[install] %s\n' "$*"; }
 die()  { printf '[install] 错误: %s\n' "$*" >&2; exit 1; }
 
+# 与 uninstall.sh/status.sh 同口径校验端口，避免把 "abc" 写进 port 文件后 python/node 才报错
+# 注意：错误文案里 $PORT 后不能紧跟全角括号（bash 3.2 会把「（」并进变量名报 unbound variable）
+[[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] \
+  || die "端口无效: ${PORT} —— 用法: ./install.sh [1-65535]，缺省 8484"
+
 # 1) 找 node（≥18，需要内置 fetch）
 NODE_BIN="$(command -v node || true)"
 [ -z "$NODE_BIN" ] && [ -x "$HOME/.hermes/node/bin/node" ] && NODE_BIN="$HOME/.hermes/node/bin/node"
@@ -33,35 +38,41 @@ msg "node: $NODE_BIN ($("$NODE_BIN" --version))"
 
 # 2) 先停掉旧实例（幂等；放在端口检查前，保证升级时能覆盖运行中的旧版本）
 launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
-sleep 1
+# 旧实例优雅退出最长 3s（server SIGTERM 有 keep-alive 连接时要等），
+# 等端口真正释放而不是固定 sleep 1，避免把「本服务旧实例」误报成「被非本服务进程占用」
+for _ in 1 2 3 4 5 6 7 8; do
+  lsof -i ":$PORT" -sTCP:LISTEN >/dev/null 2>&1 || break
+  sleep 1
+done
 
 # 3) 前置检查：凭证来源与端口
 SESSION_FILE="$HOME/.local/share/opencode/session.json"
 [ -f "$SESSION_FILE" ] || msg "警告: 暂未找到 $SESSION_FILE，服务可启动但在 CANNWork 登录前请求会返回 502"
 if lsof -i ":$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-  die "端口 $PORT 仍被非本服务进程占用（可传参换端口: ./install.sh 8485；lsof -i :$PORT 查占用者）"
+  die "端口 $PORT 被占用（可传参换端口: ./install.sh 8485；lsof -i :$PORT 查占用者）"
 fi
 
 # 4) 拷贝运行时副本 + 由模板生成本机 plist
-mkdir -p "$RUNTIME_DIR/logs"
+# plist 生成统一走 python plistlib：不受 sed 分隔符/`&` 转义困扰（家目录含 & 或 | 时 sed 会产出损坏路径）
+mkdir -p "$RUNTIME_DIR/logs" "$LAUNCH_DIR"
 echo "$PORT" > "$RUNTIME_DIR/port"   # 记录实际端口，供 uninstall.sh/status.sh 读取
 cp "$PROJECT_DIR/server.mjs" "$RUNTIME_DIR/server.mjs"
 if [ -f "$PROJECT_DIR/admin.html" ]; then
   cp "$PROJECT_DIR/admin.html" "$RUNTIME_DIR/admin.html"
 fi
-sed -e "s|__NODE_BIN__|$NODE_BIN|g" \
-    -e "s|__RUNTIME_DIR__|$RUNTIME_DIR|g" \
-    "$PROJECT_DIR/plist.template" > "$INSTALLED_PLIST"
-if [ "$PORT" != "8484" ]; then
-  # 非默认端口时注入环境变量
-  python3 - "$INSTALLED_PLIST" "$PORT" <<'EOF'
+python3 - "$PROJECT_DIR/plist.template" "$INSTALLED_PLIST" "$NODE_BIN" "$RUNTIME_DIR" "$PORT" <<'EOF'
 import sys, plistlib
-plist, port = sys.argv[1], int(sys.argv[2])
-with open(plist, 'rb') as f: d = plistlib.load(f)
-d['EnvironmentVariables'] = {'CANNBOT_PROXY_PORT': str(port)}
-with open(plist, 'wb') as f: plistlib.dump(d, f)
+tpl, out, node_bin, runtime_dir, port = sys.argv[1:6]
+with open(tpl, 'rb') as f: d = plistlib.load(f)
+args = d['ProgramArguments']
+args[0] = node_bin
+args[1] = runtime_dir + '/server.mjs'
+for k in ('StandardOutPath', 'StandardErrorPath', 'WorkingDirectory'):
+    d[k] = d[k].replace('__RUNTIME_DIR__', runtime_dir)
+if port != '8484':
+    d.setdefault('EnvironmentVariables', {})['CANNBOT_PROXY_PORT'] = port
+with open(out, 'wb') as f: plistlib.dump(d, f)
 EOF
-fi
 
 # 5) 加载并启动
 launchctl bootstrap "gui/$(id -u)" "$INSTALLED_PLIST"
@@ -74,5 +85,7 @@ if curl -fsS -m 10 "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1; then
   msg "运行时目录: ${RUNTIME_DIR}（日志在其 logs/ 与 proxy.log）"
   msg "停用: ./uninstall.sh"
 else
-  die "服务启动后健康检查未通过，请查看 $RUNTIME_DIR/logs/proxy.err.log"
+  # 健康检查失败先撤掉刚加载的任务：KeepAlive 会每 10s 无限重启一个起不来的服务
+  launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+  die "服务启动后健康检查未通过（已停止自动重试），请查看 $RUNTIME_DIR/logs/proxy.err.log"
 fi

@@ -53,7 +53,13 @@ if not health_raw:
     print(f"{RED}✗ 服务不可用{RESET}")
     sys.exit(1)
 
-h = json.loads(health_raw)
+# 端口被其他 HTTP 服务占用时会返回非 JSON（如 HTML），按无响应分支处理而不是抛 traceback
+try:
+    h = json.loads(health_raw)
+except (json.JSONDecodeError, ValueError):
+    print(f"  接口    {RED}http://127.0.0.1:{port} 返回了非 JSON 响应（端口可能被其他服务占用）{RESET}")
+    print(f"{RED}✗ 服务不可用{RESET}")
+    sys.exit(1)
 print(f"  接口    http://127.0.0.1:{port}/v1  {DIM}→ cannbot.hicann.cn{RESET}")
 up = h.get("uptimeSec", 0)
 up_h = f"{up//3600}小时{up%3600//60}分" if up >= 3600 else (f"{up//60}分{up%60}秒" if up >= 60 else f"{up}秒")
@@ -75,7 +81,14 @@ else:
     print(f"          {YELLOW}→ 处理：打开 VSCode 的 CANNWork 扩展重新登录，无需重启代理{RESET}")
 
 vk = f"{GREEN}已缓存{RESET}" if h.get("vkCached") else f"{YELLOW}未换取{RESET}"
-print(f"  VK      {vk}{DIM + ('，' + h['vkCachedAt'][11:16] + ' 换取' if h.get('vkCachedAt') else '')}{RESET}")
+vk_at = ""
+if h.get("vkCachedAt"):
+    # vkCachedAt 是 UTC ISO 串，直接 slice 会显示成 UTC 时间；解析后转本地时区
+    try:
+        vk_at = "，" + datetime.datetime.fromisoformat(h["vkCachedAt"].replace("Z", "+00:00")).astimezone().strftime("%H:%M") + " 换取"
+    except (ValueError, TypeError):
+        pass
+print(f"  VK      {vk}{DIM + vk_at + RESET if vk_at else RESET}")
 models = h.get("modelsKnown")
 if models:
     print(f"  模型    {models} 个（curl http://127.0.0.1:{port}/v1/models 查看）")

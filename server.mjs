@@ -25,7 +25,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { Readable, Transform } from 'node:stream';
+import { Readable, Transform, pipeline } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import { randomBytes } from 'node:crypto';
 
 const PORT = Number(process.env.CANNBOT_PROXY_PORT || 8484);
@@ -41,6 +42,10 @@ const VK_CACHE = path.join(SCRIPT_DIR, 'vk-cache.json');
 const LOG_FILE = path.join(SCRIPT_DIR, 'proxy.log');
 const MODELS_TTL = 10 * 60 * 1000;
 const MAX_BODY = 64 * 1024 * 1024;
+// 上游建连/整体超时，仅用于 VK/模型列表这类小 JSON 接口（超时覆盖整个 fetch 是安全的）。
+// 网关转发不能用：DOM 风格的 timeout signal 会把正在流动的流式 body 一并掐断，
+// 长生成流靠 undici 内置的 headersTimeout/bodyTimeout（默认各 300s 空闲）兜底防挂起。
+const UPSTREAM_TIMEOUT_MS = 120_000;
 const LOG_MAX_BYTES = 5 * 1024 * 1024; // proxy.log 超过此大小轮转为 proxy.log.1（保留一份）
 // 从 /v1/models 列表隐藏的模型（逗号分隔，可被环境变量覆盖；缺省不隐藏任何模型）
 const EXCLUDE_MODELS = new Set((process.env.CANNBOT_EXCLUDE_MODELS ?? '').split(',').filter(Boolean));
@@ -172,6 +177,7 @@ function readVkAuthJson() {
 async function fetchVkApi(jwt) {
   const res = await fetch(`${GATEWAY}/cannbot/api/ai-keys/vk/my`, {
     headers: { authorization: `Bearer ${jwt}` },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   });
   if (!res.ok) return null;
   const data = (await res.json().catch(() => null))?.data;
@@ -193,7 +199,7 @@ async function fetchModelsList(jwt) {
   const url = new URL(`${GATEWAY}/cannbot/api/models/list`);
   url.searchParams.set('page', '1');
   url.searchParams.set('size', '100');
-  const res = await fetch(url, { headers: { authorization: `Bearer ${jwt}` } });
+  const res = await fetch(url, { headers: { authorization: `Bearer ${jwt}` }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
   if (!res.ok) return null;
   const body = await res.json().catch(() => null);
   const items = (Array.isArray(body?.models) ? body.models : []).filter((m) => m?.model && m.status === 1);
@@ -205,6 +211,7 @@ async function fetchModelsList(jwt) {
 async function fetchModelsPersonal(jwt) {
   const res = await fetch(`${GATEWAY}/cannbot/api/models/personal`, {
     headers: { authorization: `Bearer ${jwt}` },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   });
   if (!res.ok) return null;
   const body = await res.json().catch(() => null);
@@ -278,6 +285,8 @@ async function gatewayRequest(pathSuffix, { method = 'POST', headers = {}, body 
   const h = { authorization: `Bearer ${jwt}`, 'x-api-vkey': await getVk(jwt, userId), ...headers };
   const send = async () => {
     const tFetch = performance.now();
+    // 不带整体超时 signal：它会中止正在流动的流式 body，杀死长生成流。
+    // 挂起保护交给 undici 默认的 headersTimeout/bodyTimeout（各 300s 空闲超时）。
     const res = await fetch(`${GW_API}${pathSuffix}`, { method, headers: h, body });
     fetchStart.set(res, tFetch);
     return res;
@@ -286,6 +295,8 @@ async function gatewayRequest(pathSuffix, { method = 'POST', headers = {}, body 
   // 仅 401 视为 VK 失效自动重取重试；403（如 "Model not allowed"）是账号级权限问题，
   // 重取 VK 无济于事，直接透传给客户端。
   if (up.status === 401) {
+    // 丢弃 401 响应的 body，避免占住 undici 连接直到 GC
+    up.body?.cancel().catch(() => {});
     log(`401 → 刷新 VK 重试 ${method} ${pathSuffix}`);
     h['x-api-vkey'] = await getVk(jwt, userId, true);
     up = await send();
@@ -373,7 +384,10 @@ function outputWeight(j) {
 
 async function forward(req, res, urlPath, bodyBuf) {
   const t0 = Date.now();
-  const upstreamPath = urlPath.replace(/^\/v1/, '') || '/';
+  // 保留 query string（此前 split('?') 后被丢弃，?api-version= 等参数到不了上游）
+  const qIdx = req.url.indexOf('?');
+  const query = qIdx === -1 ? '' : req.url.slice(qIdx);
+  const upstreamPath = (urlPath.replace(/^\/v1/, '') || '/') + query;
   const headers = { 'content-type': req.headers['content-type'] ?? 'application/json' };
   if (req.headers.accept) headers.accept = req.headers.accept;
   const upstreamBody = req.method === 'GET' || req.method === 'HEAD' ? undefined : withStreamUsage(urlPath, bodyBuf);
@@ -414,6 +428,8 @@ async function forward(req, res, urlPath, bodyBuf) {
     let tap;
     if (ct.includes('text/event-stream')) {
       // SSE：逐行扫描 data: 帧，抓 usage 与输出 token 的到达时间（解码速度用）
+      // StringDecoder 保证多字节 UTF-8 字符跨 chunk 边界时不被拆坏
+      const dec = new StringDecoder('utf8');
       let lineBuf = '';
       const absorbSse = (line) => {
         if (!line.startsWith('data:')) return;
@@ -432,7 +448,7 @@ async function forward(req, res, urlPath, bodyBuf) {
       tap = new Transform({
         transform(chunk, enc, cb) {
           st.bytesOut += chunk.length;
-          lineBuf += chunk.toString('utf8');
+          lineBuf += dec.write(chunk);
           let idx;
           while ((idx = lineBuf.indexOf('\n')) !== -1) {
             const line = lineBuf.slice(0, idx).trim();
@@ -441,7 +457,7 @@ async function forward(req, res, urlPath, bodyBuf) {
           }
           cb(null, chunk);
         },
-        flush(cb) { absorbSse(lineBuf.trim()); finishStats(); cb(); },
+        flush(cb) { absorbSse(lineBuf.trim() + dec.end()); finishStats(); cb(); },
       });
     } else {
       // JSON：整体收集后解析 usage；超过 4MB 改为从末尾 64KB 窗口正则提取 usage，
@@ -452,6 +468,7 @@ async function forward(req, res, urlPath, bodyBuf) {
       let collected = 0;
       let overflowed = false;
       let tail = '';
+      const dec = new StringDecoder('utf8');
       tap = new Transform({
         transform(chunk, enc, cb) {
           st.bytesOut += chunk.length;
@@ -459,7 +476,7 @@ async function forward(req, res, urlPath, bodyBuf) {
             if (collected + chunk.length <= SCAN_MAX) { chunks.push(chunk); collected += chunk.length; }
             else overflowed = true;
           }
-          if (overflowed) tail = (tail + chunk.toString('utf8')).slice(-TAIL_WINDOW);
+          if (overflowed) tail = (tail + dec.write(chunk)).slice(-TAIL_WINDOW);
           cb(null, chunk);
         },
         flush(cb) {
@@ -468,8 +485,19 @@ async function forward(req, res, urlPath, bodyBuf) {
             if (!overflowed) {
               usage = JSON.parse(Buffer.concat(chunks).toString('utf8')).usage;
             } else {
-              const m = tail.match(/"usage"\s*:\s*(\{[^{}]*\})/);
-              if (m) usage = JSON.parse(m[1]);
+              // 末尾窗口里找 usage：从最后一个 "usage": 起取到文本末尾的平衡对象，
+              // 兼容嵌套（如 completion_tokens_details: {...}）
+              const at = tail.lastIndexOf('"usage"');
+              if (at !== -1) {
+                const brace = tail.indexOf('{', at);
+                if (brace !== -1) {
+                  let depth = 0;
+                  for (let i = brace; i < tail.length; i++) {
+                    if (tail[i] === '{') depth++;
+                    else if (tail[i] === '}') { depth--; if (!depth) { usage = JSON.parse(tail.slice(brace, i + 1)); break; } }
+                  }
+                }
+              }
             }
             if (usage) {
               st.tin = usage.prompt_tokens ?? 0;
@@ -481,8 +509,21 @@ async function forward(req, res, urlPath, bodyBuf) {
         },
       });
     }
-    tap.on('close', finishStats); // 客户端中途断开也计入
-    Readable.fromWeb(up.body).pipe(tap).pipe(res);
+    // pipeline：上游流错误/客户端断开都会走回调，不会变成 uncaughtException；
+    // 客户端断开时 res 先关，up.body 随之 cancel，不再悬挂上游连接
+    const upstreamReadable = Readable.fromWeb(up.body);
+    let clientGone = false;
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        clientGone = true;
+        upstreamReadable.destroy();
+      }
+      finishStats(); // 客户端中途断开也计入
+    });
+    pipeline(upstreamReadable, tap, res, (err) => {
+      if (err && !clientGone) log(`透传流中断: ${err.message}`);
+      finishStats();
+    });
   }
   log(`${req.method} ${upstreamPath} model=${st.model} → ${up.status} ${Date.now() - t0}ms`);
 }
@@ -670,8 +711,9 @@ async function pipeAnthropicStream(res, upBody, model, thinkingRequested, bytesI
       openBlock = null;
     }
   };
-  const ensureBlock = (type, block) => {
-    if (openBlock?.type === type) return openBlock.index;
+  const ensureBlock = (type, block, forceNew = false) => {
+    // forceNew：tool_use 等每实例一块的类型，即便与当前 open 块同类型也要新开
+    if (!forceNew && openBlock?.type === type) return openBlock.index;
     closeBlock();
     startMessage();
     const index = nextIndex++;
@@ -708,7 +750,9 @@ async function pipeAnthropicStream(res, upBody, model, thinkingRequested, bytesI
         const key = tc.index ?? 0;
         let st = toolStates.get(key);
         if (!st) {
-          const idx = ensureBlock('tool_use', { type: 'tool_use', id: tc.id ?? `toolu_${randHex()}`, name: tc.function?.name ?? '', input: {} });
+          // 每个工具调用各占一个 content_block：不做 type 级去重，
+          // 否则并行多工具时第二个工具的 name/id 丢失、参数灌进第一个块
+          const idx = ensureBlock('tool_use', { type: 'tool_use', id: tc.id ?? `toolu_${randHex()}`, name: tc.function?.name ?? '', input: {} }, true);
           st = { index: idx };
           toolStates.set(key, st);
         }
@@ -722,10 +766,16 @@ async function pipeAnthropicStream(res, upBody, model, thinkingRequested, bytesI
   };
 
   // 解析上游 SSE：按帧切分，取 data: 行
+  // StringDecoder 保证多字节 UTF-8 字符跨 chunk 边界时不被拆坏（否则中文输出出现 U+FFFD 乱码）
+  const dec = new StringDecoder('utf8');
   let buffer = '';
+  // 客户端断开时停止拉上游流：继续消费只会白烧上游配额
+  let clientGone = false;
+  res.on('close', () => { if (!res.writableEnded) clientGone = true; });
   try {
     for await (const chunk of upBody) {
-      buffer += Buffer.from(chunk).toString('utf8');
+      if (clientGone) break;
+      buffer += dec.write(Buffer.from(chunk));
       let sep;
       while ((sep = buffer.search(/\r?\n\r?\n/)) !== -1) {
         const frame = buffer.slice(0, sep);
@@ -741,6 +791,7 @@ async function pipeAnthropicStream(res, upBody, model, thinkingRequested, bytesI
       }
     }
     // 冲刷残余帧
+    buffer += dec.end();
     for (const line of buffer.split(/\r?\n/)) {
       const m = line.match(/^data:\s*(.*)$/);
       if (!m) continue;
@@ -760,6 +811,11 @@ async function pipeAnthropicStream(res, upBody, model, thinkingRequested, bytesI
     return;
   }
 
+  if (clientGone) {
+    // 客户端已断开：不再补事件序列，按中断记账
+    recordStats({ model, status: 499, ms: Date.now() - t0, bytesIn, tin: usage?.prompt_tokens ?? 0, tout: usage?.completion_tokens ?? 0, perf: streamPerf() });
+    return;
+  }
   try {
     startMessage();
     closeBlock();
@@ -827,10 +883,14 @@ function sendJson(res, status, obj) {
   res.end(buf);
 }
 
-// DNS-rebinding 防护：状态变更端点要求 Host 为本机回环地址
+// DNS-rebinding / 跨站防护：要求 Host 为本机回环地址，且浏览器发起的跨站请求
+// （sec-fetch-site 不为 same-origin/none）一律拒绝——挡住恶意网页 drive-by POST 本地端点
 function isLocalHost(req) {
   const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
-  return host === '127.0.0.1' || host === 'localhost' || host === '[::1]' || host === '';
+  if (host !== '127.0.0.1' && host !== 'localhost' && host !== '[::1]') return false;
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none' && site !== 'same-site') return false;
+  return true;
 }
 
 const ADMIN_HTML = path.join(SCRIPT_DIR, 'admin.html');
@@ -1000,7 +1060,17 @@ function observeStream(tFetch, marks, tout, tEnd) {
 let stats = (() => {
   try {
     const d = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
-    if (d && d.days) return d;
+    if (d && d.days) {
+      // JSON.parse 产出的对象带原型：把 models 重建为无原型对象，防 "__proto__" 键污染（与 recordStats 一致）
+      for (const day of Object.values(d.days)) {
+        if (day?.models && typeof day.models === 'object') {
+          const clean = Object.create(null);
+          for (const [k, v] of Object.entries(day.models)) clean[k] = v;
+          day.models = clean;
+        }
+      }
+      return d;
+    }
   } catch {}
   return { version: 1, days: {} };
 })();
@@ -1024,7 +1094,12 @@ const dayKey = (d = new Date()) => {
 
 function recordStats({ model = '-', status = 0, ms = 0, bytesIn = 0, bytesOut = 0, tin = 0, tout = 0, perf = null }) {
   const now = new Date();
-  const day = (stats.days[dayKey(now)] ??= { total: emptyBucket(), models: {}, hours: Array.from({ length: 24 }, () => ({ req: 0, tin: 0, tout: 0 })) });
+  // models 键来自客户端请求体的 model 字段，用无原型对象防 "__proto__"/"constructor" 污染
+  const day = (stats.days[dayKey(now)] ??= {
+    total: emptyBucket(),
+    models: Object.create(null),
+    hours: Array.from({ length: 24 }, () => ({ req: 0, tin: 0, tout: 0 })),
+  });
   const bad = status >= 400;
   for (const b of [day.total, (day.models[model] ??= emptyBucket())]) {
     b.req++;
@@ -1110,6 +1185,11 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // /admin/* 全部要求本机回环 Host + 非跨站（日志/统计里含模型名、用量与聊天片段，不能被 rebinding 域名读走）
+    if (url.startsWith('/admin/') && !isLocalHost(req)) {
+      return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问管理端点', type: 'forbidden' } });
+    }
+
     if (url === '/admin/log') {
       return sendJson(res, 200, { lines: tailLog(80) });
     }
@@ -1134,7 +1214,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url === '/admin/stats') {
-      const today = stats.days[dayKey()] ?? { total: emptyBucket(), models: {}, hours: [] };
+      const today = stats.days[dayKey()] ?? { total: emptyBucket(), models: Object.create(null), hours: [] };
       const weekKeys = Object.keys(stats.days).sort().slice(-7);
       const models = Object.entries(today.models)
         .map(([id, b]) => ({ id, ...b }))
@@ -1182,6 +1262,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+server.on('error', (e) => {
+  log(`HTTP 服务启动失败: ${e.message}（端口 ${PORT} 被占用？换端口: ./install.sh <其他端口>）`);
+  process.exit(1);
+});
 server.listen(PORT, HOST, () => {
   log(`cannbot-gateway-proxy 就绪: http://${HOST}:${PORT}/v1 → ${GW_API}（含 Anthropic /v1/messages 翻译）`);
 });

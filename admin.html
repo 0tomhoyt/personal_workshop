@@ -223,6 +223,8 @@
 const $ = (id) => document.getElementById(id);
 const fmtDur = (s) => s >= 3600 ? `${s/3600|0}时${s%3600/60|0}分` : s >= 60 ? `${s/60|0}分${s%60}秒` : `${s}秒`;
 let models = [];
+// 转义进 HTML 文本/属性：模型名来自上游或请求体，不可信
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 async function jf(url, opt) { const r = await fetch(url, opt); return r.json(); }
 
@@ -246,7 +248,7 @@ function render(h) {
     $('jwtBanner').style.display = 'block';
   }
   $('cVk').textContent = h.vkCached
-    ? '已缓存' + (h.vkCachedAt ? `（${h.vkCachedAt.slice(11,16)} 换取）` : '') + (h.vkSource ? ` · 来源 ${h.vkSource}` : '')
+    ? '已缓存' + (h.vkCachedAt ? `（${new Date(h.vkCachedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 换取）` : '') + (h.vkSource ? ` · 来源 ${h.vkSource}` : '')
     : '未换取';
   const q = h.vkQuota;
   const allowN = q?.modelAllowList ? q.modelAllowList.split(',').filter(Boolean).length : 0;
@@ -259,16 +261,34 @@ async function loadModels() {
   try {
     const d = await jf('/v1/models');
     models = d.data || [];
-    $('models').innerHTML = models.map(m =>
-      `<span class="chip" onclick="pick('${m.id}')" title="${(m.title || '').replace(/"/g,'&quot;')}">${m.id}</span>`).join('');
+    // DOM API 构建 chips/option：模型 id 来自上游，不走字符串拼接 onclick（防引号/尖括号注入）
+    const wrap = $('models');
+    wrap.innerHTML = '';
+    for (const m of models) {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.textContent = m.id;
+      if (m.title) chip.title = m.title;
+      chip.onclick = () => pick(m.id);
+      wrap.appendChild(chip);
+    }
     const sel = $('model');
-    sel.innerHTML = models.map(m => `<option>${m.id}</option>`).join('');
+    sel.innerHTML = '';
+    for (const m of models) {
+      const opt = document.createElement('option');
+      opt.textContent = m.id;
+      sel.appendChild(opt);
+    }
     if (models.some(m => m.id === 'glm-5.3-flash')) sel.value = 'glm-5.3-flash';
   } catch { $('models').innerHTML = '<span class="dim">加载失败</span>'; }
 }
 function pick(id) { $('model').value = id; $('model').scrollIntoView({block:'nearest'}); }
 
+// 轮询序号守卫：poll 可与 bench 末尾/重启后的手动 poll 重叠，
+// 慢的旧响应后到时不覆盖新一轮已渲染的新数据
+let pollSeq = 0;
 async function poll() {
+  const seq = ++pollSeq;
   try {
     render(await jf('/healthz'));
   } catch {
@@ -276,6 +296,7 @@ async function poll() {
     $('sState').textContent = '● 无响应'; $('sState').className = 'bad';
   }
   const r = await fetch('/admin/log').then(r => r.json()).catch(() => null);
+  if (seq !== pollSeq) return;
   if (r && r.lines) {
     $('log').innerHTML = r.lines.map(l => {
       l = l.replace(/&/g,'&amp;').replace(/</g,'&lt;');
@@ -286,7 +307,7 @@ async function poll() {
     $('log').scrollTop = $('log').scrollHeight;
   }
   const s = await fetch('/admin/stats').then(r => r.json()).catch(() => null);
-  if (s) renderStats(s);
+  if (seq === pollSeq && s) renderStats(s);
 }
 
 const fmtTok = (n) => n == null ? '–' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e4 ? (n/1e3).toFixed(1)+'k' : String(n);
@@ -497,7 +518,7 @@ function drawStats() {
   $('mtbl').innerHTML =
     '<tr><th>模型</th><th>请求</th><th>错误</th><th>输入 tok</th><th>输出 tok</th><th>平均耗时</th></tr>' +
     (models.length ? models.map((m) =>
-      `<tr><td>${m.id}</td><td>${m.req}</td>` +
+      `<tr><td>${esc(m.id)}</td><td>${m.req}</td>` +
       `<td class="${m.err ? 'bad' : 'dim'}">${m.err || '0'}</td>` +
       `<td>${fmtTok(m.tin)}</td><td>${fmtTok(m.tout)}</td>` +
       `<td class="dim">${m.req ? Math.round(m.ms / m.req) + 'ms' : '–'}</td></tr>`
@@ -530,7 +551,7 @@ function drawStats() {
       const scoreCell = score == null
         ? '<td class="score dim">–</td>'
         : `<td class="score" title="${tip}"><b>${score}</b><span class="scorebar"><i style="width:${score}%"></i></span></td>`;
-      return `<tr class="${best ? 'best' : ''}"><td>${m.id}</td>${scoreCell}<td>${p.ttft.n}</td>` +
+      return `<tr class="${best ? 'best' : ''}"><td>${esc(m.id)}</td>${scoreCell}<td>${p.ttft.n}</td>` +
         cell(p.ttft) + `<td title="n=${p.ttft.n}">${q(p.ttft, 0.99)}</td>` +
         `<td title="${p.dn || 0} 次计入解码速度">${fmtSpeed(p.dtok, p.dms)}</td>` +
         cell(p.tpot) + `<td>${q(p.tpot, 0.99)}</td>` +
@@ -553,8 +574,6 @@ function longPrompt() {
   while (s.length < 6000) s += LONG_PAD;
   return s + '\n' + SHORT_PROMPT;
 }
-
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 async function streamOnce(model, content) {
   const r = await fetch('/v1/chat/completions', {
@@ -620,7 +639,7 @@ function renderStats(s) { lastStats = s; drawStats(); }
 $('btnTest').onclick = async () => {
   const model = $('model').value;
   const box = $('result'); box.hidden = false;
-  box.innerHTML = `<span class="dim">向 ${model} 发送流式测试…</span>`;
+  box.innerHTML = `<span class="dim">向 ${esc(model)} 发送流式测试…</span>`;
   const t0 = Date.now();
   try {
     const r = await fetch('/v1/chat/completions', {
@@ -629,7 +648,8 @@ $('btnTest').onclick = async () => {
         messages: [{ role: 'user', content: '用一句话介绍你自己' }] }),
     });
     if (!r.ok || !r.body) {
-      box.innerHTML = `<span class="bad">失败：</span>${(await r.text()).slice(0, 400)}`;
+      // 上游错误体可能回显请求内容/带 HTML，转义后再插入
+      box.innerHTML = `<span class="bad">失败：</span>${esc((await r.text()).slice(0, 400))}`;
       return;
     }
     const reader = r.body.getReader();
@@ -652,8 +672,8 @@ $('btnTest').onclick = async () => {
         } catch {}
       }
     }
-    box.innerHTML = `模型 <b>${model}</b> · ${Date.now()-t0}ms（流式）\n回复：<b>${text.replace(/</g,'&lt;') || '(空，可能都在 reasoning 里)'}</b>\n<span class="dim">性能样本已记入「模型性能」，几秒内刷新。</span>`;
-  } catch (e) { box.innerHTML = `<span class="bad">请求异常：</span>${e}`; }
+    box.innerHTML = `模型 <b>${esc(model)}</b> · ${Date.now()-t0}ms（流式）\n回复：<b>${esc(text) || '(空，可能都在 reasoning 里)'}</b>\n<span class="dim">性能样本已记入「模型性能」，几秒内刷新。</span>`;
+  } catch (e) { box.innerHTML = `<span class="bad">请求异常：</span>${esc(e.message || e)}`; }
 };
 
 $('btnRestart').onclick = async () => {
