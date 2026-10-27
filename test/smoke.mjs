@@ -621,6 +621,10 @@ try {
     check('PATCH 清空可选字段 project → 200', p2.status === 200 && !(await p2.json()).todo?.project);
     const p404 = await fetch(`${GW}/v1/todos/no-such-id`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ title: 'x' }) });
     check('PATCH 不存在的 id → 404', p404.status === 404);
+    // 控制字符 id 的 404 文案：剥控制字符后给可读占位（不再显示成空白「待办  不存在」）
+    const ctrl404 = await fetch(`${GW}/v1/todos/%00`, { method: 'DELETE', headers: authHeaders });
+    const ctrlMsg = (await ctrl404.json()).error?.message || '';
+    check('控制字符 id → 404 且文案可读（无空白拼接）', ctrl404.status === 404 && ctrlMsg.includes('不可显示') && !/待办\s{2,}/.test(ctrlMsg), ctrlMsg);
     check('PATCH 超长 title（501 码位）→ 400', (await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ title: '😀'.repeat(501) }) })).status === 400);
     check('PATCH 非法 urgency → 400', (await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ urgency: '高' }) })).status === 400);
     const pNoAuth = await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'x' }) });
