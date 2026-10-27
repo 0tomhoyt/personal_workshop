@@ -101,6 +101,7 @@ const server = http.createServer(async (req, res) => {
 
   if (url === '/oai/v1/chat/completions') {
     if (auth !== `Bearer ${OAI_TOKEN}`) return json(res, 401, { error: { message: 'bad token', type: 'authentication_error' } });
+    if (body.model === 'mock-500') return json(res, 500, { error: { message: 'mock 上游 5xx 演练' } }); // 报告失败口径测试用
     const echo = ECHO(openaiEcho(body, auth));
     if (!body.stream) {
       return json(res, 200, openaiChatResult(echo, body.model, { prompt_tokens: 9, completion_tokens: 12, prompt_tokens_details: { cached_tokens: 5 } }));

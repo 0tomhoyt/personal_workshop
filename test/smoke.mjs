@@ -1054,6 +1054,34 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('空素材+源失败：done 且未调模型（model=none）', emptyDone.state === 'done' && emptyRep.model === 'none' && emptyRep.provider === 'none', JSON.stringify({ s: emptyDone.state, m: emptyRep.model }));
     check('空素材+源失败：文案明确采集失败、结论不可信（不写「无记录」）', emptyRep.report.includes('素材采集失败') && emptyRep.report.includes('不可作为汇报依据') && !emptyRep.report.includes('未检索到可用的工作记录') && emptyRep.materials?.sourcesFailed?.length === 2, String(emptyRep.report).slice(0, 160));
 
+    // 上游失败文案三口径（连接失败 / HTTP 非 2xx / 超时）：有素材窗口 + 断上游 → job failed 文案分口径
+    const cfg0 = readCfg();
+    const failWith = async (mut) => {
+      const d = structuredClone(cfg0);
+      mut(d);
+      writeCfg(d);
+      await sleep(600); // mtime 热加载
+      await post('/admin/report/generate', WIN);
+      return await waitJob('failed');
+    };
+    let fj = await failWith((d) => {
+      const p = d.providers.find((x) => x.id === 'mock-oai');
+      p.baseUrl = 'http://127.0.0.1:1/dead';
+      p.models = { source: 'static', list: [{ id: 'mock-pro' }] }; // 静态目录：模型解析不联网，失败点落在上游调用
+    });
+    check('失败口径：连接失败（含 cause、无英文 aborted）', (fj.error || '').startsWith('上游 mock-oai 连接失败（') && !/aborted/i.test(fj.error || ''), fj.error);
+    fj = await failWith((d) => {
+      const p = d.providers.find((x) => x.id === 'mock-oai');
+      p.models = { source: 'static', list: [{ id: 'mock-pro' }, { id: 'mock-500' }] };
+      d.workbench.reportModel = 'mock-500'; // mock 上游对该 model 回 500
+    });
+    check('失败口径：HTTP 非 2xx（返回 HTTP <状态码>）', /上游 mock-oai 返回 HTTP 500/.test(fj.error || ''), fj.error);
+    // 超时口径：requestUpstream 的 AbortError 在 callSummaryModel 换成中文——源码层断言（跑一次 120s 超时太慢）
+    const genSrc = fs.readFileSync(path.join(ROOT, 'lib/report/generate.mjs'), 'utf8');
+    check('失败口径：超时中文文案（请求超时（Ns））', genSrc.includes('请求超时（') && genSrc.includes('AbortError'));
+    writeCfg(cfg0); // 还原配置
+    await sleep(600);
+
     // 四源全部采集成功但该窗口无会话 → 走「无记录」固定成稿（另起实例指到 fixture 库，未来窗口 0 会话）
     {
       const gwEmpty = spawnNode([path.join(ROOT, 'server.mjs')], {
