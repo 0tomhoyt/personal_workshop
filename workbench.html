@@ -285,6 +285,7 @@
             <span style="flex:1"></span>
             <button id="copyBtn">复制 Markdown</button>
             <button id="dlBtn" title="把当前成稿下载为 .md 文件">下载 .md</button>
+            <button id="regenBtn" title="把该报告的时间段填入起止并重新生成">按此时间段重新生成</button>
           </div>
           <div class="rbody" id="rbody"></div>
         </div>
@@ -644,6 +645,7 @@ function pollJob() {
         $('rprog').style.display = 'none';
         showErr(`报告生成失败：${j.error || '未知错误'}`);
         showReport._last = ''; // 失败即无成稿：下载按钮随之禁用（成稿区在生成开始时已隐藏）
+        showReport._lastRange = null;
         updateDlState();
       } else if (j.state === 'done' && j.reportId) {
         $('rprog').style.display = 'none';
@@ -740,11 +742,26 @@ function setGenerating(on) {
   document.querySelector('.rng')?.classList.toggle('is-generating', on);
   // 下载与复制同口径：生成中禁用（结束后恢复为「有成稿才可用」）
   $('dlBtn').disabled = on || !showReport._last;
+  $('regenBtn').disabled = on || isBadReportRange(showReport._lastRange);
 }
 
 // 成稿有无 → 下载按钮可用性（复制按钮保留可点+提示的既有行为，不动）
 function updateDlState() {
   $('dlBtn').disabled = !showReport._last;
+  // 重新生成：仅当前所看报告的时间段合法时可用（坏区间条目禁用并 title 说明）
+  const bad = isBadReportRange(showReport._lastRange);
+  $('regenBtn').disabled = bad;
+  $('regenBtn').title = bad ? '该报告的时间段无效，无法按它重新生成' : '把该报告的时间段填入起止并重新生成';
+}
+
+// 回看历史（或刚生成完）想对同一窗口重跑：把该报告起止回填自定义区间，走与「生成报告」同一路径
+function regenFromReport() {
+  const range = showReport._lastRange;
+  if (isBadReportRange(range)) return; // 按钮禁用兜底
+  $('rngStart').value = toLocalInput(range.start);
+  $('rngEnd').value = toLocalInput(range.end);
+  syncPresetFromInputs();
+  generateReport(); // 409/校验/轮询/失败展示全部复用
 }
 
 // 下载文件名：工作总结_<起>_<止>.md，起止 YYYYMMDD-HHmm（本地时区）；
@@ -862,6 +879,8 @@ $('genBtn').addEventListener('click', generateReport);
 $('copyBtn').addEventListener('click', copyReport);
 $('dlBtn').addEventListener('click', downloadReport);
 $('dlBtn').disabled = true; // 初始无成稿，与复制按钮的空提示口径不同：直接禁用
+$('regenBtn').addEventListener('click', regenFromReport);
+$('regenBtn').disabled = true; // 初始未在看任何报告
 // 搜索框：输入即过滤（与项目/来源 AND），状态并入 wb-todo-filters
 $('clearDoneBtn').addEventListener('click', clearDoneTodos);
 $('todoSearch').addEventListener('input', (e) => {

@@ -1276,6 +1276,11 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
         && wbText.includes('e.ctrlKey || e.metaKey || e.altKey') && wbText.includes('preventDefault'));
     check('搜索框 Esc：有内容走同一清空+持久化路径、无内容失焦', wbText.includes('todoSearch\').addEventListener(\'keydown\'') && wbText.includes('e.target.blur()'));
     check('清理已完成：全部已完成项在编辑态时的空清理提示', wbText.includes('已跳过——退出编辑后再清理'));
+    // feature-4：按此时间段重新生成（复用 generateReport 路径，坏区间禁用）
+    check('工作台页含「按此时间段重新生成」按钮', wbText.includes('id="regenBtn"') && wbText.includes('按此时间段重新生成') && wbText.includes('regenFromReport'));
+    const regenMatch = wbText.match(/function regenFromReport\(\) \{[\s\S]*?\n\}/);
+    check('regenFromReport：回填起止+同步预设后调 generateReport（复用生成路径），坏区间直接返回', Boolean(regenMatch) && regenMatch[0].includes('generateReport()') && regenMatch[0].includes('isBadReportRange(range)') && regenMatch[0].includes('syncPresetFromInputs()'));
+    check('regenBtn 禁用口径：初始/生成中/坏区间禁用', wbText.includes("$('regenBtn').disabled = on || isBadReportRange") && wbText.includes("$('regenBtn').disabled = true") && wbText.includes('该报告的时间段无效'));
   }
 
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');

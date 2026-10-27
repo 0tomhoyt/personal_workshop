@@ -211,7 +211,7 @@ API Key  : ANTHROPIC_AUTH_TOKEN = 网关 token
   网关读取 **Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录**（只读各自的
   数据文件，互相独立、单源故障只降级不失败），按项目归并压缩、脱敏（密钥样式 → `[REDACTED]`），
   经两级总结（逐项目小结 → 汇总成稿）产出**给上级看的中文 Markdown 汇报**——按项目分节、
-  突出做了什么/推进到哪/产出什么，文末附待办进展与模型用量数据附注。一键复制、下载 .md（按报告时间窗命名）、历史存档可回看。
+  突出做了什么/推进到哪/产出什么，文末附待办进展与模型用量数据附注。一键复制、下载 .md（按报告时间窗命名）、历史存档可回看并按原时间段一键重跑。
 - **报告用什么模型**：providers.json 的 `workbench` 节（`reportProvider` / `reportModel`，改完热
   生效）；不配则自动用默认上游的第一个可用模型。**总结质量的调优入口集中在
   `lib/report-prompts.mjs`**（prompt 文案、截断阈值、脱敏模式都在这一个文件）。
