@@ -1017,13 +1017,44 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('失败源进报告正文（数据源状态附注）', rep.report.includes('数据源状态') && rep.report.includes('zcode'), String(rep.report).slice(0, 300));
     check('待办联动进 prompt（报告含 collect 测试 A）', rep.report.includes('collect 测试 A'), String(rep.report).slice(0, 200));
 
-    // 空素材窗口：不调模型直接成稿（model=none、固定无记录文案、不再 failed）
+    // 空素材窗口：不调模型直接成稿（model=none、不再 failed）。
+    // 主网关 zcode/opencode 指向 no-such.db（采集必失败）→ 空窗走「采集失败」口径，
+    // 不把采集故障伪装成「无记录」
     const emptyWin = { startMs: Date.now() + 5 * 24 * 3600_000, endMs: Date.now() + 5 * 24 * 3600_000 + 3600_000 };
-    check('空素材窗口：POST → 200', (await post('/admin/report/generate', emptyWin)).status === 200);
+    check('空素材+源失败：POST → 200', (await post('/admin/report/generate', emptyWin)).status === 200);
     const emptyDone = await waitJob('done');
     const emptyRep = await (await fetch(`${GW}/admin/report/${emptyDone.reportId}`)).json();
-    check('空素材窗口：done 且未调模型（model=none）', emptyDone.state === 'done' && emptyRep.model === 'none' && emptyRep.provider === 'none', JSON.stringify({ s: emptyDone.state, m: emptyRep.model }));
-    check('空素材窗口：固定「无记录」文案、素材为空', emptyRep.report.includes('未检索到可用的工作记录') && emptyRep.materials?.sessions === 0 && emptyRep.materials?.chars === 0, String(emptyRep.report).slice(0, 120));
+    check('空素材+源失败：done 且未调模型（model=none）', emptyDone.state === 'done' && emptyRep.model === 'none' && emptyRep.provider === 'none', JSON.stringify({ s: emptyDone.state, m: emptyRep.model }));
+    check('空素材+源失败：文案明确采集失败、结论不可信（不写「无记录」）', emptyRep.report.includes('素材采集失败') && emptyRep.report.includes('不可作为汇报依据') && !emptyRep.report.includes('未检索到可用的工作记录') && emptyRep.materials?.sourcesFailed?.length === 2, String(emptyRep.report).slice(0, 160));
+
+    // 四源全部采集成功但该窗口无会话 → 走「无记录」固定成稿（另起实例指到 fixture 库，未来窗口 0 会话）
+    {
+      const gwEmpty = spawnNode([path.join(ROOT, 'server.mjs')], {
+        CANNBOT_PROXY_PORT: '6293',
+        CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
+        CANNBOT_LOG_FILE: path.join(tmp, 'proxy5.log'),
+        CANNBOT_STATS_FILE: path.join(tmp, 'stats5.json'),
+        CANNBOT_TODOS_FILE: path.join(tmp, 'todos.json'),
+        CANNBOT_REPORTS_FILE: path.join(tmp, 'reports5.json'),
+        CANNBOT_CC_DIR: path.join(tmp, 'cc-projects'),
+        CANNBOT_ZCODE_DB: path.join(tmp, 'zcode-fixture.db'),
+        CANNBOT_OPENCODE_DB: path.join(tmp, 'opencode-fixture.db'),
+        CANNBOT_CURSOR_DIR: path.join(tmp, 'cursor-projects'),
+      }, 'gateway-empty-clean');
+      await sleep(1200);
+      const GW3 = 'http://127.0.0.1:6293';
+      await (await fetch(`${GW3}/admin/report/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(emptyWin) })).json();
+      let cleanDone = { state: 'timeout' };
+      for (let i = 0; i < 20; i++) {
+        cleanDone = await (await fetch(`${GW3}/admin/report/job`)).json();
+        if (cleanDone.state !== 'running') break;
+        await sleep(500);
+      }
+      const cleanRep = await (await fetch(`${GW3}/admin/report/${cleanDone.reportId}`)).json();
+      check('空素材四源正常：done 且 model=none', cleanDone.state === 'done' && cleanRep.model === 'none', JSON.stringify({ s: cleanDone.state }));
+      check('空素材四源正常：固定「无记录」文案、sourcesFailed 空', cleanRep.report.includes('未检索到可用的工作记录') && cleanRep.materials?.sourcesFailed?.length === 0, String(cleanRep.report).slice(0, 120));
+      gwEmpty.kill();
+    }
 
     // 窗口校验（不启动 job）
     check('end<=start → 400', (await post('/admin/report/generate', { startMs: 100, endMs: 100 })).status === 400);
@@ -1365,6 +1396,22 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const swDown = await fetch('http://127.0.0.1:6292/admin/monitors/switch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"target":"windows"}' });
     check('m1ddc 缺失：switch → 503', swDown.status === 503);
     gw2.kill();
+  }
+
+  console.log('— 统计落盘（进程内 recordStats + flushStats：tmp+rename+0600） —');
+  {
+    const statsFile = path.join(tmp, 'stats-flush.json');
+    const prevStats = process.env.CANNBOT_STATS_FILE;
+    process.env.CANNBOT_STATS_FILE = statsFile;
+    const statsMod = await import(path.join(ROOT, 'lib/stats.mjs') + '?t=' + Date.now());
+    statsMod.recordStats({ provider: 'p1', model: 'm1', status: 200, ms: 5, bytesIn: 10, bytesOut: 20, tin: 1, tout: 2 });
+    statsMod.flushStats();
+    check('stats 原子落盘：文件存在且权限 0600', fs.existsSync(statsFile) && (fs.statSync(statsFile).mode & 0o777) === 0o600, fs.statSync(statsFile)?.mode?.toString(8));
+    const flushed = JSON.parse(fs.readFileSync(statsFile, 'utf8'));
+    check('stats 落盘内容含记账桶', flushed.days && Object.values(flushed.days)[0]?.providers?.p1?.models?.m1?.req === 1, JSON.stringify(flushed).slice(0, 120));
+    // 写一半被 kill 模拟：flush 完成后目录无残留 tmp（rename 已原子换名）
+    check('stats 落盘无残留 tmp 文件', !fs.readdirSync(tmp).some((f) => f.startsWith('stats-flush.json') && f.endsWith('.tmp')), fs.readdirSync(tmp).filter((f) => f.includes('stats-flush')).join(','));
+    if (prevStats === undefined) delete process.env.CANNBOT_STATS_FILE; else process.env.CANNBOT_STATS_FILE = prevStats;
   }
 } catch (e) {
   failures.push(`异常: ${e.message}`);
