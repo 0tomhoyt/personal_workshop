@@ -338,6 +338,10 @@ function showErr(msg) {
   clearTimeout(showErr._t);
   showErr._t = setTimeout(() => { b.style.display = 'none'; }, 8000);
 }
+
+// async 界面动作的统一兜底：网络层 reject（非 HTTP 错误码）时给出可见提示，
+// 而不是既无反馈又产生 unhandled rejection（与 refreshTodos/refreshHistory 自包 try/catch 同纪律）
+const safe = (fn) => (...a) => Promise.resolve(fn(...a)).catch((e) => showErr(`请求失败：${e?.message || e}`));
 // 点击错误条立即关掉（8s 自动隐藏之外的手动关闭）
 $('errBanner').addEventListener('click', () => {
   $('errBanner').style.display = 'none';
@@ -844,8 +848,8 @@ $('themeBtn').addEventListener('click', () => {
 });
 
 // ── 事件绑定与启动 ─────────────────────────────────────────────────────────
-$('addBtn').addEventListener('click', addTodo);
-$('addTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTodo(); });
+$('addBtn').addEventListener('click', safe(addTodo));
+$('addTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') safe(addTodo)(); });
 $('addUrg').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   document.querySelectorAll('#addUrg button').forEach((x) => x.classList.remove('active'));
@@ -877,14 +881,14 @@ function syncPresetFromInputs() {
     if (e.key === 'Enter' && !$('genBtn').disabled) { e.preventDefault(); generateReport(); }
   });
 });
-$('genBtn').addEventListener('click', generateReport);
-$('copyBtn').addEventListener('click', copyReport);
+$('genBtn').addEventListener('click', safe(generateReport));
+$('copyBtn').addEventListener('click', safe(copyReport));
 $('dlBtn').addEventListener('click', downloadReport);
 $('dlBtn').disabled = true; // 初始无成稿，与复制按钮的空提示口径不同：直接禁用
-$('regenBtn').addEventListener('click', regenFromReport);
+$('regenBtn').addEventListener('click', safe(regenFromReport));
 $('regenBtn').disabled = true; // 初始未在看任何报告
 // 搜索框：输入即过滤（与项目/来源 AND），状态并入 wb-todo-filters
-$('clearDoneBtn').addEventListener('click', clearDoneTodos);
+$('clearDoneBtn').addEventListener('click', safe(clearDoneTodos));
 $('todoSearch').addEventListener('input', (e) => {
   todoFilters.q = e.target.value.trim();
   saveFilters();
@@ -938,10 +942,10 @@ document.addEventListener('click', (e) => {
   }
   const b = e.target.closest('button[data-act]'); if (!b) return;
   const id = b.dataset.id;
-  if (b.dataset.act === 'cycle') cycleTodo(id, b.dataset.next);
-  else if (b.dataset.act === 'del') { if (confirm('删除这条待办？')) delTodo(id); }
+  if (b.dataset.act === 'cycle') safe(cycleTodo)(id, b.dataset.next);
+  else if (b.dataset.act === 'del') { if (confirm('删除这条待办？')) safe(delTodo)(id); }
   else if (b.dataset.act === 'editcancel') { editingId = null; renderTodos(); }
-  else if (b.dataset.act === 'view') showReport(id);
+  else if (b.dataset.act === 'view') safe(showReport)(id);
   else if (b.dataset.act === 'rdel') {
     if (!confirm('删除这份报告？')) return;
     fetch(`/admin/report/${encodeURIComponent(id)}`, { method: 'DELETE' }).then((r) => {
@@ -950,7 +954,7 @@ document.addEventListener('click', (e) => {
         refreshHistory();
       }
       else showErr(`删除失败（HTTP ${r.status}）`);
-    });
+    }).catch((e) => showErr(`请求失败：${e?.message || e}`));
   }
 });
 // 编辑表单提交（回车或「保存」）：空标题不放行
@@ -961,7 +965,7 @@ document.addEventListener('submit', (e) => {
   if (!title) { showErr('标题不能为空——填一句或点「取消」退出编辑。'); f.elements.title.focus(); return; }
   const urgency = f.querySelector('[data-urgseg] button.active')?.dataset.urg || 'normal';
   const project = f.elements.project.value.trim();
-  saveTodoEdit(f.dataset.editform, { title, urgency, project });
+  safe(saveTodoEdit)(f.dataset.editform, { title, urgency, project });
 });
 // Esc 退出就地编辑（编辑中无论焦点在哪，与点外取消一致）；
 // / 聚焦待办搜索框并全选（焦点在输入类控件内、带修饰键、IME 组合中、正在就地编辑时不抢键）

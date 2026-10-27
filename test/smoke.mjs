@@ -759,6 +759,14 @@ try {
       '分组标签需达 WCAG AA');
     check('亮色 --dim 对比度 ≥4.5（#736d5e）', wbc.includes('--dim: #736d5e'),
       '原 #7b7566 仅 4.17:1');
+    // r9 代码质量：async 界面动作统一兜底（safe 包装）；素材压缩预算耗尽先短路
+    check('async 事件回调统一 safe() 兜底（含删除报告 fetch .catch）',
+      /const safe = \(fn\) =>/.test(wbh) && /safe\(addTodo\)/.test(wbh) && /safe\(generateReport\)/.test(wbh)
+        && /\}\)\.catch\(\(e\) => showErr/.test(wbh),
+      '网络层 reject 须给可见提示而非 unhandled rejection');
+    const collectSrc = fs.readFileSync(path.join(ROOT, 'lib/report/collect.mjs'), 'utf8');
+    check('compressSession 预算耗尽先短路（不拼孤立「…」）', collectSrc.includes('remain <= 0) break'),
+      'cut(…,0) 会返回 1 个码位的「…」伪消息');
   }
 
   console.log('— 报告源：zcode（db.sqlite 适配器，fixture） —');
@@ -1126,6 +1134,9 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     // 超时口径：requestUpstream 的 AbortError 在 callSummaryModel 换成中文——源码层断言（跑一次 120s 超时太慢）
     const genSrc = fs.readFileSync(path.join(ROOT, 'lib/report/generate.mjs'), 'utf8');
     check('失败口径：超时中文文案（请求超时（Ns））', genSrc.includes('请求超时（') && genSrc.includes('AbortError'));
+    // 配错 reportProvider：失败文案应指出「配的不存在」，而不是误导用户去配置
+    fj = await failWith((d) => { d.workbench = { reportProvider: '不存在-x' }; });
+    check('配错 reportProvider：失败文案点名不存在的 provider', /reportProvider.*不存在-x.*不存在/.test(fj.error || ''), fj.error);
     writeCfg(cfg0); // 还原配置
     await sleep(600);
 
