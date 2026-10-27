@@ -242,7 +242,7 @@
         <datalist id="projList"></datalist>
         <div class="tfilter">
           <div class="frow">
-            <input type="search" id="todoSearch" placeholder="搜标题…" title="按标题关键字过滤（与项目/来源筛选叠加）">
+            <input type="search" id="todoSearch" placeholder="搜标题…（/）" title="按标题关键字过滤（与项目/来源筛选叠加）；快捷键：/ 聚焦、Esc 清空">
             <span style="flex:1"></span>
             <span id="todoMeta"></span>
             <button class="danger" id="clearDoneBtn" title="删除全部已完成待办（不受筛选影响）" style="display:none">清理已完成</button>
@@ -488,7 +488,8 @@ async function clearDoneTodos() {
   // 正在就地编辑的那条即使是已完成也跳过——不能把编辑中的表单连同待办一起删掉
   const skipEdit = targets.filter((t) => t.id === editingId);
   const toDelete = targets.filter((t) => t.id !== editingId);
-  if (!toDelete.length) return;
+  // 全部已完成项都在编辑态：没东西可删，明确说一句而不是点了没反应
+  if (!toDelete.length) { showErr(`已完成项正在编辑中（${skipEdit.length} 条），已跳过——退出编辑后再清理`); return; }
   const extra = skipEdit.length ? `；正在编辑的 ${skipEdit.length} 条已完成项将跳过` : '';
   if (!confirm(`删除 ${toDelete.length} 条已完成待办？范围是全部待办（不受当前筛选影响），此操作不可撤销${extra}`)) return;
   clearingDone = true;
@@ -868,6 +869,16 @@ $('todoSearch').addEventListener('input', (e) => {
   saveFilters();
   renderTodos();
 });
+// 搜索框内按 Esc：有内容则清空（与手动清空同一过滤/持久化路径），无内容则退出焦点
+$('todoSearch').addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.isComposing) return;
+  if (e.target.value) {
+    e.target.value = '';
+    todoFilters.q = '';
+    saveFilters();
+    renderTodos();
+  } else e.target.blur();
+});
 
 // 待办行 / 历史表 / 筛选行 / 就地编辑的事件委托
 document.addEventListener('click', (e) => {
@@ -931,9 +942,16 @@ document.addEventListener('submit', (e) => {
   const project = f.elements.project.value.trim();
   saveTodoEdit(f.dataset.editform, { title, urgency, project });
 });
-// Esc 退出就地编辑（编辑中无论焦点在哪，与点外取消一致）
+// Esc 退出就地编辑（编辑中无论焦点在哪，与点外取消一致）；
+// / 聚焦待办搜索框并全选（焦点在输入类控件内、带修饰键、IME 组合中、正在就地编辑时不抢键）
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && editingId) { editingId = null; renderTodos(); }
+  if (e.key === 'Escape' && editingId) { editingId = null; renderTodos(); return; }
+  if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || editingId) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  e.preventDefault(); // 不把 / 输进页面
+  $('todoSearch').focus();
+  $('todoSearch').select();
 });
 // 页面被打开时若上一次任务仍在跑：接着轮询
 (async () => {

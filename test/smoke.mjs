@@ -1270,6 +1270,12 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     // 清理已完成按钮：存在 + confirm 文案口径（全量范围/不可撤销/跳过编辑项）
     check('工作台页含「清理已完成」按钮', wbText.includes('id="clearDoneBtn"') && wbText.includes('清理已完成') && wbText.includes('clearDoneTodos'));
     check('清理已完成：confirm 含全量范围与不可撤销、跳过编辑项口径', wbText.includes('此操作不可撤销') && wbText.includes('不受当前筛选影响') && wbText.includes('跳过编辑中的'));
+    // feature-3：/ 聚焦搜索框快捷键（排除口径）+ Esc 清空 + 空清理提示
+    check('工作台页含 / 聚焦搜索框快捷键（输入类控件/修饰键/IME/编辑中均排除）',
+      wbText.includes("e.key !== '/'") && wbText.includes('e.isComposing') && wbText.includes('isContentEditable')
+        && wbText.includes('e.ctrlKey || e.metaKey || e.altKey') && wbText.includes('preventDefault'));
+    check('搜索框 Esc：有内容走同一清空+持久化路径、无内容失焦', wbText.includes('todoSearch\').addEventListener(\'keydown\'') && wbText.includes('e.target.blur()'));
+    check('清理已完成：全部已完成项在编辑态时的空清理提示', wbText.includes('已跳过——退出编辑后再清理'));
   }
 
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');
