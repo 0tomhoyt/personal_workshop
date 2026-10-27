@@ -1018,6 +1018,22 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('GET 不存在的报告 → 404', (await fetch(`${GW}/admin/report/nope`)).status === 404);
   }
 
+  console.log('— 工作台静态资源（/workbench、/workbench.css、admin 外链改造） —');
+  {
+    const css = await fetch(`${GW}/workbench.css`);
+    const cssText = await css.text();
+    check('/workbench.css → 200 且 text/css', css.status === 200 && (css.headers.get('content-type') || '').includes('text/css'));
+    check('workbench.css 含主题令牌与骨架', cssText.includes('--bg') && cssText.includes('.frame') && cssText.includes('.viewbtn'), cssText.slice(0, 80));
+    const adminHtml = await (await fetch(`${GW}/`)).text();
+    check('admin.html 外链共享样式', adminHtml.includes('<link rel="stylesheet" href="/workbench.css">'), '未找到 link 标签');
+    check('admin.html 通用样式已移出（body 底纹不再内嵌）', !adminHtml.includes('body::before'), 'body::before 仍内嵌');
+    check('admin.html 视图专属样式保留（趋势图/性能表）', adminHtml.includes('.chartwrap') && adminHtml.includes('.tbl.perf'));
+    check('admin.html rail 含工作台链接', adminHtml.includes('href="/workbench"'));
+    const wb = await fetch(`${GW}/workbench`);
+    const wbText = await wb.text();
+    check('/workbench → 200 含「工作台」', wb.status === 200 && wbText.includes('工作台'), `got ${wb.status}`);
+  }
+
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');
   {
     const MON_UUIDS = ['A016429F-BCEC-4FAF-BD7D-23128391F7F1', 'F2F948D6-2F40-4DEC-8EF8-2E158BFF4328'];

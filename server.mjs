@@ -58,6 +58,8 @@ function isLocalHost(req) {
 }
 
 const ADMIN_HTML = path.join(SCRIPT_DIR, 'admin.html');
+const WORKBENCH_HTML = path.join(SCRIPT_DIR, 'workbench.html');
+const WORKBENCH_CSS = path.join(SCRIPT_DIR, 'workbench.css');
 const LAUNCH_LABEL = 'cn.hicann.cannbot-gateway-proxy';
 const LAUNCH_TARGET = `gui/${os.userInfo().uid}/${LAUNCH_LABEL}`;
 
@@ -113,6 +115,26 @@ const server = http.createServer(async (req, res) => {
         return res.end(html);
       } catch {
         return sendJson(res, 404, { error: { message: 'admin.html 缺失：重跑 ./install.sh 安装', type: 'not_found' } });
+      }
+    }
+
+    // 个人工作台页面（待办 + 时间段工作总结）与两页共享的主题样式
+    if (url === '/workbench') {
+      try {
+        const html = fs.readFileSync(WORKBENCH_HTML);
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        return res.end(html);
+      } catch {
+        return sendJson(res, 404, { error: { message: 'workbench.html 缺失：重跑 ./install.sh 安装', type: 'not_found' } });
+      }
+    }
+    if (url === '/workbench.css') {
+      try {
+        const css = fs.readFileSync(WORKBENCH_CSS);
+        res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' });
+        return res.end(css);
+      } catch {
+        return sendJson(res, 404, { error: { message: 'workbench.css 缺失：重跑 ./install.sh 安装', type: 'not_found' } });
       }
     }
 

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>个人工作台</title>
+<script>
+// 首屏先定主题（localStorage 覆盖 > 跟随系统），避免渲染后闪色
+(function () {
+  try {
+    var m = localStorage.getItem('gw-theme') || 'auto';
+    var dark = m === 'auto' ? matchMedia('(prefers-color-scheme: dark)').matches : m === 'dark';
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  } catch (e) { document.documentElement.dataset.theme = 'dark'; }
+})();
+</script>
+<link rel="stylesheet" href="/workbench.css">
+</head>
+<body>
+<div class="frame">
+  <aside class="rail">
+    <div class="brand">
+      <h1><span class="zh-mark">◈</span>个人工作台</h1>
+      <div class="sub">Workbench</div>
+    </div>
+    <nav class="views">
+      <a class="viewbtn" href="/"><span class="idx">01</span><span class="vname">管理台</span><span class="ven">Console</span></a>
+      <a class="viewbtn active" href="/workbench"><span class="idx">02</span><span class="vname">工作台</span><span class="ven">Workbench</span></a>
+    </nav>
+  </aside>
+  <main class="main">
+    <section class="sec">
+      <div class="sechead"><span class="idx">00</span><h2>工作台</h2><span class="en">Workbench</span></div>
+      <div class="card"><span class="dim">页面建设中（Task 10 完整实现）—— 待办事项与时间段工作总结将在此呈现。</span></div>
+    </section>
+  </main>
+</div>
+</body>
+</html>

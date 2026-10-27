@@ -15,236 +15,15 @@
   } catch (e) { document.documentElement.dataset.theme = 'dark'; }
 })();
 </script>
+<link rel="stylesheet" href="/workbench.css">
 <style>
-  /* 「琥珀遥测台 · 通道版」：深色航电仪表 × 宋体中文工程手册 × 等宽数据。
-     单文件零依赖，无外部字体/CDN。布局：左侧通道栏（视图切换）+ 右侧当前视图。
-     通道栏徽标给全局态势（异常上游 / 今日请求），服务控制常驻底部。 */
-  /* 主题令牌：深色为默认（航电仪表），浅色为暖纸底 + 深琥珀（同一视觉的反相）。
-     交互色统一走 *-rgb 三元组，便于 rgba() 派生；html[data-theme] 由首屏脚本切换。 */
-  :root {
-    color-scheme: dark;
-    --bg: #0f1114;
-    --panel: #15181c; --panel-2: #1a1e23; --inset: #0b0d0f;
-    --ink: #e8e3d5; --dim: #8f8a7b; --faint: #5c584e;
-    --line: #272c33; --line-soft: #1d2126;
-    --amber: #e6a23c; --amber-hi: #ffc76f; --amber-rgb: 230, 162, 60;
-    --amber-dim: rgba(230, 162, 60, .1);
-    --green: #74b98c; --green-rgb: 116, 185, 140;
-    --red: #e06a58; --red-rgb: 224, 106, 88;
-    --yellow: #d9b45c; --blue: #7fa8cc; --blue-rgb: 127, 168, 204;
-    --grid-line: rgba(255, 255, 255, .026);
-    --row-hover: rgba(255, 255, 255, .022);
-    --card-shadow: inset 0 1px 0 rgba(255, 255, 255, .03), 0 12px 34px rgba(0, 0, 0, .38);
-    --noise-op: .05;
-    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    --serif: "Songti SC", "Noto Serif SC", "STSong", ui-serif, Georgia, serif;
-    --sans: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
-    --rail-w: 216px;
-  }
-  html[data-theme="light"] {
-    color-scheme: light;
-    --bg: #f7f4ec;
-    --panel: #fdfbf6; --panel-2: #f7f3ea; --inset: #efeade;
-    --ink: #27231a; --dim: #7b7566; --faint: #a9a393;
-    --line: #e2dccb; --line-soft: #eae5d6;
-    --amber: #b97f2a; --amber-hi: #8c5c14; --amber-rgb: 185, 127, 42;
-    --amber-dim: rgba(185, 127, 42, .1);
-    --green: #47795a; --green-rgb: 71, 121, 90;
-    --red: #b34a3c; --red-rgb: 179, 74, 60;
-    --yellow: #8f6d1f; --blue: #4e7495; --blue-rgb: 78, 116, 149;
-    --grid-line: rgba(64, 52, 22, .05);
-    --row-hover: rgba(56, 45, 14, .035);
-    --card-shadow: inset 0 1px 0 #fff, 0 10px 26px rgba(84, 70, 34, .09);
-    --noise-op: .04;
-  }
-  * { box-sizing: border-box; margin: 0; }
-  html { scrollbar-color: var(--line) transparent; }
-  body {
-    font-family: var(--sans); color: var(--ink);
-    background:
-      radial-gradient(1100px 520px at 10% -10%, rgba(var(--amber-rgb), .075), transparent 62%),
-      radial-gradient(900px 480px at 104% 4%, rgba(var(--blue-rgb), .05), transparent 58%),
-      var(--bg);
-    min-height: 100vh;
-    transition: background-color .3s, color .3s;
-  }
-  /* 蓝图网格底纹 + 颗粒：fixed 层，不随内容滚动 */
-  body::before {
-    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-    background-image:
-      linear-gradient(var(--grid-line) 1px, transparent 1px),
-      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-    background-size: 36px 36px;
-    -webkit-mask-image: radial-gradient(ellipse 90% 65% at 50% 0%, #000 25%, transparent 80%);
-    mask-image: radial-gradient(ellipse 90% 65% at 50% 0%, #000 25%, transparent 80%);
-  }
-  body::after {
-    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: var(--noise-op);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
-  }
-  ::selection { background: rgba(var(--amber-rgb), .32); }
-
-  /* ---- 整体骨架：左通道栏 + 右主区 -------------------------------------- */
-  .frame {
-    position: relative; z-index: 1;
-    display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr);
-    min-height: 100vh;
-    max-width: 1220px; margin: 0 auto;
-  }
-
-  /* ---- 左侧通道栏 ------------------------------------------------------- */
-  .rail {
-    position: sticky; top: 0; align-self: start;
-    height: 100vh; display: flex; flex-direction: column;
-    padding: 26px 16px 18px 22px;
-    border-right: 1px solid var(--line-soft);
-    background: linear-gradient(180deg, rgba(var(--amber-rgb), .028), transparent 30%);
-    overflow-y: auto;
-  }
-  .rail::-webkit-scrollbar { width: 0; }
-  .brand h1 {
-    font: 600 20px/1.2 var(--serif); letter-spacing: .05em;
-    display: flex; align-items: baseline; gap: 8px;
-  }
-  .brand .zh-mark { color: var(--amber); }
-  .brand .sub {
-    font: 500 9px var(--mono); color: var(--faint);
-    letter-spacing: .3em; margin-top: 6px; text-transform: uppercase;
-  }
-  .rail-rule {
-    height: 1px; margin: 16px 0 10px;
-    background: linear-gradient(90deg, var(--amber), rgba(var(--amber-rgb), .25) 40%, transparent);
-  }
-  /* 遥测状态簇（原 masthead 右侧），常驻通道栏 */
-  .rail-tel { display: flex; flex-direction: column; gap: 7px; font-size: 12px; padding: 2px 4px 0; }
-  .statline { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-  .statline .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-
-  /* 状态灯：运行中带雷达扩散环 */
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); position: relative; flex: none; }
-  .dot.ok { background: var(--green); box-shadow: 0 0 9px rgba(var(--green-rgb), .7); }
-  .dot.ok::after, .dot.bad::after {
-    content: ""; position: absolute; inset: -4px; border-radius: 50%;
-    border: 1px solid currentColor; animation: sweep 2.4s ease-out infinite;
-  }
-  .dot.ok::after { color: var(--green); }
-  .dot.bad { background: var(--red); box-shadow: 0 0 9px rgba(var(--red-rgb), .7); }
-  .dot.bad::after { color: var(--red); animation-duration: 1.4s; }
-  @keyframes sweep { 0% { transform: scale(.45); opacity: .9; } 75% { transform: scale(1.6); opacity: 0; } 100% { opacity: 0; } }
-
-  /* ---- 视图页签（通道栏导航）-------------------------------------------- */
-  .views { margin-top: 14px; display: flex; flex-direction: column; gap: 2px; }
-  .viewbtn {
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 10px; border-radius: 7px; border: 1px solid transparent;
-    background: transparent; color: var(--dim); cursor: pointer; text-align: left;
-    font: 500 13px var(--sans); letter-spacing: .02em;
-    transition: color .15s, background-color .15s, border-color .15s;
-    position: relative;
-  }
-  .viewbtn .idx {
-    font: 600 10px var(--mono); color: var(--faint); letter-spacing: .1em;
-    min-width: 16px;
-  }
-  .viewbtn .vname { flex: 1; font-family: var(--serif); font-weight: 600; font-size: 14.5px; letter-spacing: .08em; }
-  .viewbtn .ven { font: 500 8.5px var(--mono); color: var(--faint); letter-spacing: .18em; text-transform: uppercase; }
-  .viewbtn:hover { color: var(--ink); background: var(--row-hover); }
-  .viewbtn.active {
-    color: var(--amber-hi); background: var(--amber-dim);
-    border-color: rgba(var(--amber-rgb), .35);
-  }
-  .viewbtn.active .idx { color: var(--amber); }
-  /* 活动视图左侧的琥珀游标 */
-  .viewbtn.active::before {
-    content: ""; position: absolute; left: -22px; top: 18%; bottom: 18%;
-    width: 3px; border-radius: 99px;
-    background: linear-gradient(180deg, var(--amber-hi), var(--amber));
-    box-shadow: 0 0 8px rgba(var(--amber-rgb), .55);
-  }
-  /* 通道徽标：异常数 / 今日请求等态势数字 */
-  .vbadge {
-    font: 600 10px var(--mono); font-variant-numeric: tabular-nums;
-    border-radius: 99px; padding: 1px 7px; min-width: 22px; text-align: center;
-    background: var(--inset); border: 1px solid var(--line); color: var(--dim);
-  }
-  .vbadge.red { color: var(--red); border-color: rgba(var(--red-rgb), .5); background: rgba(var(--red-rgb), .08); }
-  .vbadge.amber { color: var(--amber-hi); border-color: rgba(var(--amber-rgb), .5); background: var(--amber-dim); }
-
-  /* 通道栏底部：服务控制 + 主题 */
-  .rail-foot { margin-top: auto; padding-top: 14px; display: flex; flex-direction: column; gap: 8px; }
-  .rail-foot .sub { font: 500 9px var(--mono); color: var(--faint); letter-spacing: .24em; text-transform: uppercase; padding: 0 4px 2px; }
-  .rail-controls { display: flex; gap: 7px; }
-  .rail-controls button { flex: 1; font-size: 11.5px; padding: 6px 8px; }
-  .rail-proto { font: 10.5px/1.6 var(--mono); color: var(--faint); padding: 4px 4px 0; word-break: break-all; }
-
-  /* ---- 右侧主区 --------------------------------------------------------- */
-  .main { padding: 30px 28px 56px 34px; min-width: 0; }
-  .view { display: none; }
-  .view.active { display: block; animation: viewin .4s cubic-bezier(.2, .7, .3, 1) both; }
-  @keyframes viewin { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-
-  /* ---- 分区标题：编号 + 宋体中文 + 等宽英文小标 ------------------------ */
-  .sec { margin-top: 24px; }
-  .sec:first-child { margin-top: 0; }
-  .sechead { display: flex; align-items: baseline; gap: 12px; margin: 0 3px 13px; flex-wrap: wrap; }
-  .sechead .idx {
-    font: 600 10.5px var(--mono); color: var(--amber); letter-spacing: .14em;
-    border: 1px solid rgba(var(--amber-rgb), .45); border-radius: 4px; padding: 2.5px 7px 1.5px;
-  }
-  .sechead h2 { font: 600 17.5px/1 var(--serif); letter-spacing: .07em; }
-  .sechead .en { font: 500 9.5px var(--mono); color: var(--faint); letter-spacing: .26em; text-transform: uppercase; }
-  .sechead .note { font-size: 11.5px; color: var(--dim); }
-  .sechead .spacer { flex: 1; }
-
-  .card {
-    background: linear-gradient(180deg, var(--panel), var(--panel-2));
-    border: 1px solid var(--line); border-radius: 10px;
-    padding: 17px 19px;
-    box-shadow: var(--card-shadow);
-    transition: background-color .3s, border-color .3s;
-  }
-
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
-
-  /* 规格行：底部发丝线，像产品规格表 */
-  .kv { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 5.5px 0; font-size: 13px; border-bottom: 1px solid var(--line-soft); }
-  .kv:last-child { border-bottom: none; }
-  .kv .k { color: var(--dim); flex: none; }
-  .kv .k b { color: var(--ink); font-weight: 600; }
-  .pdot { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 7px; vertical-align: 1px; }
-  .ok { color: var(--green); } .bad { color: var(--red); } .warn { color: var(--yellow); } .dim { color: var(--dim); }
-
-  .banner { border-radius: 10px; padding: 12px 16px; margin: 0 0 18px; font-size: 13px; line-height: 1.7; display: none; animation: viewin .5s both; }
-  .banner.red { background: rgba(var(--red-rgb), .09); border: 1px solid rgba(var(--red-rgb), .45); color: var(--ink); }
-  .banner.blue { background: rgba(var(--blue-rgb), .08); border: 1px solid rgba(var(--blue-rgb), .4); }
+  /* 「琥珀遥测台 · 通道版」管理台：视图专属样式（主题令牌 / 页面骨架 / 通用组件
+     已提取到 workbench.css，与工作台共享）。此处保留：模型目录 chips、统计大
+     数字、趋势图、性能表、供应商汇总、显示器改名输入框、测试台结果、日志流。 */
 
   .provdiv { border-top: 1px solid var(--line-soft); margin-top: 10px; padding-top: 9px; }
   .provdiv:first-child { border-top: none; margin-top: 0; padding-top: 0; }
 
-  /* ---- 按钮 / 选择器 / 分段开关 ---------------------------------------- */
-  button {
-    font: 500 12.5px var(--sans); padding: 7px 14px; border-radius: 7px; cursor: pointer;
-    border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
-    transition: border-color .16s, color .16s, background .16s, transform .16s, box-shadow .16s;
-  }
-  button:hover { border-color: var(--amber); color: var(--amber-hi); }
-  button:active { transform: translateY(1px); }
-  button.primary { background: var(--amber); border-color: var(--amber); color: #161007; font-weight: 650; }
-  button.primary:hover { background: var(--amber-hi); border-color: var(--amber-hi); color: #161007; box-shadow: 0 3px 16px rgba(var(--amber-rgb), .3); }
-  button.danger:hover { border-color: var(--red); color: var(--red); }
-  button:disabled { opacity: .45; cursor: default; transform: none; }
-  select {
-    font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 7px;
-    border: 1px solid var(--line); background: var(--inset); color: var(--ink);
-  }
-  select:focus, button:focus-visible, input:focus-visible, textarea:focus-visible {
-    outline: none; border-color: var(--amber); box-shadow: 0 0 0 3px rgba(var(--amber-rgb), .16);
-  }
-  .seg { display: inline-flex; background: var(--inset); border: 1px solid var(--line); border-radius: 7px; padding: 2px; gap: 2px; }
-  .seg button { border: none; background: transparent; padding: 4px 12px; font-size: 12px; border-radius: 5px; color: var(--dim); }
-  .seg button:hover { color: var(--ink); border-color: transparent; }
-  .seg button.active { background: var(--panel-2); color: var(--amber-hi); box-shadow: inset 0 0 0 1px var(--line); }
-  .seg button.active:hover { color: var(--amber-hi); }
 
   /* ---- 模型目录 chips：按供应商着色的通道条 ---------------------------- */
   .chips { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -286,16 +65,6 @@
   .xaxis span { flex: 1; text-align: center; line-height: 1; }
   .xaxis span.now { color: var(--amber-hi); font-weight: 700; }
 
-  /* ---- 表格 ------------------------------------------------------------ */
-  .tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  .tbl th {
-    text-align: left; font: 600 11px var(--mono); color: var(--faint);
-    letter-spacing: .07em; padding: 6px 8px 7px; border-bottom: 1px solid var(--line);
-  }
-  .tbl td { padding: 6px 8px; border-bottom: 1px solid var(--line-soft); font-variant-numeric: tabular-nums; }
-  .tbl tbody tr:hover td, .tbl tr:hover td { background: var(--row-hover); }
-  .tbl .mono { font-family: var(--mono); }
-  .tbl button { padding: 3px 10px; font-size: 11.5px; border-radius: 5px; }
   .tbl.perf { width: max-content; min-width: 100%; }
   .tbl.perf th, .tbl.perf td { white-space: nowrap; }
   .tbl.perf th.score { color: var(--amber-hi); background: var(--amber-dim); }
@@ -309,7 +78,6 @@
   .scorebar i { display: block; height: 100%; background: var(--amber); }
   .tbl.perf tr.best .scorebar { background: rgba(255, 255, 255, .3); }
   .tbl.perf tr.best .scorebar i { background: #fff; }
-  .scroll { overflow-x: auto; }
   /* 费用统计：分供应商汇总块与单价表 */
   .provsum { display: flex; gap: 10px; flex-wrap: wrap; margin: 2px 0 12px; }
   .psum {
@@ -321,23 +89,7 @@
   details.prices summary { cursor: pointer; font-size: 12px; color: var(--dim); user-select: none; }
   details.prices summary:hover { color: var(--amber-hi); }
 
-  .badge { display: inline-block; line-height: 1.55; border-radius: 5px; padding: 1.5px 9px; font: 600 11px var(--mono); letter-spacing: .04em; vertical-align: 1px; }
-  .badge.on { color: var(--green); border: 1px solid rgba(var(--green-rgb), .42); background: rgba(var(--green-rgb), .09); }
-  .badge.off { color: var(--dim); border: 1px solid var(--line); background: var(--inset); }
 
-  /* ---- 表单 ------------------------------------------------------------ */
-  .frow { display: flex; align-items: center; gap: 12px; margin: 9px 0; }
-  .frow > label { width: 116px; flex: none; font: 500 12px var(--mono); color: var(--dim); letter-spacing: .03em; }
-  .frow input, .frow textarea {
-    flex: 1; font: 13px var(--sans); padding: 7.5px 11px; border-radius: 7px;
-    border: 1px solid var(--line); background: var(--inset); color: var(--ink);
-    transition: border-color .16s, box-shadow .16s;
-  }
-  .frow input::placeholder, .frow textarea::placeholder { color: var(--faint); }
-  .frow textarea { min-height: 70px; resize: vertical; font: 12px/1.65 var(--mono); }
-  .frow input:disabled { opacity: .5; background: var(--line-soft); }
-  .frow input[type="checkbox"] { flex: none; width: 15px; height: 15px; accent-color: var(--amber); }
-  .frow .opt { font-size: 11.5px; color: var(--dim); }
   /* 显示器改名输入框：行内小号，占满剩余宽度 */
   .monname {
     flex: 1; min-width: 90px; max-width: 200px; font: 12px var(--mono); padding: 3px 8px;
@@ -346,8 +98,6 @@
   .monname::placeholder { color: var(--faint); }
 
   /* ---- 测试台 / 结果 ---------------------------------------------------- */
-  .actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
-  .actions select { min-width: 250px; font-family: var(--mono); font-size: 12.5px; }
   #result {
     font: 12.5px/1.8 var(--mono); white-space: pre-wrap; word-break: break-all;
     border-left: 2px solid var(--amber); border-radius: 4px 10px 10px 4px;
@@ -371,24 +121,7 @@
   pre#log::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
   pre#log::-webkit-scrollbar-thumb:hover { background: rgba(var(--amber-rgb), .45); }
 
-  .foot { margin-top: 22px; font: 10.5px var(--mono); color: var(--faint); text-align: center; letter-spacing: .14em; }
-  code { background: var(--inset); border: 1px solid var(--line-soft); border-radius: 4px; padding: 1px 6px; font: 11.5px var(--mono); color: var(--amber-hi); }
 
-  /* ---- 窄屏（单列）：通道栏折叠为顶栏 ----------------------------------- */
-  @media (max-width: 900px) {
-    .frame { grid-template-columns: 1fr; }
-    .rail {
-      position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line-soft);
-      padding: 18px 20px 12px;
-    }
-    .views { flex-direction: row; overflow-x: auto; margin-top: 10px; padding-bottom: 4px; }
-    .viewbtn { white-space: nowrap; padding: 6px 12px; }
-    .viewbtn.active::before { display: none; }
-    .viewbtn .ven { display: none; }
-    .rail-foot { margin-top: 10px; flex-direction: row; align-items: center; flex-wrap: wrap; }
-    .rail-foot .sub { display: none; }
-    .main { padding: 20px 20px 48px; }
-  }
 </style>
 </head>
 <body>
@@ -411,6 +144,7 @@
       <button class="viewbtn" data-view="traffic"><span class="idx">02</span><span class="vname">统计</span><span class="ven">Traffic · Perf</span><span class="vbadge" id="vbTraffic" hidden></span></button>
       <button class="viewbtn" data-view="test"><span class="idx">03</span><span class="vname">诊断</span><span class="ven">Test · Log</span><span class="vbadge" id="vbLog" hidden></span></button>
       <button class="viewbtn" data-view="providers"><span class="idx">04</span><span class="vname">配置</span><span class="ven">Providers</span><span class="vbadge" id="vbProviders" hidden></span></button>
+      <a class="viewbtn" href="/workbench"><span class="idx">05</span><span class="vname">工作台</span><span class="ven">Workbench</span></a>
     </nav>
     <div class="rail-foot">
       <div class="sub">Displays</div>
