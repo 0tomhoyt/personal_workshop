@@ -793,6 +793,73 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     process.env.CANNBOT_CC_DIR = path.join(tmp, 'cc-projects');
   }
 
+  console.log('— 报告源：Cursor（agent-transcripts 适配器，fixture） —');
+  {
+    const NOW = Date.now();
+    const WIN = { startMs: NOW - 3600_000, endMs: NOW + 3600_000 };
+    const U1 = '11111111-2222-3333-4444-555555555555';
+    const U2 = 'aaaa1111-bbbb-2222-cccc-333333333333';
+    const dir1 = path.join(tmp, 'cursor-projects', 'Users-x-proj', 'agent-transcripts', U1);
+    fs.mkdirSync(dir1, { recursive: true });
+    const tag = (offsetMs) => {
+      const d = new Date(NOW + offsetMs);
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      let h = d.getHours(); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12;
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      return `<timestamp>${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}, ${h}:${mm} ${ap} (UTC+8)</timestamp>`;
+    };
+    const line = (role, text) => JSON.stringify({ role, message: { content: [{ type: 'text', text }] } });
+    // 会话 1：窗口外标签行 + 窗口内标签锚点行 + 无标签行；subagents 平行目录
+    fs.writeFileSync(path.join(dir1, `${U1}.jsonl`), [
+      line('user', `${tag(-100 * 3600_000)}\n<user_query>\n上周的问题\n</user_query>`),
+      line('assistant', '上周的答复'),
+      line('user', `${tag(-500_000)}\n<user_query>\n修复登录超时\n</user_query>`),
+      line('assistant', '已修复并补了测试'),
+      line('user', '补充：也检查下注册'),
+      line('assistant', '注册流程也修了'),
+    ].join('\n') + '\n');
+    // 子代理记录：必须排除
+    fs.mkdirSync(path.join(dir1, 'subagents'), { recursive: true });
+    fs.writeFileSync(path.join(dir1, 'subagents', 'agent-1.jsonl'), line('assistant', '子代理探索内容'));
+    // 会话 2：无任何窗口内标签（mtime 在窗口内 → tailOnly 整会话保留）
+    const dir2 = path.join(tmp, 'cursor-projects', 'Users-x-proj', 'agent-transcripts', U2);
+    fs.mkdirSync(dir2, { recursive: true });
+    fs.writeFileSync(path.join(dir2, `${U2}.jsonl`), [
+      line('user', `${tag(-100 * 3600_000)}\n<user_query>\n历史标签会话\n</user_query>`),
+      line('assistant', '历史答复'),
+      line('assistant', '无标签的新近内容'),
+    ].join('\n') + '\n');
+    // 空 transcript 目录（0 个 uuid.jsonl）
+    const dir3 = path.join(tmp, 'cursor-projects', 'Users-x-proj', 'agent-transcripts', 'empty-transcript');
+    fs.mkdirSync(dir3, { recursive: true });
+
+    process.env.CANNBOT_CURSOR_DIR = path.join(tmp, 'cursor-projects');
+    const { listSessions } = await import(path.join(ROOT, 'lib/report/sources/cursor.mjs') + '?t=' + Date.now());
+    const sessions = await listSessions(WIN);
+    check('cursor: 产出 2 会话（空目录不产出）', sessions.length === 2, JSON.stringify(sessions.map((x) => x.sessionId)));
+    const s1 = sessions.find((x) => x.sessionId === U1);
+    const s2 = sessions.find((x) => x.sessionId === U2);
+    check('cursor: 项目路径由目录名还原', s1?.project === '/Users/x/proj' && s1?.source === 'cursor', JSON.stringify(s1?.project));
+    const texts1 = (s1?.messages ?? []).map((m) => `${m.role}:${m.text}`).join(' | ');
+    check('cursor: 从窗口内锚点行开始（窗口外 user/assistant 不在）', !texts1.includes('上周的问题') && !texts1.includes('上周的答复') && texts1.includes('修复登录超时') && texts1.includes('已修复并补了测试'), texts1);
+    check('cursor: 锚点后的无标签行保留', texts1.includes('补充：也检查下注册') && texts1.includes('注册流程也修了'), texts1);
+    check('cursor: 无标签 assistant 沿用锚点时间', (() => {
+      const anchor = s1?.messages?.find((m) => m.role === 'user' && m.text.includes('修复登录超时'));
+      const asst = s1?.messages?.find((m) => m.role === 'assistant' && m.text.includes('已修复并补了测试'));
+      return anchor && asst && asst.time === anchor.time;
+    })(), JSON.stringify(s1?.messages?.map((m) => [m.role, m.time])));
+    check('cursor: subagents 内容被排除', !JSON.stringify(sessions).includes('子代理探索内容'));
+    check('cursor: 无窗口内标签 → tailOnly 整会话', s2?.tailOnly === true && s2?.messages?.some((m) => m.text.includes('历史标签会话')) && s2?.messages?.some((m) => m.text.includes('无标签的新近内容')), JSON.stringify(s2 && { tailOnly: s2.tailOnly, n: s2.messages.length }));
+    check('cursor: 时间戳标签不留在正文里', !JSON.stringify(sessions).includes('<timestamp>'));
+
+    process.env.CANNBOT_CURSOR_DIR = path.join(tmp, 'no-such-cursor-dir');
+    let rejected = false;
+    try { await listSessions(WIN); } catch { rejected = true; }
+    check('cursor: 根目录不存在 → reject', rejected);
+    process.env.CANNBOT_CURSOR_DIR = path.join(tmp, 'cursor-projects');
+  }
+
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');
   {
     const MON_UUIDS = ['A016429F-BCEC-4FAF-BD7D-23128391F7F1', 'F2F948D6-2F40-4DEC-8EF8-2E158BFF4328'];
