@@ -1,5 +1,5 @@
 #!/bin/bash
-# status.sh — 查看 cannbot-gateway-proxy 状态（服务 / 凭证 / 最近请求）
+# status.sh — 查看统一订阅网关状态（服务 / 各上游凭证 / 最近请求）
 #
 # 用法: ./status.sh [端口]     # 缺省 8484
 
@@ -29,7 +29,7 @@ C = lambda code: f"\033[{code}m" if color else ""
 GREEN, RED, YELLOW, DIM, BOLD, RESET = C("32"), C("31"), C("33"), C("2"), C("1"), C("0")
 
 W = 46
-print(f"{BOLD}CANNBot 网关代理{RESET}  " + DIM + "─" * W + RESET)
+print(f"{BOLD}统一订阅网关{RESET}  " + DIM + "─" * W + RESET)
 
 # ---- 服务 ----
 pid = None
@@ -54,31 +54,44 @@ if not health_raw:
     sys.exit(1)
 
 h = json.loads(health_raw)
-print(f"  接口    http://127.0.0.1:{port}/v1  {DIM}→ cannbot.hicann.cn{RESET}")
+print(f"  接口    http://127.0.0.1:{port}/v1  {DIM}→ {len(h.get('providers', []))} 个订阅上游{RESET}")
 up = h.get("uptimeSec", 0)
 up_h = f"{up//3600}小时{up%3600//60}分" if up >= 3600 else (f"{up//60}分{up%60}秒" if up >= 60 else f"{up}秒")
 print(f"  运行    {DIM}已运行 {up_h}{RESET}")
+auth = h.get("authRequired")
+print(f"  鉴权    {GREEN}● 已启用（Bearer token）{RESET}" if auth else f"  鉴权    {YELLOW}未配置 clientToken{RESET}")
 
-# ---- 凭证 ----
-jwt = h.get("jwt", {})
-if jwt.get("ok"):
-    exp = datetime.datetime.fromisoformat(jwt["expiresAt"].replace("Z", "+00:00")).astimezone()
-    remain = exp - datetime.datetime.now().astimezone()
-    mins = int(remain.total_seconds() // 60)
-    left = f"剩余 {mins//60} 小时 {mins%60} 分" if mins >= 60 else f"仅剩 {mins} 分"
-    mark = GREEN if mins > 60 else YELLOW
-    print(f"  凭证    {mark}● JWT 有效{RESET}，{exp:%m-%d %H:%M} 过期（{left}）")
-else:
-    print(f"  凭证    {RED}✗ JWT 不可用{RESET}")
-    err = jwt.get("error") or "未知原因"
-    print(f"          {RED}{err}{RESET}")
-    print(f"          {YELLOW}→ 处理：打开 VSCode 的 CANNWork 扩展重新登录，无需重启代理{RESET}")
-
-vk = f"{GREEN}已缓存{RESET}" if h.get("vkCached") else f"{YELLOW}未换取{RESET}"
-print(f"  VK      {vk}{DIM + ('，' + h['vkCachedAt'][11:16] + ' 换取' if h.get('vkCachedAt') else '')}{RESET}")
-models = h.get("modelsKnown")
-if models:
-    print(f"  模型    {models} 个（curl http://127.0.0.1:{port}/v1/models 查看）")
+# ---- 各订阅上游 ----
+all_ok = True
+for p in h.get("providers", []):
+    a = p.get("auth") or {}
+    jwt = a.get("jwt")
+    label = f"{p['id']} ({p.get('protocol', '?')})"
+    models = p.get("modelsKnown")
+    models_s = f"· 模型 {models}" if models else ("· 模型目录异常" if p.get("catalogError") else "")
+    if jwt is not None:  # cannwork 凭证链
+        if jwt.get("ok"):
+            exp = datetime.datetime.fromisoformat(jwt["expiresAt"].replace("Z", "+00:00")).astimezone()
+            remain = exp - datetime.datetime.now().astimezone()
+            mins = int(remain.total_seconds() // 60)
+            left = f"剩余 {mins//60} 小时 {mins%60} 分" if mins >= 60 else f"仅剩 {mins} 分"
+            mark = GREEN if mins > 60 else YELLOW
+            print(f"  上游    {mark}● {label}{RESET} · JWT {exp:%m-%d %H:%M} 过期（{left}）{DIM} {models_s}{RESET}")
+        else:
+            all_ok = False
+            print(f"  上游    {RED}✗ {label}{RESET} · JWT 不可用 {models_s}")
+            err = jwt.get("error") or "未知原因"
+            print(f"          {RED}{err}{RESET}")
+            print(f"          {YELLOW}→ 处理：打开 VSCode 的 CANNWork 扩展重新登录，无需重启网关{RESET}")
+    else:  # 静态 token
+        if a.get("ok"):
+            print(f"  上游    {GREEN}● {label}{RESET} · Token 有效（{a.get('tokenSource', '-')}）{DIM} {models_s}{RESET}")
+        else:
+            all_ok = False
+            print(f"  上游    {RED}✗ {label}{RESET} · Token 缺失 {models_s}")
+            err = a.get("error") or "未知原因"
+            print(f"          {RED}{err[:110]}{RESET}")
+            print(f"          {YELLOW}→ 处理：在 providers.json 里补 auth 配置（token/tokenEnv/tokenFile）{RESET}")
 
 # ---- 最近请求 ----
 print(f"{BOLD}最近请求{RESET}  " + DIM + "─" * W + RESET)
@@ -94,15 +107,15 @@ if os.path.exists(log_file):
             t = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().strftime("%H:%M:%S")
         except ValueError:
             t = ts[11:19]
-        rm = re.match(r"(\S+) (\S+) model=(\S+) → (\d+) (\d+)ms(.*)", rest)
+        rm = re.match(r"(\S+) (\S+) (\S+) → (\d+) (\d+)ms(.*)", rest)
         if rm:
-            method, path, model, status, ms, extra = rm.groups()
+            method, path, prov_model, status, ms, extra = rm.groups()
             sc = GREEN if status.startswith("2") else RED
             mark = f"{sc}{status}{RESET}"
             dur = f"{int(ms)/1000:.1f}s" if int(ms) >= 1000 else f"{ms}ms"
-            print(f"  {DIM}{t}{RESET}  {method} {path}  {model}  → {mark}  {dur}{DIM}{extra}{RESET}")
+            print(f"  {DIM}{t}{RESET}  {method} {path}  {prov_model}  → {mark}  {dur}{DIM}{extra}{RESET}")
             shown += 1
-        elif rest.startswith("ERROR") or "刷新 VK" in rest:
+        elif rest.startswith("ERROR") or "重取凭证" in rest:
             print(f"  {DIM}{t}{RESET}  {RED}{rest[:90]}{RESET}")
             shown += 1
     if not shown:
@@ -111,6 +124,6 @@ else:
     print(f"  {DIM}（暂无日志）{RESET}")
 
 ok = bool(h.get("ok"))
-print(f"{GREEN}✓ 一切正常{RESET}" if ok else f"{RED}✗ 凭证异常，请求会被拒绝{RESET}")
+print(f"{GREEN}✓ 一切正常{RESET}" if ok else f"{RED}✗ 部分上游凭证异常，相关请求会被拒绝{RESET}")
 sys.exit(0 if ok else 1)
 PYEOF
