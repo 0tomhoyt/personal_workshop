@@ -34,6 +34,8 @@ fs.writeFileSync(path.join(tmp, 'providers.json'), JSON.stringify({
     { id: 'mock-zai', name: 'MockZAI', baseUrl: `http://127.0.0.1:${MOCK_PORT}/z.ai`, protocol: 'openai', auth: { type: 'static-token', token: 'mock-token-zhipu' }, models: { source: 'api' } },
   ],
   routing: { defaultProvider: 'mock-oai' },
+  // 工作台：报告生成用的模型（Task 8 消费；此处锁定配置透传）
+  workbench: { reportProvider: 'mock-oai', reportModel: 'mock-pro' },
   pricing: { // 费用统计：mock-pro 走裸名覆盖，claude-mock 走 pid/模型名 精确覆盖
     'mock-pro': { input: 1, output: 2 },
     'mock-anth/claude-mock': { input: 0.5, output: 1 },
@@ -623,6 +625,25 @@ try {
     check('坏 todos.json：实例存活且空列表起步', Array.isArray(badList.todos) && badList.todos.length === 0, JSON.stringify(badList));
     check('坏 todos.json：主业务正常', (await (await fetch('http://127.0.0.1:6294/healthz')).json()).service === 'unified-subscription-gateway');
     gwTodo.kill();
+  }
+
+  console.log('— 配置 workbench 节（报告模型设置，热加载） —');
+  {
+    const c = await (await fetch(`${GW}/admin/config`)).json();
+    check('/admin/config 透传 workbench 节', c.workbench?.reportProvider === 'mock-oai' && c.workbench?.reportModel === 'mock-pro', JSON.stringify(c.workbench));
+    // 进程内：坏值静默跳过（非字符串/空串/未知键一律剔除，不阻塞配置加载）
+    const badCfg = path.join(tmp, 'providers-bad-wb.json');
+    fs.writeFileSync(badCfg, JSON.stringify({
+      gateway: { clientToken: 'x' },
+      providers: [{ id: 'p1', protocol: 'openai', baseUrl: 'https://x.example', auth: { type: 'static-token', token: 't' }, models: { source: 'static', list: [{ id: 'm1' }] } }],
+      workbench: { reportProvider: 123, reportModel: '', extra: true },
+    }));
+    const prev = process.env.CANNBOT_CONFIG_FILE;
+    process.env.CANNBOT_CONFIG_FILE = badCfg;
+    const { getConfig } = await import(path.join(ROOT, 'lib/config.mjs') + '?badwb=' + Date.now());
+    process.env.CANNBOT_CONFIG_FILE = prev;
+    const wb = getConfig().workbench;
+    check('workbench 坏值静默剔除（非字符串/空串/未知键）', wb && Object.keys(wb).length === 0, JSON.stringify(wb));
   }
 
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');

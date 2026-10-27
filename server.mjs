@@ -129,6 +129,7 @@ const server = http.createServer(async (req, res) => {
         clientToken: config.gateway?.clientToken ?? null,
         port: PORT,
         providers: (config.providers ?? []).filter((p) => p.enabled).map((p) => ({ id: p.id, name: p.name, protocol: p.protocol })),
+        workbench: config.workbench ?? {},
       });
     }
 
