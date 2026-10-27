@@ -751,6 +751,14 @@ try {
       'bootout 与 bootstrap 两处都需守卫');
     check('uninstall.sh 含 CGP_SKIP_LAUNCHCTL 演练守卫', (un.match(/CGP_SKIP_LAUNCHCTL/g) ?? []).length >= 2,
       'bootout 与文案都需守卫');
+    // r8 对比度：tgroup-label 用 --dim（暗 5.5 / 亮 4.69，WCAG AA）；亮色 --dim 加深到 #736d5e
+    const wbh = fs.readFileSync(path.join(ROOT, 'workbench.html'), 'utf8');
+    const wbc = fs.readFileSync(path.join(ROOT, 'workbench.css'), 'utf8');
+    check('tgroup-label 颜色为 --dim（不用 2.67:1 的 --faint）',
+      /tgroup-label[\s\S]{0,200}color:\s*var\(--dim\)/.test(wbh),
+      '分组标签需达 WCAG AA');
+    check('亮色 --dim 对比度 ≥4.5（#736d5e）', wbc.includes('--dim: #736d5e'),
+      '原 #7b7566 仅 4.17:1');
   }
 
   console.log('— 报告源：zcode（db.sqlite 适配器，fixture） —');

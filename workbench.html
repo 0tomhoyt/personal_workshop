@@ -34,7 +34,8 @@
   /* ---- 待办：遥测行 ------------------------------------------------------ */
   .tgroup { margin-top: 14px; }
   .tgroup-label {
-    font: 600 10.5px var(--mono); color: var(--faint); letter-spacing: .22em;
+    /* 分组标签：--faint 在暗色仅 2.67:1（低于 WCAG AA 4.5），升到 --dim（暗 5.5 / 亮 4.5+）*/
+    font: 600 10.5px var(--mono); color: var(--dim); letter-spacing: .22em;
     text-transform: uppercase; margin: 0 2px 7px;
     display: flex; align-items: center; gap: 8px;
   }

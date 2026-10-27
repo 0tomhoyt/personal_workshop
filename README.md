@@ -312,6 +312,11 @@ node test/smoke.mjs               # 端到端回归（不依赖真实订阅）
 rm -rf ~/Desktop/cannbot-gateway-proxy
 ```
 
+卸载会先把 `providers.json` / `todos.json` / `reports.json` 与坏文件自愈的 `*.bad` 现场备份
+抢救到 `~/.local/share/cannbot-gateway-proxy.data-backup-<时间戳>/` 再清理运行时目录。
+脚本演练/测试时务必带 `CGP_SKIP_LAUNCHCTL=1`（跳过 launchctl 步骤——launchctl 作用于
+用户域、与 HOME 无关，沙箱 HOME 下跑也会停掉真实服务）。
+
 ## 已知注意事项
 
 - **CANNWork 2.0.2 已适配**：模型列表走 `/cannbot/api/models/list`（遗留 `/models/personal` 兜底），

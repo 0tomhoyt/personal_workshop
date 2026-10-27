@@ -13,11 +13,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 node server.mjs              # 前台直接运行（调试用；源目录无 providers.json，会回落内置默认配置——仅 cannbot、无客户端鉴权）
-node test/smoke.mjs          # 端到端冒烟测试（起 mock 上游 + 网关实例，百余项断言；固定端口 6290/6291）
+node test/smoke.mjs          # 端到端冒烟测试（起 mock 上游 + 网关实例，三百余项断言；固定端口 6290/6291）
 # 前台联调真实配置（换端口避开 launchd 实例；VK 缓存指到临时目录防活凭证落入源目录）：
 CANNBOT_PROXY_PORT=8485 CANNBOT_CONFIG_FILE="$HOME/.local/share/cannbot-gateway-proxy/providers.json" CANNBOT_VK_CACHE=/tmp/vk-debug.json node server.mjs
-./install.sh [端口]           # 安装并启动 launchd 常驻服务（幂等，缺省 8484）
-./uninstall.sh [--revert-configs]   # 停服务；--revert-configs 连 zcode 配置一起回滚
+./install.sh [端口]           # 安装并启动 launchd 常驻服务（幂等，缺省 8484）；CGP_SKIP_LAUNCHCTL=1 演练（跳过 launchctl 步骤）
+./uninstall.sh [--revert-configs]   # 停服务；--revert-configs 连 zcode 配置一起回滚；CGP_SKIP_LAUNCHCTL=1 演练同上（launchctl 作用于用户域、与 HOME 无关，脚本测试必须带它）
 ./status.sh                  # 服务状态 + 各上游凭证体检 + 最近请求
 ./cannbot-creds.sh           # cannbot 订阅凭证诊断（日常不用跑）
 curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
