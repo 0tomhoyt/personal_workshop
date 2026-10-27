@@ -88,7 +88,7 @@
   @keyframes rscan { 0% { left: -36%; } 100% { left: 100%; } }
 
   /* ---- 报告：成稿渲染 ---------------------------------------------------- */
-  .rout { display: none; margin-top: 14px; }
+  .rout { display: none; margin-top: 14px; scroll-margin-top: 18px; }
   .rmeta { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 9px; font: 11px var(--mono); color: var(--faint); }
   .rmeta .rmodel { color: var(--amber); }
   .rbody {
@@ -113,7 +113,7 @@
   /* 表头窄屏不折行；页脚贴近内容 */
   #rhistTbl th { white-space: nowrap; }
   /* 历史表当前查看行：琥珀淡底 + 左缘游标，与整页语言一致 */
-  #rhistTbl tr.is-viewing td { background: rgba(var(--amber-rgb), .08); }
+  #rhistTbl tr.is-viewing td { background: rgba(var(--amber-rgb), .16); }
   #rhistTbl tr.is-viewing td:first-child { box-shadow: inset 2px 0 0 var(--amber); }
   .foot { margin-top: 16px; }
 
@@ -417,6 +417,8 @@ function renderTodos() {
   if (urgencies.length) fhtml += (fhtml ? '<span style="width:6px"></span>' : '') + `<span class="flabel">紧急度</span>` + urgencies.map((u) => chip('urgency', u, URG_LABEL[u] || u)).join('');
   if (filtered) fhtml += `<button data-flt="clear">✕ 清除筛选</button><span class="fcount">显示 ${visible.length} / 共 ${allTodos.length}</span>`;
   $('todoChips').innerHTML = fhtml;
+  // 零待办且无任何生效筛选时收起搜索框（chips 本就为空，空占位显得多余）
+  $('todoSearch').style.display = (allTodos.length === 0 && !filtered) ? 'none' : '';
 
   // 通道栏遥测（全量口径，不受筛选影响）
   $('railTodo').textContent = String(allTodos.filter((t) => t.status === 'pending').length);
@@ -581,6 +583,10 @@ async function showReport(id) {
   $('rbody').innerHTML = mdToHtml(rep.report || '');
   $('rout').style.display = 'block';
   $('rbody').scrollTop = 0;
+  // 起止框与预设高亮跟所看报告的区间对齐（生成完成走这里时本来就该与该报告一致）
+  $('rngStart').value = toLocalInput(rep.range.start);
+  $('rngEnd').value = toLocalInput(rep.range.end);
+  syncPresetFromInputs();
   showReport._last = rep.report || '';
   // 成稿区滚进视野（点「查看」时页面常停在历史表附近，用户会以为没反应）
   $('rout').scrollIntoView({ behavior: 'smooth', block: 'start' });
