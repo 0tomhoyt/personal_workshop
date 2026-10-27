@@ -712,6 +712,24 @@ try {
     process.env.CANNBOT_CONFIG_FILE = prev;
     const wb = getConfig().workbench;
     check('workbench 坏值静默剔除（非字符串/空串/未知键）', wb && Object.keys(wb).length === 0, JSON.stringify(wb));
+    // 进程内：配置文件缺失时的内置默认回落必须过 normalize——否则 healthz 的
+    // providers 过滤（p.enabled）会把内置 cannbot 隐形，与「回落仅 cannbot」文案矛盾
+    process.env.CANNBOT_CONFIG_FILE = path.join(tmp, '不存在的-providers.json');
+    const cfgMod = await import(path.join(ROOT, 'lib/config.mjs') + '?builtin=' + Date.now());
+    process.env.CANNBOT_CONFIG_FILE = prev;
+    const bc = cfgMod.getConfig();
+    check('内置默认回落含 cannbot 且 enabled（过 normalize）',
+      bc.providers.length === 1 && bc.providers[0].id === 'cannbot' && bc.providers[0].enabled === true,
+      JSON.stringify(bc.providers.map((p) => ({ id: p.id, enabled: p.enabled }))));
+    check('内置默认回落无客户端鉴权', bc.gateway.clientToken === null, JSON.stringify(bc.gateway));
+  }
+
+  console.log('— 提交就绪：运行时产物 .bad 备份被 .gitignore 覆盖 —');
+  {
+    const gi = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8');
+    check('.gitignore 覆盖 *.bad / *.bad.*（坏文件自愈现场不入库）',
+      gi.includes('*.bad') && gi.includes('*.bad.*'),
+      gi.split('\n').filter((l) => l.includes('bad')).join(' | '));
   }
 
   console.log('— 报告源：zcode（db.sqlite 适配器，fixture） —');
