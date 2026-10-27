@@ -747,6 +747,52 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     process.env.CANNBOT_OPENCODE_DB = db;
   }
 
+  console.log('— 报告源：Claude Code（projects jsonl 适配器，fixture） —');
+  {
+    const NOW = Date.now();
+    const WIN = { startMs: NOW - 3600_000, endMs: NOW + 3600_000 };
+    const T = (offsetMs) => new Date(NOW + offsetMs).toISOString();
+    const projDir = path.join(tmp, 'cc-projects', '-Users-x-dirname-lossy---'); // 目录名故意不可逆编码
+    fs.mkdirSync(projDir, { recursive: true });
+    // sess1：窗口内混合行（真人/斜杠/工具结果/isMeta/assistant thinking+text/ai-title/半截行）
+    fs.writeFileSync(path.join(projDir, 'sess1.jsonl'), [
+      JSON.stringify({ type: 'ai-title', aiTitle: '网关排障', sessionId: 's1' }),
+      JSON.stringify({ type: 'user', message: { content: '帮我看下 403' }, promptSource: 'typed', cwd: '/Users/x/real-proj', timestamp: T(-500_000), sessionId: 's1' }),
+      JSON.stringify({ type: 'user', message: { content: '/model glm-4.7 ' }, cwd: '/Users/x/real-proj', timestamp: T(-480_000) }), // 斜杠回显（无 promptSource）
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] }, toolUseResult: {}, cwd: '/Users/x/real-proj', timestamp: T(-470_000) }),
+      JSON.stringify({ type: 'user', isMeta: true, message: { content: 'skill 注入' }, cwd: '/Users/x/real-proj', timestamp: T(-460_000) }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: '先查日志' }, { type: 'text', text: '403 来自上游' }], model: 'glm-5.3' }, cwd: '/Users/x/real-proj', timestamp: T(-400_000) }),
+      '{"type":"user","mess', // 活跃会话尾部半截 JSON
+    ].join('\n') + '\n');
+    // sess2：全部行在窗口外
+    fs.writeFileSync(path.join(projDir, 'sess2.jsonl'), [
+      JSON.stringify({ type: 'user', message: { content: '上周的对话' }, promptSource: 'typed', cwd: '/Users/x/real-proj', timestamp: T(-100 * 3600_000) }),
+    ].join('\n') + '\n');
+    // sess3：整文件坏行（容错跳过）
+    fs.writeFileSync(path.join(projDir, 'sess3.jsonl'), 'not json at all\n{broken\n');
+
+    process.env.CANNBOT_CC_DIR = path.join(tmp, 'cc-projects');
+    const { listSessions } = await import(path.join(ROOT, 'lib/report/sources/claude-code.mjs') + '?t=' + Date.now());
+    const sessions = await listSessions(WIN);
+    check('claude-code: 恰 1 会话（窗口外/坏文件不产出）', sessions.length === 1, JSON.stringify(sessions.map((x) => x.sessionId)));
+    const s = sessions[0];
+    check('claude-code: project 取行内 cwd（不用有损目录名）', s?.project === '/Users/x/real-proj' && s?.source === 'claude-code', JSON.stringify(s?.project));
+    check('claude-code: 标题取 ai-title', s?.title === '网关排障', JSON.stringify(s?.title));
+    const texts = (s?.messages ?? []).map((m) => `${m.role}:${m.text}`).join(' | ');
+    check('claude-code: 真人输入与 assistant 正文在素材里', texts.includes('user:帮我看下 403') && texts.includes('assistant:403 来自上游'), texts);
+    check('claude-code: 斜杠命令回显被排除', !texts.includes('/model'), texts);
+    check('claude-code: tool_result 被排除', !texts.includes('ok'), texts);
+    check('claude-code: isMeta 注入被排除', !texts.includes('skill'), texts);
+    check('claude-code: thinking 被排除', !texts.includes('先查日志'), texts);
+    check('claude-code: 消息时间均在窗口内', s?.messages?.every((m) => m.time >= WIN.startMs && m.time < WIN.endMs));
+
+    process.env.CANNBOT_CC_DIR = path.join(tmp, 'no-such-cc-dir');
+    let rejected = false;
+    try { await listSessions(WIN); } catch { rejected = true; }
+    check('claude-code: 根目录不存在 → reject', rejected);
+    process.env.CANNBOT_CC_DIR = path.join(tmp, 'cc-projects');
+  }
+
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');
   {
     const MON_UUIDS = ['A016429F-BCEC-4FAF-BD7D-23128391F7F1', 'F2F948D6-2F40-4DEC-8EF8-2E158BFF4328'];
