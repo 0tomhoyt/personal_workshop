@@ -1,8 +1,11 @@
-# 统一订阅 API 网关（cannbot-gateway-proxy）
+# 个人工作台 · 统一订阅 API 网关（cannbot-gateway-proxy）
 
-把**多个订阅服务**（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，
+**统一订阅网关**：把**多个订阅服务**（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，
 本机所有 Agent（zcode CLI、Claude Code、opencode、任意 OpenAI/Anthropic 客户端）统一从这里调用。
 网关按请求里的**模型名**路由到对应订阅，自动注入该订阅的凭证——业务配置里不需要保存任何上游密钥。
+
+**个人工作台**（`http://127.0.0.1:8484/workbench`）：跨 agent 的待办事项（人与 agent 经
+`/v1/todos` 共用）+ 时间段 AI 工作总结（读本机各 agent 的会话记录，两级总结成给上级的汇报）。
 
 ```
 zcode CLI / Claude Code / opencode / curl …（全部 Agent）
@@ -13,7 +16,10 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
    ├─ 模型名路由     model → provider（providers.json，热加载）
    ├─ 协议处理       同协议原样直通（字节级）；跨协议双向翻译
    ├─ 凭证注入       per-provider：CANNWork JWT+VK 链 / 静态 token
-   └─ 统计与管理台   流量、TTFT/TPOT/ITL/E2E、provider 维度
+   ├─ 统计与管理台   流量、TTFT/TPOT/ITL/E2E、provider 维度
+   └─ 个人工作台     /workbench：待办 /v1/todos（人与 agent 共用）
+        │            + AI 时间段总结 /admin/report/*（读 Claude Code /
+        │              zcode / opencode / Cursor 本地会话 → 两级总结汇报）
         ├─→ cannbot  https://cannbot.hicann.cn/…        (openai 协议)
         ├─→ kimi     https://api.kimi.com/anthropic      (anthropic 协议)
         └─→ zcode    https://api.z.ai/api/anthropic      (anthropic 协议)
@@ -34,10 +40,11 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
 | 文件/目录 | 作用 |
 |---|---|
 | `server.mjs` | 入口：HTTP 服务 + 路由分发 + healthz/admin 端点（Node ≥18 零依赖） |
-| `lib/` | 服务端模块：config（providers.json）/ models（模型目录与路由）/ upstream（统一上游请求）/ auth/（cannwork、static 凭证链）/ translate/（Anthropic↔OpenAI 双向翻译）/ proxy-openai、proxy-anthropic（两条入站管道）/ stats / log / gwauth / util |
+| `lib/` | 服务端模块：config（providers.json）/ models（模型目录与路由）/ upstream（统一上游请求）/ auth/（cannwork、static 凭证链）/ translate/（Anthropic↔OpenAI 双向翻译）/ proxy-openai、proxy-anthropic（两条入站管道）/ stats / log / gwauth / util / todos（工作台待办）/ report（总结管线：四源适配器 + 素材收集 + 生成状态机）/ report-prompts（总结 prompt 与阈值，调质量改这里） |
 | `admin.html` | 网页管理台（`http://127.0.0.1:8484/`，provider 健康卡 + 供应商增删改 + 统计 + 测试） |
+| `workbench.html` / `workbench.css` | 个人工作台页（`/workbench`：待办 + AI 工作总结）与两页共享的主题样式 |
 | `providers.template.json` | providers.json 模板（install.sh 首次安装时生成到运行时目录） |
-| `test/mock-upstream.mjs` `test/smoke.mjs` | 端到端冒烟测试：mock 双协议上游 + 72 项断言（`node test/smoke.mjs`） |
+| `test/mock-upstream.mjs` `test/smoke.mjs` | 端到端冒烟测试：mock 双协议上游 + 271 项断言（`node test/smoke.mjs`） |
 | `install.sh` / `uninstall.sh` / `status.sh` / `plist.template` | launchd 部署与状态 |
 | `cannbot-creds.sh` | cannbot 订阅凭证诊断（可选；`--sync-zcode` 重写 zcode 指向网关并写入 token） |
 | `打开管理界面.command` | **双击即可**：自动确保网关已启动并打开管理台 |
@@ -191,6 +198,46 @@ API Key  : ANTHROPIC_AUTH_TOKEN = 网关 token
 **鉴权边界（如实说明）**：网关 token 挡的是「盲扫 127.0.0.1:8484 的无凭证请求」与端口误暴露后的外部
 扫探。单用户 Mac 上其他进程与网关同 uid，理论上能读到 providers.json（或经仅回环可读的 /admin/config
 取 token）——真正的多用户隔离需要另做，不在本工具定位内。
+
+## 个人工作台（待办 + AI 工作总结）
+
+浏览器打开 `http://127.0.0.1:8484/workbench`（管理台左栏「工作台」进入）：
+
+- **待办事项**：标题 + 紧急程度（紧急/普通/不急）+ 可选项目标签；进行中 → 待办 → 已完成（折叠）
+  分组；紧急排前。数据在 `todos.json`（运行时目录），人与 agent 共用同一份。
+- **时间段工作总结**：预设区间（今日/昨天/本周/上周/近7天/近30天）或自定义起止 → 点「生成报告」。
+  网关读取 **Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录**（只读各自的
+  数据文件，互相独立、单源故障只降级不失败），按项目归并压缩、脱敏（密钥样式 → `[REDACTED]`），
+  经两级总结（逐项目小结 → 汇总成稿）产出**给上级看的中文 Markdown 汇报**——按项目分节、
+  突出做了什么/推进到哪/产出什么，文末附待办进展与模型用量数据附注。一键复制、历史存档可回看。
+- **报告用什么模型**：providers.json 的 `workbench` 节（`reportProvider` / `reportModel`，改完热
+  生效）；不配则自动用默认上游的第一个可用模型。**总结质量的调优入口集中在
+  `lib/report-prompts.mjs`**（prompt 文案、截断阈值、脱敏模式都在这一个文件）。
+
+### 让 agent 读写待办
+
+把下面这段贴进 `~/.claude/CLAUDE.md`（或其他 agent 的全局指引），它就能替你管理待办：
+
+```markdown
+## 待办事项（跨会话持久）
+
+用户让你「加待办 / 看待办 / 完成某条待办」时，用 curl 调本地网关（token 见
+providers.json 的 gateway.clientToken，或先 GET http://127.0.0.1:8484/admin/config）：
+
+- 列出：curl -s http://127.0.0.1:8484/v1/todos -H "Authorization: Bearer <token>"
+- 新增：curl -s -X POST http://127.0.0.1:8484/v1/todos -H "Authorization: Bearer <token>" \
+    -H 'content-type: application/json' \
+    -d '{"title":"一句话说清","urgency":"urgent|normal|someday","project":"可选标签","source":"agent:claude-code"}'
+- 完成：curl -s -X PUT http://127.0.0.1:8484/v1/todos/<id> -H "Authorization: Bearer <token>" \
+    -H 'content-type: application/json' -d '{"status":"done"}'
+
+加待办时始终带上 "source":"agent:<你的名字>"。
+```
+
+REST 明细：`GET /v1/todos`（`?status=` 过滤）· `POST /v1/todos` · `PUT /v1/todos/:id`（部分字段；
+status=done 自动盖 completed_at）· `DELETE /v1/todos/:id`。报告 API（仅回环）：
+`POST /admin/report/generate` `{startMs,endMs}` → `{jobId}` · `GET /admin/report/job` 进度 ·
+`GET /admin/report/list` · `GET|DELETE /admin/report/:id`。
 
 ## 管理台 / 统计
 

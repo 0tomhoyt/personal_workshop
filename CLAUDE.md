@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-**统一订阅 API 网关**：把多个订阅服务（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，本机所有 Agent（zcode CLI、Claude Code、opencode 等）统一调用。按请求体里的**模型名**路由到对应订阅（providers.json 声明），自动注入该订阅凭证；同协议**原样直通**，跨协议走**双向翻译**。
+**个人工作台 = 统一订阅 API 网关 + 待办 + AI 工作总结**。网关部分：把多个订阅服务（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，本机所有 Agent（zcode CLI、Claude Code、opencode 等）统一调用。按请求体里的**模型名**路由到对应订阅（providers.json 声明），自动注入该订阅凭证；同协议**原样直通**，跨协议走**双向翻译**。工作台部分（`/workbench` 页）：跨 agent 的**待办事项**（`/v1/todos`，人与 agent 共用）+ **时间段 AI 工作总结**（读 Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录 → 两级总结成给上级的汇报）。
 
-- **零依赖 + 模块化**：无 package.json / node_modules，只用 Node ≥ 18 内置模块，`server.mjs` 入口 + `lib/` 若干 ESM 模块。没有构建、lint；测试是 `node test/smoke.mjs`（mock 上游端到端，不依赖真实订阅）。
+- **零依赖 + 模块化**：无 package.json / node_modules，只用 Node ≥ 18 内置模块 + spawn 系统 `sqlite3`，`server.mjs` 入口 + `lib/` 若干 ESM 模块。没有构建、lint；测试是 `node test/smoke.mjs`（mock 上游端到端 + fixture 数据源，不依赖真实订阅与真实 agent 数据）。
 - **语言约定**：注释、文档、commit message 全部使用中文，与现有风格保持一致。
 
 ## 常用命令
@@ -27,7 +27,7 @@ curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
 
 本目录（桌面）是**项目源**；launchd 实际运行的是 `install.sh` 拷贝到 `~/.local/share/cannbot-gateway-proxy/` 的**运行时副本**（macOS TCC 限制 launchd 读不了桌面）。
 
-**改动 `server.mjs`、`lib/`、`admin.html` 后必须重跑 `./install.sh` 才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、logs/proxy.err.log、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。运行时文件位置可用 `CANNBOT_CONFIG_FILE` / `CANNBOT_LOG_FILE` / `CANNBOT_STATS_FILE` 覆盖（test/smoke.mjs 即用它们把产物隔离到临时目录）。
+**改动 `server.mjs`、`lib/`、`admin.html`、`workbench.html`、`workbench.css` 后必须重跑 `./install.sh` 才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、todos.json、reports.json、logs/proxy.err.log、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。运行时文件位置可用 `CANNBOT_CONFIG_FILE` / `CANNBOT_LOG_FILE` / `CANNBOT_STATS_FILE` / `CANNBOT_TODOS_FILE` / `CANNBOT_REPORTS_FILE` 覆盖；报告数据源根路径可用 `CANNBOT_CC_DIR` / `CANNBOT_ZCODE_DB` / `CANNBOT_OPENCODE_DB` / `CANNBOT_CURSOR_DIR` 覆盖（test/smoke.mjs 即用它们把产物与数据源全部隔离到临时目录）。
 
 ## 架构（模块图）
 
@@ -66,6 +66,27 @@ lib/monitors-admin.mjs 管理台对 monitors 节的改名写回（只改 name，
 lib/log.mjs           日志（内存环形缓冲 1000 行 + 落盘 + 5MB 轮转）
 lib/util.mjs          httpError / sendJson / readBodyLimited（上游响应体有界读：content-length
                       预检 + 无/非法长度边读边检）/ token 权重（CJK 1:1 其余 4:1）/ randHex
+lib/todos.mjs         工作台待办数据层（todos.json 写穿原子落盘 0600、坏文件自愈空列表、
+                      字段码位校验、todosInWindow 供报告素材）
+lib/report/sqlite.mjs 只读 SQLite 封装（spawn 系统 sqlite3 -json；只发 SELECT、id 白名单内联）
+lib/report/sources/   四个 agent 会话源适配器（统一 listSessions({startMs,endMs})，正文判别式
+                      与时间归因详见各文件头注释与 spec §5）：
+   claude-code.mjs    ~/.claude/projects 顶层 jsonl（promptSource=="typed" 真人判别、
+                      thinking/tool_result/isMeta/斜杠命令排除、ai-title、cwd 取项目）
+   zcode.mjs          ~/.zcode/cli/db/db.sqlite（interactive 会话、semantics 真人判别、
+                      消息级时间过滤、part 正文 + 工具摘要行）
+   opencode.mjs       opencode.db 双路（session/message/part 主路 + event 事件溯源补路，
+                      part 全量快照取最终态、多 agent 合成注入过滤）
+   cursor.mjs         ~/.cursor/projects agent-transcripts（浅层排除 subagents、user 标签
+                      锚点时间归因、无窗口标签回退 mtime+tailOnly）
+lib/report/collect.mjs 素材收集：4 源并发降级（单源故障记 sourcesFailed 不失败）、项目归并
+                      （basename 短名）、三级压缩（LIMITS 码位截断、tailOnly 尾取）、脱敏、
+                      待办变动 + stats 用量佐证
+lib/report/generate.mjs 报告生成状态机：单任务串行（409）、collect→summarize→final 三段进度、
+                      模型兜底链（workbench 节 → 默认上游目录第一个）、requestUpstream 协议
+                      分支、reports.json 原子存档（上限 200）
+lib/report-prompts.mjs 两级总结 prompt + 压缩/脱敏阈值**全部集中在此**——调汇报质量只改这里
+workbench.html/css    工作台页（待办管理 + 报告生成/历史）与 admin/workbench 共享主题
 ```
 
 ### 请求路由（server.mjs 主入口）
@@ -73,11 +94,16 @@ lib/util.mjs          httpError / sendJson / readBodyLimited（上游响应体�
 | 路径 | 处理 |
 |---|---|
 | `/v1/messages`、`/messages` | Anthropic 客户端：先 checkClientAuth → 解析 model → 路由 → 直通或翻译 |
+| `/v1/todos`、`/v1/todos/:id` | 工作台待办 CRUD（Bearer 鉴权；**必须排在 /v1/* catch-all 之前**）：
+  GET（`?status=` 过滤）/ POST / PUT 部分字段（status=done 盖 completed_at）/ DELETE |
 | `/v1/*` 其余 | OpenAI 客户端：鉴权 → 路由 → openai 上游透传 / anthropic 上游反向翻译 |
 | `/v1/models` | 聚合所有 provider 目录（重名消歧为 `pid/model`，`owned_by`=provider id） |
+| `/workbench`、`/workbench.css` | 工作台页与共享主题样式（静态文件，硬编码路由） |
 | `/healthz`、`/admin/*` | healthz（providers[] 凭证体检）、管理台页面与 API（log/stats/config/restart/stop、
   providers CRUD+测试：GET 脱敏视图 / POST 新增 / PUT、DELETE `/admin/providers/:id` /
   POST `.../:id/check` 现拉目录验证凭证；写后热加载即时生效；
+  报告生成（仅回环）：POST `/admin/report/generate` `{startMs,endMs}` 异步启动（在跑 409）、
+  GET `/admin/report/job` 进度、GET `/admin/report/list`、GET/DELETE `/admin/report/:id`；
   显示器切换：GET `/admin/monitors`（状态，`?refresh=1` 绕缓存）/ POST `/admin/monitors/switch`
   （body `{"input":n}` 切全部屏，可选 `"display":"<UUID 或前 8 位或名字>"` 单切一台；
   `input` 也可写成 `"target":"<输入源名字>"`）/ POST `/admin/monitors/rename`
@@ -108,6 +134,12 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
 ### 管理台
 
 `admin.html`（Claude 风格深浅色主题）由 `/` 提供，3 秒轮询 `/healthz`、`/admin/log`（内存环形缓冲）、`/admin/stats`；启动时经 `/admin/config`（仅回环）取网关 token 供测试按钮调用。订阅上游卡逐 provider 展示凭证状态；「供应商配置」卡经 `/admin/providers` 在网页上增删改 providers.json（token 脱敏、保存即热生效、`测试` 按钮经 GET /v1/models 验证端点与凭证，static 目录也走该探测）。总览页另有「显示器输入源」卡（`/admin/monitors`）：**界面不写死任何方向或主机语义**，屏显示 UUID 前 8 位、输入显示 VCP 值，名字由用户在页内「改名」按钮自填（写入 providers.json 的 monitors 节，热生效；留空恢复编号）。左侧导航栏按输入源动态生成「整机同切」按钮，状态卡每屏一个「⇄ 下一输入源」按钮点击轮换单切（不设下拉），m1ddc 缺失时降级提示；卡片底部有可直接绑热键的 curl 示例。
+
+**主题共享**：admin.html 与 workbench.html 的主题令牌、骨架、通用组件在 `workbench.css`（`/workbench.css` 提供），各页只内嵌自己的视图专属样式 + 9 行首屏主题脚本（防闪色必须 inline）。admin 左栏有「工作台」跨页链接。
+
+### 工作台页（workbench.html）
+
+`/workbench` 提供，两区：**待办**（快速添加：标题/紧急度 seg/项目标签；按 进行中→待办（紧急在前）→完成折叠 分组；行内状态循环/删除；agent 来源徽标）与**报告**（预设区间 seg + 自定义 datetime-local；生成 → 2s 轮询 job 进度（琥珀扫掠条）→ Markdown 渲染 + 复制 + 历史表格）。动态文本一律 `esc()` 转义后再做 Markdown 结构替换（XSS 防线）。API 侧：待办走 Bearer（loadToken/apiFetch 照抄 admin 模式，401 重取一次），报告端点仅回环免 token。设计文档与数据源判别式：`docs/superpowers/specs/2026-10-27-workbench-design.md`。
 
 ## 外部集成（改动前了解影响面）
 
