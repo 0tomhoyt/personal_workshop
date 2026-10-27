@@ -1229,6 +1229,21 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('工作台页含待办/报告两区', wbText.includes('待办') && wbText.includes('报告'), '缺功能区字样');
     check('工作台页含 token 获取逻辑（/admin/config）', wbText.includes('/admin/config'), '缺 loadToken 逻辑');
     check('工作台页引用共享样式', wbText.includes('/workbench.css'));
+    // 下载 .md 按钮：存在 + 文件名函数（跨日/无效区间），源码抽取后在 Node 内直跑
+    check('工作台页含「下载 .md」按钮', wbText.includes('id="dlBtn"') && wbText.includes('下载 .md') && wbText.includes('downloadReport'));
+    const fnMatch = wbText.match(/function reportFileName\(range\) \{[\s\S]*?\n\}/);
+    check('reportFileName 函数在页面源码中', Boolean(fnMatch));
+    if (fnMatch) {
+      // 桩掉页面里的区间判别（口径在别处已测），只测文件名函数本体
+      const stubBad = (r) => !r || !Number.isFinite(r?.start) || !Number.isFinite(r?.end) || r.end <= r.start;
+      const reportFileName = new Function('isBadReportRange', `${fnMatch[0]}; return reportFileName;`)(stubBad);
+      const t = (y, mo, d, h, mi) => new Date(y, mo - 1, d, h, mi).getTime();
+      const crossMidnight = reportFileName({ start: t(2026, 10, 27, 23, 50), end: t(2026, 10, 28, 0, 10) });
+      const expect = '工作总结_20261027-2350_20261028-0010.md';
+      check('下载文件名：跨日窗口本地时区 YYYYMMDD-HHmm', crossMidnight === expect, `${crossMidnight} ≠ ${expect}`);
+      const invalid = reportFileName(null);
+      check('下载文件名：无效区间占位且无非法字符', invalid === '工作总结_无效区间.md' && !/[\\/:*?"<>|]/.test(invalid) && !/[\\/:*?"<>|]/.test(crossMidnight), invalid);
+    }
   }
 
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');
