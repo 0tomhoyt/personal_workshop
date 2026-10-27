@@ -533,7 +533,7 @@ async function generateReport() {
   const j = await r.json().catch(() => ({}));
   if (r.status === 409) { showErr(j.error?.message || '已有任务在生成中'); pollJob(); return; }
   if (!r.ok) { showErr(j.error?.message || `启动失败（HTTP ${r.status}）`); return; }
-  $('genBtn').disabled = true;
+  setGenerating(true);
   $('rprog').style.display = 'block';
   $('rout').style.display = 'none';
   $('rphase').textContent = PHASE_TEXT.collect;
@@ -550,12 +550,12 @@ function pollJob() {
         $('rphase').textContent = p.phase === 'summarize'
           ? `${PHASE_TEXT.summarize}（${p.projectsDone ?? 0}/${p.projectsTotal ?? '?'}）`
           : (PHASE_TEXT[p.phase] || '生成中…');
-        $('genBtn').disabled = true;
+        setGenerating(true);
         $('rprog').style.display = 'block';
         return;
       }
       clearInterval(genTimer);
-      $('genBtn').disabled = false;
+      setGenerating(false);
       if (j.state === 'failed') {
         $('rprog').style.display = 'none';
         showErr(`报告生成失败：${j.error || '未知错误'}`);
@@ -594,6 +594,8 @@ async function showReport(id) {
   viewingReportId = id;
   document.querySelectorAll('#rhistBody tr').forEach((tr) =>
     tr.classList.toggle('is-viewing', tr.querySelector('[data-act="view"]')?.dataset.id === id));
+  // 高亮行滚进历史表视野（nearest 只滚表格容器，不与 #rout 的 smooth 整页滚动打架）
+  document.querySelector('#rhistBody tr.is-viewing')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 // Markdown 简易渲染：先整体转义，再做结构替换（标题/列表/粗体/行内代码/代码块）
@@ -625,9 +627,17 @@ function mdToHtml(md) {
   return out.join('\n');
 }
 
+// 生成中锁定区间控件：避免误以为改动的是正在跑的那次任务（按钮 disabled 本就不响应，起止框另设 guard）
+function setGenerating(on) {
+  $('genBtn').disabled = on;
+  document.querySelectorAll('#rngSeg button').forEach((b) => { b.disabled = on; });
+  $('rngStart').disabled = on;
+  $('rngEnd').disabled = on;
+}
+
 async function copyReport() {
   const text = showReport._last || '';
-  if (!text) return;
+  if (!text) { showErr('还没有可复制的成稿——先生成或点历史「查看」。'); return; }
   try {
     await navigator.clipboard.writeText(text);
     $('copyBtn').textContent = '已复制 ✓';
@@ -649,8 +659,14 @@ async function refreshHistory() {
     $('railReports').textContent = String(rows.length);
     $('rhistBody').innerHTML = rows.length ? rows.map((x) => {
       const m = x.materials || {};
+      // 坏数据（epoch/倒挂/过早起点）不伪装成正常时间段：muted「无效区间」+ dim 原始值，查看/删除保留
+      const bad = !x.range || !Number.isFinite(x.range.start) || !Number.isFinite(x.range.end)
+        || x.range.end <= x.range.start || x.range.start < 946684800000; // 2000-01-01
+      const winCell = bad
+        ? `<span class="dim">无效区间</span><br><span class="dim">${esc(fmtTimeFull(x.range?.start ?? 0))} → ${esc(fmtTimeFull(x.range?.end ?? 0))}</span>`
+        : `${fmtTimeFull(x.range.start)}<br><span class="dim">→ ${fmtTimeFull(x.range.end)}</span>`;
       return `<tr${x.id === viewingReportId ? ' class="is-viewing"' : ''}>
-        <td>${fmtTimeFull(x.range.start)}<br><span class="dim">→ ${fmtTimeFull(x.range.end)}</span></td>
+        <td>${winCell}</td>
         <td>${fmtTime(x.generated_at)}</td>
         <td><span class="dim">${esc(x.provider)}/${esc(x.model)} · ${m.sessions ?? 0} 会话</span></td>
         <td><button data-act="view" data-id="${esc(x.id)}">查看</button> <button class="danger" data-act="rdel" data-id="${esc(x.id)}">删除</button></td>
@@ -680,7 +696,7 @@ $('addUrg').addEventListener('click', (e) => {
   b.classList.add('active');
 });
 $('rngSeg').addEventListener('click', (e) => {
-  const b = e.target.closest('button'); if (!b) return;
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
   document.querySelectorAll('#rngSeg button').forEach((x) => x.classList.remove('active'));
   b.classList.add('active');
   backfillPreset();
@@ -789,7 +805,7 @@ document.addEventListener('keydown', (e) => {
   await refreshHistory();
   try {
     const j = await (await fetch('/admin/report/job')).json();
-    if (j.state === 'running') { $('genBtn').disabled = true; $('rprog').style.display = 'block'; pollJob(); }
+    if (j.state === 'running') { setGenerating(true); $('rprog').style.display = 'block'; pollJob(); }
   } catch {}
 })();
 </script>
