@@ -968,9 +968,11 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || editingId) return;
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  const s = $('todoSearch');
+  if (!s.offsetParent) return; // 零待办时搜索框整体收起——没有可聚焦目标，不 preventDefault 白吞按键
   e.preventDefault(); // 不把 / 输进页面
-  $('todoSearch').focus();
-  $('todoSearch').select();
+  s.focus();
+  s.select();
 });
 // 页面被打开时若上一次任务仍在跑：接着轮询
 (async () => {
