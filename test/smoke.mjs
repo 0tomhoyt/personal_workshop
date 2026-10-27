@@ -611,7 +611,20 @@ try {
     check('缺 title → 400', (await post('/v1/todos', {})).status === 400);
     check('非法 urgency → 400', (await post('/v1/todos', { title: 'x', urgency: '高' })).status === 400);
     check('非法 status → 400', (await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'todo' }) })).status === 400);
-    check('未知方法 PATCH → 405', (await fetch(`${GW}/v1/todos`, { method: 'PATCH', headers: authHeaders, body: '{}' })).status === 405);
+    check('未知方法 PATCH 打集合 → 405', (await fetch(`${GW}/v1/todos`, { method: 'PATCH', headers: authHeaders, body: '{}' })).status === 405);
+
+    // PATCH 单条部分更新（就地编辑）：与 PUT 同一校验路径
+    const p1 = await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ title: '适配 unigemm SME（修订）', urgency: 'urgent', project: 'unigemm' }) });
+    const p1J = await p1.json();
+    check('PATCH 改 title/urgency/project → 200 且逐字段生效', p1.status === 200 && p1J.todo?.title === '适配 unigemm SME（修订）' && p1J.todo?.urgency === 'urgent' && p1J.todo?.project === 'unigemm', JSON.stringify(p1J.todo));
+    const p2 = await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ project: '' }) });
+    check('PATCH 清空可选字段 project → 200', p2.status === 200 && !(await p2.json()).todo?.project);
+    const p404 = await fetch(`${GW}/v1/todos/no-such-id`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ title: 'x' }) });
+    check('PATCH 不存在的 id → 404', p404.status === 404);
+    check('PATCH 超长 title（501 码位）→ 400', (await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ title: '😀'.repeat(501) }) })).status === 400);
+    check('PATCH 非法 urgency → 400', (await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ urgency: '高' }) })).status === 400);
+    const pNoAuth = await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'x' }) });
+    check('PATCH 无 token → 401', pNoAuth.status === 401);
 
     // 持久化：直读 todos.json（合法 JSON、与内存一致、0600）
     const fileState = JSON.parse(fs.readFileSync(path.join(tmp, 'todos.json'), 'utf8'));

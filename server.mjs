@@ -346,7 +346,8 @@ const server = http.createServer(async (req, res) => {
         }
         return sendJson(res, 200, { todos: listTodos(filter) });
       }
-      const wantsBody = (req.method === 'POST' && !id) || (req.method === 'PUT' && id);
+      // PATCH 与 PUT 同义（单条部分更新）：就地编辑等轻量改动走 PATCH，语义更贴 REST
+      const wantsBody = (req.method === 'POST' && !id) || ((req.method === 'PUT' || req.method === 'PATCH') && id);
       if (wantsBody) {
         const bodyBuf = await readRequestBody(req, 64 * 1024);
         let payload = null;
@@ -362,7 +363,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(204);
         return res.end();
       }
-      return sendJson(res, 405, { error: { message: '此端点仅支持 GET/POST/PUT/DELETE', type: 'method_not_allowed' } });
+      return sendJson(res, 405, { error: { message: '此端点仅支持 GET/POST/PUT/PATCH/DELETE', type: 'method_not_allowed' } });
     }
 
     if (url === '/v1/models') {
