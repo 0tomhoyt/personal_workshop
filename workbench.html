@@ -89,6 +89,8 @@
 
   /* ---- 报告：成稿渲染 ---------------------------------------------------- */
   .rout { display: none; margin-top: 14px; scroll-margin-top: 18px; }
+  /* 生成中：区间条整体略降不透明度，提示已被锁定 */
+  .rng.is-generating { opacity: .6; }
   .rmeta { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 9px; font: 11px var(--mono); color: var(--faint); }
   .rmeta .rmodel { color: var(--amber); }
   .rbody {
@@ -320,6 +322,11 @@ function showErr(msg) {
   clearTimeout(showErr._t);
   showErr._t = setTimeout(() => { b.style.display = 'none'; }, 8000);
 }
+// 点击错误条立即关掉（8s 自动隐藏之外的手动关闭）
+$('errBanner').addEventListener('click', () => {
+  $('errBanner').style.display = 'none';
+  clearTimeout(showErr._t);
+});
 
 // ── 待办 ───────────────────────────────────────────────────────────────────
 const URG_LABEL = { urgent: '紧急', normal: '普通', someday: '不急' };
@@ -575,7 +582,10 @@ async function showReport(id) {
   if (!r.ok) { showErr(`报告读取失败（HTTP ${r.status}）`); return; }
   const rep = await r.json();
   $('rModel').textContent = `${rep.provider}/${rep.model}`;
-  $('rWindow').textContent = `${fmtTimeFull(rep.range.start)} ~ ${fmtTimeFull(rep.range.end)}`;
+  // 坏区间不刷 1970 时间串：成稿头显示 muted「无效区间」；正常区间保持 start ~ end
+  $('rWindow').textContent = isBadReportRange(rep.range)
+    ? '无效区间' : `${fmtTimeFull(rep.range.start)} ~ ${fmtTimeFull(rep.range.end)}`;
+  $('rWindow').classList.toggle('dim', isBadReportRange(rep.range));
   const m = rep.materials || {};
   const srcTxt = Object.entries(m.sources || {}).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`).join(' · ') || '无会话';
   const failed = (m.sourcesFailed || []).length ? ` · ⚠ ${m.sourcesFailed.length} 个源不可用` : '';
@@ -583,10 +593,13 @@ async function showReport(id) {
   $('rbody').innerHTML = mdToHtml(rep.report || '');
   $('rout').style.display = 'block';
   $('rbody').scrollTop = 0;
-  // 起止框与预设高亮跟所看报告的区间对齐（生成完成走这里时本来就该与该报告一致）
-  $('rngStart').value = toLocalInput(rep.range.start);
-  $('rngEnd').value = toLocalInput(rep.range.end);
-  syncPresetFromInputs();
+  // 起止框与预设高亮跟所看报告的区间对齐（生成完成走这里时本来就该与该报告一致）；
+  // 坏区间不写起止框、不同步预设——保留用户当前选择，避免 1970/倒挂污染下次生成
+  if (!isBadReportRange(rep.range)) {
+    $('rngStart').value = toLocalInput(rep.range.start);
+    $('rngEnd').value = toLocalInput(rep.range.end);
+    syncPresetFromInputs();
+  }
   showReport._last = rep.report || '';
   // 成稿区滚进视野（点「查看」时页面常停在历史表附近，用户会以为没反应）
   $('rout').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -627,12 +640,23 @@ function mdToHtml(md) {
   return out.join('\n');
 }
 
+// 坏区间判别（历史表与查看共用同一口径）：缺字段 / 非有限 / 倒挂 / 起点早于 2000-01-01
+const isBadReportRange = (range) => !range
+  || !Number.isFinite(range.start) || !Number.isFinite(range.end)
+  || range.end <= range.start || range.start < 946684800000;
+
 // 生成中锁定区间控件：避免误以为改动的是正在跑的那次任务（按钮 disabled 本就不响应，起止框另设 guard）
 function setGenerating(on) {
   $('genBtn').disabled = on;
   document.querySelectorAll('#rngSeg button').forEach((b) => { b.disabled = on; });
   $('rngStart').disabled = on;
   $('rngEnd').disabled = on;
+  // 被锁控件加提示文案 + 区间条容器标记，视觉上略降不透明度告知不可改
+  const tip = on ? '生成中，区间已锁定' : '';
+  document.querySelectorAll('#rngSeg button').forEach((b) => { b.title = tip; });
+  $('rngStart').title = tip;
+  $('rngEnd').title = tip;
+  document.querySelector('.rng')?.classList.toggle('is-generating', on);
 }
 
 async function copyReport() {
@@ -660,8 +684,7 @@ async function refreshHistory() {
     $('rhistBody').innerHTML = rows.length ? rows.map((x) => {
       const m = x.materials || {};
       // 坏数据（epoch/倒挂/过早起点）不伪装成正常时间段：muted「无效区间」+ dim 原始值，查看/删除保留
-      const bad = !x.range || !Number.isFinite(x.range.start) || !Number.isFinite(x.range.end)
-        || x.range.end <= x.range.start || x.range.start < 946684800000; // 2000-01-01
+      const bad = isBadReportRange(x.range);
       const winCell = bad
         ? `<span class="dim">无效区间</span><br><span class="dim">${esc(fmtTimeFull(x.range?.start ?? 0))} → ${esc(fmtTimeFull(x.range?.end ?? 0))}</span>`
         : `${fmtTimeFull(x.range.start)}<br><span class="dim">→ ${fmtTimeFull(x.range.end)}</span>`;
