@@ -266,7 +266,9 @@ code { background: var(--inset); border: 1px solid var(--line-soft); border-radi
 
 /* ---- 窄屏（单列）：通道栏折叠为顶栏 ----------------------------------- */
 @media (max-width: 900px) {
-  .frame { grid-template-columns: 1fr; }
+  /* 单列下 grid 的自动行高比顶栏实际高度多出约 37px 空白（sticky 遗留的量），
+     直接退回块布局：顶栏贴着内容，实测无副作用 */
+  .frame { display: block; }
   .rail {
     position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line-soft);
     padding: 18px 20px 12px;

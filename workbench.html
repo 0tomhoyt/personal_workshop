@@ -147,8 +147,11 @@
   .sechead code { word-break: break-all; }
 
   @media (max-width: 900px) {
-    .main { padding-top: 14px; }
+    .main { padding-top: 12px; }
     .sec { margin-top: 18px; }
+    /* banner 占了 first-child，sec 的 24px 上边距在移动端顶栏与内容之间撑出大空白 */
+    .main > .sec:first-of-type { margin-top: 2px; }
+    .rail { padding-bottom: 8px; }
   }
   @media (max-width: 480px) {
     /* 卡片操作区换行收进卡片底部；输入行独占整行 */
