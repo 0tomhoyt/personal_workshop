@@ -363,7 +363,10 @@ async function refreshTodos() {
     const j = await r.json();
     allTodos = j.todos || [];
     setOnline(true);
-    renderTodos();
+    // 正在就地编辑时只更新数据与 rail 计数，不重建列表 DOM——
+    // 否则 focus 刷新会把编辑表单里未保存的输入整块重渲染掉（「打字丢失」）
+    if (editingId) renderRailStats();
+    else renderTodos();
   } catch (e) {
     setOnline(false);
     $('todoList').innerHTML = '<span class="bad">待办加载失败：' + esc(e.message) + '</span>';
@@ -452,7 +455,11 @@ function renderTodos() {
   // 零待办且无任何生效筛选时收起搜索框（chips 本就为空，空占位显得多余）
   $('todoSearch').style.display = (allTodos.length === 0 && !filtered) ? 'none' : '';
 
-  // 通道栏遥测（全量口径，不受筛选影响）
+  renderRailStats();
+}
+
+// 通道栏遥测（全量口径，不受筛选影响）；编辑中静默刷新时单独调用，不动列表 DOM
+function renderRailStats() {
   $('railTodo').textContent = String(allTodos.filter((t) => t.status === 'pending').length);
   $('railDoing').textContent = String(allTodos.filter((t) => t.status === 'in_progress').length);
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
@@ -706,6 +713,9 @@ async function refreshHistory() {
     const rows = j.reports || [];
     $('rhistCnt').textContent = rows.length ? String(rows.length) : '';
     $('railReports').textContent = String(rows.length);
+    // 重绘 tbody 前后保留历史表滚动位置（focus 静默刷新不该让阅读位置漂移）
+    const sc = document.querySelector('.rhist .scroll');
+    const keepScroll = sc ? sc.scrollTop : 0;
     $('rhistBody').innerHTML = rows.length ? rows.map((x) => {
       const m = x.materials || {};
       // 坏数据（epoch/倒挂/过早起点）不伪装成正常时间段：muted「无效区间」+ dim 原始值，查看/删除保留
@@ -720,6 +730,7 @@ async function refreshHistory() {
         <td><button data-act="view" data-id="${esc(x.id)}">查看</button> <button class="danger" data-act="rdel" data-id="${esc(x.id)}">删除</button></td>
       </tr>`;
     }).join('') : '<tr><td colspan="4" class="empty">还没有生成过报告。选好时间段后点「生成报告」即可——素材多时约需一两分钟。</td></tr>';
+    if (sc) sc.scrollTop = keepScroll;
   } catch { $('rhistBody').innerHTML = '<tr><td colspan="4" class="empty">历史加载失败。</td></tr>'; }
 }
 
