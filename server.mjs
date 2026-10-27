@@ -34,6 +34,7 @@ import { authStatus } from './lib/upstream.mjs';
 import { monitorsStatus, switchMonitors } from './lib/monitors.mjs';
 import { renameMonitors } from './lib/monitors-admin.mjs';
 import { listTodos, createTodo, updateTodo, deleteTodo } from './lib/todos.mjs';
+import { startReportJob, getReportJob, listReports, getReport, deleteReport } from './lib/report/generate.mjs';
 import { httpError, sendJson, extractModel } from './lib/util.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -204,6 +205,54 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, renameMonitors(payload));
     }
 
+    // 工作台 · 时间段工作总结：生成走「POST + 回环 + JSON」三件套（生成耗时长，
+    // 异步执行、POST 立即返回 jobId，前端轮询 job 进度）；查询/历史只回环即可。
+    if (url === '/admin/report/generate') {
+      if (req.method !== 'POST') {
+        return sendJson(res, 405, { error: { message: '此端点仅接受 POST', type: 'method_not_allowed' } });
+      }
+      if (!isLocalHost(req)) {
+        return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
+      }
+      if (!(req.headers['content-type'] || '').includes('application/json')) {
+        return sendJson(res, 415, { error: { message: '请求体需为 application/json', type: 'unsupported_media_type' } });
+      }
+      const bodyBuf = await readRequestBody(req, 4096);
+      let payload = null;
+      try { payload = JSON.parse(bodyBuf.toString('utf8') || '{}'); } catch {}
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return sendJson(res, 400, { error: { message: '请求体不是合法 JSON 对象', type: 'bad_request' } });
+      }
+      return sendJson(res, 200, startReportJob(payload));
+    }
+    if (url === '/admin/report/job') {
+      if (!isLocalHost(req)) {
+        return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
+      }
+      return sendJson(res, 200, getReportJob());
+    }
+    if (url === '/admin/report/list') {
+      if (!isLocalHost(req)) {
+        return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
+      }
+      return sendJson(res, 200, { reports: listReports() });
+    }
+    if (url === '/admin/report' || url.startsWith('/admin/report/')) {
+      if (!isLocalHost(req)) {
+        return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
+      }
+      let id = url.slice('/admin/report/'.length);
+      try { id = decodeURIComponent(id); } catch {}
+      if (!id) return sendJson(res, 404, { error: { message: `未知的管理端点 ${url}`, type: 'not_found' } });
+      if (req.method === 'GET') return sendJson(res, 200, getReport(id));
+      if (req.method === 'DELETE') {
+        deleteReport(id); // DELETE 无请求体，HTML 表单伪造不出，免 415（与 providers 一致）
+        res.writeHead(204);
+        return res.end();
+      }
+      return sendJson(res, 405, { error: { message: '此端点仅支持 GET/DELETE', type: 'method_not_allowed' } });
+    }
+
     // 供应商配置管理（管理台）：视图含脱敏凭证信息，仅回环 Host 可读；增删改/测试
     // 额外要求 application/json —— 跨站表单发不出该内容类型的简单请求，配合回环
     // Host 校验即同时防 CSRF 与 DNS rebinding（与 restart/stop 同一威胁模型）。
@@ -333,7 +382,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     return sendJson(res, 404, {
-      error: { message: `未知路径 ${url}；可用: / (管理台), /v1/chat/completions, /v1/messages, /v1/models, /healthz`, type: 'not_found' },
+      error: { message: `未知路径 ${url}；可用: / (管理台), /workbench (工作台), /v1/chat/completions, /v1/messages, /v1/models, /v1/todos, /admin/report/*, /healthz`, type: 'not_found' },
     });
   } catch (e) {
     const status = e.status ?? 500;

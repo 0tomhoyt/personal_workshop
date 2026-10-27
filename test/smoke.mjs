@@ -98,6 +98,12 @@ const gateway = spawnNode([path.join(ROOT, 'server.mjs')], {
   CANNBOT_LOG_FILE: path.join(tmp, 'proxy.log'),
   CANNBOT_STATS_FILE: path.join(tmp, 'stats.json'),
   CANNBOT_TODOS_FILE: path.join(tmp, 'todos.json'),
+  CANNBOT_REPORTS_FILE: path.join(tmp, 'reports.json'),
+  // 报告源隔离：gateway 进程的 collect 绝不碰真实 ~/.zcode / ~/.claude / ~/.cursor 数据
+  CANNBOT_CC_DIR: path.join(tmp, 'cc-projects'),
+  CANNBOT_ZCODE_DB: path.join(tmp, 'no-such.db'),
+  CANNBOT_OPENCODE_DB: path.join(tmp, 'no-such.db'),
+  CANNBOT_CURSOR_DIR: path.join(tmp, 'cursor-projects'),
   CANNBOT_M1DDC: path.join(ROOT, 'test/mock-m1ddc.mjs'),
   MOCK_M1DDC_STATE: path.join(tmp, 'mon-state.json'),
   MOCK_M1DDC_LOG: path.join(tmp, 'mon-log.txt'),
@@ -911,6 +917,105 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const old = await collectMaterials({ startMs: 0, endMs: 1000 });
     check('collect: 窗口早于统计保留期 → outOfRange', old.usage.outOfRange === true && old.usage.totalRequests === 0, JSON.stringify(old.usage));
     check('collect: 1970 窗口无会话素材但流程完整', old.projects.length === 0 && old.sources['claude-code'] === 0, JSON.stringify({ p: old.projects.length, s: old.sources }));
+  }
+
+  console.log('— 报告生成（/admin/report/*：生成/轮询/存档/防护） —');
+  {
+    const WIN = { startMs: Date.now() - 3600_000, endMs: Date.now() + 3600_000 };
+    const cfgPath = path.join(tmp, 'providers.json');
+    const readCfg = () => JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    const writeCfg = (c) => fs.writeFileSync(cfgPath, JSON.stringify(c, null, 2));
+    const waitJob = async (wantState) => {
+      for (let i = 0; i < 60; i++) {
+        const j = await (await fetch(`${GW}/admin/report/job`)).json();
+        if (j.state === wantState) return j;
+        if (j.state !== 'running') return j;
+        await sleep(500);
+      }
+      return { state: 'timeout' };
+    };
+
+    // 场景 A：workbench 指向 mock-oai → 生成 → ECHO 回显素材
+    const g1 = await post('/admin/report/generate', WIN);
+    const g1J = await g1.json();
+    check('POST generate → 200 且返回 jobId', g1.status === 200 && typeof g1J.jobId === 'string', JSON.stringify(g1J));
+    const again = await post('/admin/report/generate', WIN);
+    check('生成中再 POST → 409（单任务串行）', again.status === 409, `got ${again.status}`);
+    const done = await waitJob('done');
+    check('轮询 job → done（途经 collect→summarize→final）', done.state === 'done' && typeof done.reportId === 'string', JSON.stringify(done).slice(0, 200));
+    const rep = await (await fetch(`${GW}/admin/report/${done.reportId}`)).json();
+    check('报告正文含 ECHO（素材经两级总结到 mock 上游）', typeof rep.report === 'string' && rep.report.includes('ECHO:'), String(rep.report).slice(0, 120));
+    check('报告元数据（时间窗/模型/素材统计）', rep.range?.start === WIN.startMs && rep.model === 'mock-pro' && rep.provider === 'mock-oai' && rep.materials?.sources?.['claude-code'] === 3 && rep.materials?.sources?.cursor === 2, JSON.stringify(rep.materials));
+    check('失败源如实记录在素材统计', rep.materials?.sourcesFailed?.length === 2, JSON.stringify(rep.materials?.sourcesFailed));
+    check('待办联动进 prompt（报告含 collect 测试 A）', rep.report.includes('collect 测试 A'), String(rep.report).slice(0, 200));
+
+    // 窗口校验（不启动 job）
+    check('end<=start → 400', (await post('/admin/report/generate', { startMs: 100, endMs: 100 })).status === 400);
+    check('跨度超 92 天 → 400', (await post('/admin/report/generate', { startMs: 0, endMs: 100 * 24 * 3600_000 })).status === 400);
+    check('非数字时间 → 400', (await post('/admin/report/generate', { startMs: 'abc', endMs: 5 })).status === 400);
+
+    // 防护矩阵（照抄 monitors/providers 模式）
+    const r403 = await new Promise((resolve, reject) => {
+      const rq = http.request({ host: '127.0.0.1', port: GW_PORT, path: '/admin/report/generate', method: 'POST', headers: { host: 'evil.example', 'content-type': 'application/json' } }, resolve);
+      rq.on('error', reject); rq.end('{}');
+    });
+    check('generate 非回环 Host → 403', r403.statusCode === 403);
+    const r415 = await fetch(`${GW}/admin/report/generate`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' });
+    check('generate 非 JSON 内容类型 → 415', r415.status === 415);
+    const r405 = await fetch(`${GW}/admin/report/generate`);
+    check('generate 用 GET → 405', r405.status === 405);
+    const list403 = await new Promise((resolve, reject) => {
+      const rq = http.request({ host: '127.0.0.1', port: GW_PORT, path: '/admin/report/list', headers: { host: 'evil.example' } }, resolve);
+      rq.on('error', reject); rq.end();
+    });
+    check('list 非回环 Host → 403', list403.statusCode === 403);
+
+    // 场景 B：workbench 指向不可达上游 → job failed 带可读错误、不悬挂
+    {
+      const cfg = readCfg();
+      cfg.providers.push({ id: 'dead', name: 'Dead', baseUrl: 'http://127.0.0.1:59999/dead', protocol: 'openai', auth: { type: 'static-token', token: 'x' }, models: { source: 'static', list: [{ id: 'dead-model' }] } });
+      cfg.workbench = { reportProvider: 'dead', reportModel: 'dead-model' };
+      writeCfg(cfg);
+      const g2 = await post('/admin/report/generate', WIN);
+      check('dead 上游：POST 仍 200（异步失败）', g2.status === 200);
+      const failed = await waitJob('failed');
+      check('dead 上游 → failed 且 error 含上游信息', failed.state === 'failed' && (failed.error ?? '').length > 0, JSON.stringify(failed).slice(0, 200));
+    }
+
+    // 场景 C：无 workbench 节 → 兜底链（默认上游 + 目录第一个模型）仍出报告
+    {
+      const cfg = readCfg();
+      cfg.providers = cfg.providers.filter((p) => p.id !== 'dead');
+      delete cfg.workbench;
+      writeCfg(cfg);
+      const g3 = await post('/admin/report/generate', WIN);
+      check('兜底链：POST 200', g3.status === 200);
+      const done3 = await waitJob('done');
+      check('兜底链 → done 且默认上游模型生效', done3.state === 'done', JSON.stringify(done3).slice(0, 200));
+      const rep3 = await (await fetch(`${GW}/admin/report/${done3.reportId}`)).json();
+      check('兜底链报告仍含 ECHO', rep3.report?.includes('ECHO:') === true && rep3.provider === 'mock-oai', JSON.stringify({ provider: rep3.provider, model: rep3.model }));
+    }
+
+    // 场景 D：workbench 指向不存在的 provider → failed 且 error 指引配置
+    {
+      writeCfg({ ...readCfg(), workbench: { reportProvider: 'ghost' } });
+      await post('/admin/report/generate', WIN);
+      await sleep(800);
+      const f4 = await (await fetch(`${GW}/admin/report/job`)).json();
+      check('模型解析失败 → failed 且 error 指引 workbench 配置', f4.state === 'failed' && (f4.error ?? '').includes('workbench'), JSON.stringify(f4).slice(0, 200));
+      writeCfg({ ...readCfg(), workbench: { reportProvider: 'mock-oai', reportModel: 'mock-pro' } }); // 恢复
+    }
+
+    // 历史报告：list（无正文）/ 删除 / 404
+    const list = await (await fetch(`${GW}/admin/report/list`)).json();
+    check('list 返回 2 份元数据且不含正文', list.reports?.length === 2 && list.reports.every((r) => typeof r.report !== 'string'), JSON.stringify(list.reports?.map((r) => r.id)));
+    const del = await fetch(`${GW}/admin/report/${done.reportId}`, { method: 'DELETE' });
+    check('DELETE 报告 → 204', del.status === 204, `got ${del.status}`);
+    const gone = await fetch(`${GW}/admin/report/${done.reportId}`);
+    check('删后 GET → 404', gone.status === 404);
+    const list2 = await (await fetch(`${GW}/admin/report/list`)).json();
+    check('删除后 list 剩 1 份', list2.reports?.length === 1);
+    check('GET 不存在的报告 → 404', (await fetch(`${GW}/admin/report/nope`)).status === 404);
   }
 
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');
