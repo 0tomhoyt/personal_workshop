@@ -12,3 +12,12 @@ logs/
 
 # 系统文件
 .DS_Store
+
+# 统一订阅网关配置（含全部订阅凭证 —— 绝不入库）
+providers.json
+
+# ZCode 会话产物
+.zcode/
+
+# Claude Code 本地配置/工作区
+.claude/

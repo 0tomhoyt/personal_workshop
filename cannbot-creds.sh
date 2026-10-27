@@ -1,9 +1,10 @@
 #!/bin/bash
-# cannbot-creds.sh — 校验/拉取 CANNBot 网关凭证（诊断工具）
+# cannbot-creds.sh — 校验/拉取 CANNBot 网关凭证（cannbot 上游的诊断工具）
 #
-# 说明：代理（server.mjs）每次请求自行从 session.json 现取 JWT 并注入 VK，
-#       正常使用无需运行本脚本。它用于：人工校验凭证是否有效、查看可用模型、
-#       （可选）把 ~/.zcode/cli/config.json 的 cannbot provider 重写为指向本地代理。
+# 说明：统一订阅网关（server.mjs）每次请求自行从 session.json 现取 JWT 并注入 VK，
+#       正常使用无需运行本脚本。它用于：人工校验 cannbot 订阅凭证是否有效、查看可用模型、
+#       （可选）把 ~/.zcode/cli/config.json 的 cannbot provider 重写为指向本地网关。
+#       多上游与网关 token 的配置在 ~/.local/share/cannbot-gateway-proxy/providers.json。
 #
 # 用法:
 #   ./cannbot-creds.sh                校验凭证并刷新 ./creds.json
@@ -114,18 +115,39 @@ msg "凭证有效 → ${CREDS}（${COUNT} 个模型，来源 ${MODELS_SRC}；VK 
 if [ "${1:-}" = "--sync-zcode" ]; then
   [ -f "$ZCODE_CONFIG" ] || die "未找到 $ZCODE_CONFIG"
   cp "$ZCODE_CONFIG" "$ZCODE_CONFIG.bak-cannbot"
-  ZCODE_MODELS=$(echo "$MODELS_JSON" | jq 'map({key: .slug, value: {name: .title}}) | from_entries')
+
+  # 网关 token：优先读运行时 providers.json；没有则维持旧的免鉴权占位
+  RUNTIME_PROVIDERS="$HOME/.local/share/cannbot-gateway-proxy/providers.json"
+  GATEWAY_TOKEN=""
+  if [ -f "$RUNTIME_PROVIDERS" ]; then
+    GATEWAY_TOKEN=$(jq -r '.gateway.clientToken // empty' "$RUNTIME_PROVIDERS" 2>/dev/null) || GATEWAY_TOKEN=""
+  fi
+
+  # 模型清单：优先取网关聚合目录（含全部订阅，id 已做重名消歧）；网关未启动时回落 cannbot 清单
+  SYNC_MODELS_JSON=""
+  if [ -n "$GATEWAY_TOKEN" ] && curl -fsS -m 5 -H "Authorization: Bearer $GATEWAY_TOKEN" "http://127.0.0.1:${CANNBOT_PROXY_PORT:-8484}/v1/models" 2>/dev/null | jq -e '.data' >/dev/null 2>&1; then
+    SYNC_MODELS_JSON=$(curl -fsS -m 5 -H "Authorization: Bearer $GATEWAY_TOKEN" "http://127.0.0.1:${CANNBOT_PROXY_PORT:-8484}/v1/models" \
+      | jq '[.data[] | {slug: .id, title: .title}] | unique_by(.slug)')
+    msg "模型清单取自网关聚合目录（$(echo "$SYNC_MODELS_JSON" | jq 'length') 个，含全部订阅）"
+  fi
+  if [ -z "$SYNC_MODELS_JSON" ]; then
+    SYNC_MODELS_JSON="$MODELS_JSON"
+    msg "网关不可用，模型清单回落为 cannbot 订阅目录"
+  fi
+
+  API_KEY="${GATEWAY_TOKEN:-cannbot-local}"
+  ZCODE_MODELS=$(echo "$SYNC_MODELS_JSON" | jq 'map({key: .slug, value: {name: .title}}) | from_entries')
   TMP=$(mktemp)
-  # 只替换 provider.cannbot 条目（指向本地代理，代理负责注入凭证），其余键一概不动
-  jq --arg base "$PROXY_URL" --argjson zm "$ZCODE_MODELS" '
+  # 只替换 provider.cannbot 条目（指向本地网关，网关负责注入凭证），其余键一概不动
+  jq --arg base "$PROXY_URL" --arg key "$API_KEY" --argjson zm "$SYNC_MODELS_JSON" '
     .provider = (.provider // {}) |
     .provider.cannbot = {
       kind: "openai-compatible",
-      name: "CANNBot Gateway (via local proxy)",
+      name: "Unified Gateway (via local proxy)",
       options: {
-        apiKeyRequired: false,
+        apiKeyRequired: true,
         baseURL: $base,
-        apiKey: "cannbot-local"
+        apiKey: $key
       },
       models: $zm
     }' "$ZCODE_CONFIG" > "$TMP" || { rm -f "$TMP"; cp "$ZCODE_CONFIG.bak-cannbot" "$ZCODE_CONFIG"; die "生成配置失败，已回滚"; }
@@ -133,5 +155,5 @@ if [ "${1:-}" = "--sync-zcode" ]; then
     || { rm -f "$TMP"; cp "$ZCODE_CONFIG.bak-cannbot" "$ZCODE_CONFIG"; die "生成的配置未通过 JSON 校验，已回滚"; }
   mv "$TMP" "$ZCODE_CONFIG"
   chmod 600 "$ZCODE_CONFIG"
-  msg "zcode 配置已同步: provider.cannbot → ${PROXY_URL}，其余条目未动（备份: $ZCODE_CONFIG.bak-cannbot）"
+  msg "zcode 配置已同步: provider.cannbot → ${PROXY_URL}（鉴权 ${GATEWAY_TOKEN:+已写入网关 token}${GATEWAY_TOKEN:-占位 cannbot-local}），其余条目未动（备份: $ZCODE_CONFIG.bak-cannbot）"
 fi

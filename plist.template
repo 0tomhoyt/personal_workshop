@@ -19,8 +19,11 @@
     <true/>
     <key>ThrottleInterval</key>
     <integer>10</integer>
+    <!-- stdout 全部来自 lib/log.mjs 的 console.log，与已轮转的 proxy.log 逐字节双写，
+         launchd 不会轮转 StandardOutPath → 指向 /dev/null 消除无上界增长；
+         崩溃栈走 stderr，仍由 proxy.err.log 接住 -->
     <key>StandardOutPath</key>
-    <string>__RUNTIME_DIR__/logs/proxy.out.log</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
     <string>__RUNTIME_DIR__/logs/proxy.err.log</string>
     <key>WorkingDirectory</key>
