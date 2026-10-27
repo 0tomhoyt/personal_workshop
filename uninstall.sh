@@ -22,6 +22,19 @@ msg() { printf '[uninstall] %s\n' "$*"; }
 
 launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && msg "服务已停止" || msg "服务本就未在运行"
 rm -f "$INSTALLED_PLIST" && msg "已移除 ${INSTALLED_PLIST}（开机自启一并取消）"
+
+# 用户创作数据不随卸载销毁：待办与报告存档先抢救到备份目录，再清理运行时副本。
+# （proxy.log/stats.json 等可再生产物不抢救；重装后想恢复：把备份文件拷回运行时目录即可）
+DATA_BACKUP="$HOME/.local/share/cannbot-gateway-proxy.data-backup-$(date +%Y%m%d-%H%M%S)"
+for f in todos.json reports.json providers.json; do
+  if [ -f "$RUNTIME_DIR/$f" ]; then
+    mkdir -p "$DATA_BACKUP"
+    cp "$RUNTIME_DIR/$f" "$DATA_BACKUP/$f"
+  fi
+done
+if [ -d "$DATA_BACKUP" ]; then
+  msg "用户数据已备份: $DATA_BACKUP（providers.json 凭证 / todos.json 待办 / reports.json 报告存档）"
+fi
 rm -rf "$RUNTIME_DIR" && msg "已清理运行时副本 $RUNTIME_DIR"
 
 sleep 1

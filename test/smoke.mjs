@@ -1051,6 +1051,63 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       writeCfg(back);
     }
 
+    // 场景 F：defaultProvider 指向停用订阅 → 兜底链与代理路径同语义（跳过停用、回退首个已启用）
+    {
+      const cfg = readCfg();
+      cfg.providers = [
+        { id: 'disabled-dead', name: 'DisabledDead', baseUrl: 'http://127.0.0.1:59998/dead', protocol: 'openai', auth: { type: 'static-token', token: 'x' }, models: { source: 'static', list: [{ id: 'dead-model' }] }, enabled: false },
+        { id: 'mock-oai', name: 'MockOAI', baseUrl: `http://127.0.0.1:${MOCK_PORT}/oai`, protocol: 'openai', auth: { type: 'static-token', token: 'mock-token-oai' }, models: { source: 'api' } },
+      ];
+      cfg.routing = { defaultProvider: 'disabled-dead' };
+      delete cfg.workbench;
+      writeCfg(cfg);
+      const g6 = await post('/admin/report/generate', WIN);
+      const d6 = await waitJob('done');
+      check('停用订阅被兜底链跳过（回退已启用上游出稿）', d6.state === 'done', JSON.stringify(d6).slice(0, 200));
+      const rep6 = await (await fetch(`${GW}/admin/report/${d6.reportId}`)).json();
+      check('兜底选中已启用 provider', rep6.provider === 'mock-oai', JSON.stringify({ provider: rep6.provider }));
+      // 恢复
+      const back6 = readCfg();
+      back6.providers = [back6.providers.find((p) => p.id === 'mock-oai')];
+      back6.routing = { defaultProvider: 'mock-oai' };
+      writeCfg(back6);
+    }
+
+    // 场景 G：报告落盘失败（目录只读）→ job failed 且历史列表不出现幽灵报告（内存回滚）
+    {
+      const roDir = path.join(tmp, 'ro-reports');
+      fs.mkdirSync(roDir, { recursive: true });
+      const gwRo = spawnNode([path.join(ROOT, 'server.mjs')], {
+        CANNBOT_PROXY_PORT: '6295',
+        CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
+        CANNBOT_LOG_FILE: path.join(tmp, 'proxy5.log'),
+        CANNBOT_STATS_FILE: path.join(tmp, 'stats5.json'),
+        CANNBOT_TODOS_FILE: path.join(tmp, 'todos.json'),
+        CANNBOT_REPORTS_FILE: path.join(roDir, 'reports.json'),
+        CANNBOT_CC_DIR: path.join(tmp, 'cc-projects'),
+        CANNBOT_ZCODE_DB: path.join(tmp, 'no-such.db'),
+        CANNBOT_OPENCODE_DB: path.join(tmp, 'no-such.db'),
+        CANNBOT_CURSOR_DIR: path.join(tmp, 'cursor-projects'),
+      }, 'gateway-ro-reports');
+      await sleep(1500);
+      fs.chmodSync(roDir, 0o500); // 目录只读：persistReports 的 tmp 写入必失败
+      await fetch('http://127.0.0.1:6295/admin/report/generate', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(WIN),
+      });
+      let roJob = { state: 'timeout' };
+      for (let i = 0; i < 60; i++) {
+        roJob = await (await fetch('http://127.0.0.1:6295/admin/report/job')).json();
+        if (roJob.state !== 'running') break;
+        await sleep(500);
+      }
+      const roList = await (await fetch('http://127.0.0.1:6295/admin/report/list')).json();
+      check('落盘失败 → job failed 且错误可读（EACCES）', roJob.state === 'failed' && /EACCES|permission/i.test(roJob.error ?? ''), JSON.stringify(roJob).slice(0, 200));
+      check('落盘失败 → 历史列表无幽灵报告（内存回滚）', (roList.reports ?? []).length === 0, JSON.stringify(roList));
+      fs.chmodSync(roDir, 0o755);
+      gwRo.kill();
+    }
+
     // 场景 D：workbench 指向不存在的 provider → failed 且 error 指引配置
     {
       writeCfg({ ...readCfg(), workbench: { reportProvider: 'ghost' } });
@@ -1063,13 +1120,13 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
 
     // 历史报告：list（无正文）/ 删除 / 404
     const list = await (await fetch(`${GW}/admin/report/list`)).json();
-    check('list 返回 3 份元数据且不含正文', list.reports?.length === 3 && list.reports.every((r) => typeof r.report !== 'string'), JSON.stringify(list.reports?.map((r) => r.id)));
+    check('list 返回 4 份元数据且不含正文', list.reports?.length === 4 && list.reports.every((r) => typeof r.report !== 'string'), JSON.stringify(list.reports?.map((r) => r.id)));
     const del = await fetch(`${GW}/admin/report/${done.reportId}`, { method: 'DELETE' });
     check('DELETE 报告 → 204', del.status === 204, `got ${del.status}`);
     const gone = await fetch(`${GW}/admin/report/${done.reportId}`);
     check('删后 GET → 404', gone.status === 404);
     const list2 = await (await fetch(`${GW}/admin/report/list`)).json();
-    check('删除后 list 剩 2 份（场景 C/C′ 各一）', list2.reports?.length === 2, JSON.stringify(list2.reports?.length));
+    check('删除后 list 剩 3 份（场景 C/C′/F 各一）', list2.reports?.length === 3, JSON.stringify(list2.reports?.length));
     check('GET 不存在的报告 → 404', (await fetch(`${GW}/admin/report/nope`)).status === 404);
     // 默认存档路径：必须在服务根目录（lib/report/ 少算一层 dirname 会落 lib/ 子目录，
     // 且 install.sh 的 cp -R lib/. 会用调试存档覆盖运行时真实报告——见审查修复）
