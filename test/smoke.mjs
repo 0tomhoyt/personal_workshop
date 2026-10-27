@@ -696,6 +696,57 @@ INSERT INTO part VALUES ('m5', 'session_ccc', 1, ${j({ type: 'text', text: '很�
     process.env.CANNBOT_ZCODE_DB = db;
   }
 
+  console.log('— 报告源：opencode（主路 + event 补路，fixture） —');
+  {
+    const NOW = Date.now();
+    const WIN = { startMs: NOW - 3600_000, endMs: NOW + 3600_000 };
+    const j = (v) => `'${JSON.stringify(v).replace(/'/g, "''")}'`;
+    const db = path.join(tmp, 'opencode-fixture.db');
+    spawnSync('/usr/bin/sqlite3', [db], {
+      input: `
+CREATE TABLE session (id TEXT, project_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER);
+CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+CREATE TABLE part (id TEXT, message_id TEXT, data TEXT);
+CREATE TABLE event (id TEXT, aggregate_id TEXT, seq INTEGER, type TEXT, data TEXT);
+INSERT INTO session VALUES ('ses_live', NULL, '/Users/x/proj-live', '现场会话', ${NOW - 600_000}, ${NOW - 300_000});
+INSERT INTO message VALUES ('msg_l1', 'ses_live', ${NOW - 500_000}, ${j({ role: 'user' })});
+INSERT INTO message VALUES ('msg_l2', 'ses_live', ${NOW - 400_000}, ${j({ role: 'assistant' })});
+INSERT INTO message VALUES ('msg_l3', 'ses_live', ${NOW - 100 * 3600_000}, ${j({ role: 'user' })});
+INSERT INTO part VALUES ('prt_l1', 'msg_l1', ${j({ type: 'text', text: '排查内存泄漏' })});
+INSERT INTO part VALUES ('prt_l2', 'msg_l2', ${j({ type: 'text', text: '定位到泄漏点并修复' })});
+INSERT INTO part VALUES ('prt_l3', 'msg_l3', ${j({ type: 'text', text: '很早以前的消息' })});
+-- event-only 会话（用户删过会话，session 表级联清空、event 残留）
+INSERT INTO event VALUES ('e1', 'ses_gone', 1, 'session.created.1', ${j({ sessionID: 'ses_gone', info: { id: 'ses_gone', directory: '/Users/x/proj-gone', title: '已删会话', time: { created: NOW - 600_000 } } })});
+INSERT INTO event VALUES ('e2', 'ses_gone', 2, 'message.updated.1', ${j({ sessionID: 'ses_gone', info: { id: 'msg_g1', sessionID: 'ses_gone', role: 'user', time: { created: NOW - 500_000 } } })});
+INSERT INTO event VALUES ('e3', 'ses_gone', 3, 'message.part.updated.1', ${j({ sessionID: 'ses_gone', part: { id: 'prt_g1', messageID: 'msg_g1', type: 'text', text: '整理部署文档（草稿）' }, time: NOW - 500_000 })});
+INSERT INTO event VALUES ('e4', 'ses_gone', 4, 'message.part.updated.1', ${j({ sessionID: 'ses_gone', part: { id: 'prt_g1', messageID: 'msg_g1', type: 'text', text: '整理部署文档（终稿）' }, time: NOW - 450_000 })});
+INSERT INTO event VALUES ('e5', 'ses_gone', 5, 'message.updated.1', ${j({ sessionID: 'ses_gone', info: { id: 'msg_g2', sessionID: 'ses_gone', role: 'assistant', time: { created: NOW - 400_000 } } })});
+INSERT INTO event VALUES ('e6', 'ses_gone', 6, 'message.part.updated.1', ${j({ sessionID: 'ses_gone', part: { id: 'prt_g2', messageID: 'msg_g2', type: 'text', text: '文档已归档' }, time: NOW - 400_000 })});
+INSERT INTO event VALUES ('e7', 'ses_gone', 7, 'message.updated.1', ${j({ sessionID: 'ses_gone', info: { id: 'msg_g3', sessionID: 'ses_gone', role: 'user', time: { created: NOW - 350_000 } } })});
+INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ sessionID: 'ses_gone', part: { id: 'prt_g3', messageID: 'msg_g3', type: 'text', text: '你是多 agent 团队中的成员，负责汇总' }, time: NOW - 350_000 })});
+`,
+    });
+
+    process.env.CANNBOT_OPENCODE_DB = db;
+    const { listSessions } = await import(path.join(ROOT, 'lib/report/sources/opencode.mjs') + '?t=' + Date.now());
+    const sessions = await listSessions(WIN);
+    check('opencode: 双路产出 2 会话（live + event-only）', sessions.length === 2, JSON.stringify(sessions.map((x) => x.sessionId)));
+    const live = sessions.find((x) => x.sessionId === 'ses_live');
+    const gone = sessions.find((x) => x.sessionId === 'ses_gone');
+    check('opencode: live 会话正文来自 part 表', live?.messages?.some((m) => m.role === 'user' && m.text.includes('排查内存泄漏')) && live?.messages?.some((m) => m.role === 'assistant' && m.text.includes('定位到泄漏点并修复')), JSON.stringify(live?.messages));
+    check('opencode: 窗口外消息被滤', !live?.messages?.some((m) => m.text.includes('很早以前')), JSON.stringify(live?.messages?.map((m) => m.text)));
+    check('opencode: event-only 会话目录与标题', gone?.project === '/Users/x/proj-gone' && gone?.title === '已删会话' && gone?.source === 'opencode', JSON.stringify(gone && { project: gone.project, title: gone.title }));
+    check('opencode: part 事件取最终态（流式中间态不重复拼接）', gone?.messages?.some((m) => m.text.includes('整理部署文档（终稿）')) && !gone?.messages?.some((m) => m.text.includes('草稿')), JSON.stringify(gone?.messages));
+    check('opencode: 合成注入（多 agent 插件提示）被滤', !gone?.messages?.some((m) => m.text.includes('你是多 agent')), JSON.stringify(gone?.messages?.map((m) => m.text)));
+    check('opencode: 消息时间均在窗口内', sessions.every((x) => x.messages.every((m) => m.time >= WIN.startMs && m.time < WIN.endMs)));
+
+    process.env.CANNBOT_OPENCODE_DB = path.join(tmp, 'no-such.db');
+    let rejected = false;
+    try { await listSessions(WIN); } catch { rejected = true; }
+    check('opencode: db 不存在 → reject', rejected);
+    process.env.CANNBOT_OPENCODE_DB = db;
+  }
+
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');
   {
     const MON_UUIDS = ['A016429F-BCEC-4FAF-BD7D-23128391F7F1', 'F2F948D6-2F40-4DEC-8EF8-2E158BFF4328'];
