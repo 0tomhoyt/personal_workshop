@@ -14,8 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 node server.mjs              # 前台直接运行（调试用；源目录无 providers.json，会回落内置默认配置——仅 cannbot、无客户端鉴权）
 node test/smoke.mjs          # 端到端冒烟测试（起 mock 上游 + 网关实例，百余项断言；固定端口 6290/6291）
-# 前台联调真实配置（换端口避开 launchd 实例）：
-CANNBOT_PROXY_PORT=8485 CANNBOT_CONFIG_FILE="$HOME/.local/share/cannbot-gateway-proxy/providers.json" node server.mjs
+# 前台联调真实配置（换端口避开 launchd 实例；VK 缓存指到临时目录防活凭证落入源目录）：
+CANNBOT_PROXY_PORT=8485 CANNBOT_CONFIG_FILE="$HOME/.local/share/cannbot-gateway-proxy/providers.json" CANNBOT_VK_CACHE=/tmp/vk-debug.json node server.mjs
 ./install.sh [端口]           # 安装并启动 launchd 常驻服务（幂等，缺省 8484）
 ./uninstall.sh [--revert-configs]   # 停服务；--revert-configs 连 zcode 配置一起回滚
 ./status.sh                  # 服务状态 + 各上游凭证体检 + 最近请求
@@ -157,6 +157,6 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
 
 ## 安全红线
 
-- `providers.json`、`creds.json`、`vk-cache.json` 含实时凭证，已在 .gitignore，**绝不入库/入源目录**。当前源目录残留历史 `creds.json`/`proxy.log`（已被 ignore，不入库；creds.json 已迁运行时目录，可择机清理）。
+- `providers.json`、`creds.json`、`vk-cache.json` 含实时凭证，已在 .gitignore，**绝不入库/入源目录**。注意 `vk-cache.json` 的默认落点是服务根目录：**前台从源目录起网关联调时必须设 `CANNBOT_VK_CACHE` 指向临时目录**（连同 `CANNBOT_LOG_FILE`/`CANNBOT_STATS_FILE`/`CANNBOT_TODOS_FILE`/`CANNBOT_REPORTS_FILE`），否则活 VK 会写进源目录（2026-10 曾发生并已清理）。
 - 服务只绑 127.0.0.1；/v1/* 要求 Bearer token（未配置 clientToken 时不校验，勿在生产默认关闭）。
 - 网关 token 的防护边界：挡盲扫与误暴露；单用户 Mac 上同 uid 进程仍可读凭证文件（README 有如实说明）。

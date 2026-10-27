@@ -6,6 +6,8 @@ vk-cache.json
 proxy.log
 proxy.log.1
 stats.json
+todos.json
+reports.json
 logs/
 *.bak
 *.bak-cannbot

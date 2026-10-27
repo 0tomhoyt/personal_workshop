@@ -414,7 +414,8 @@ async function showReport(id) {
   $('rWindow').textContent = `${fmtTimeFull(rep.range.start)} ~ ${fmtTimeFull(rep.range.end)}`;
   const m = rep.materials || {};
   const srcTxt = Object.entries(m.sources || {}).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`).join(' · ') || '无会话';
-  $('rMaterials').textContent = `${m.projects ?? 0} 项目 / ${m.sessions ?? 0} 会话（${srcTxt}）`;
+  const failed = (m.sourcesFailed || []).length ? ` · ⚠ ${m.sourcesFailed.length} 个源不可用` : '';
+  $('rMaterials').textContent = `${m.projects ?? 0} 项目 / ${m.sessions ?? 0} 会话（${srcTxt}${failed}）`;
   $('rbody').innerHTML = mdToHtml(rep.report || '');
   $('rout').style.display = 'block';
   $('rbody').scrollTop = 0;

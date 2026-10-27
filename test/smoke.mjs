@@ -606,6 +606,8 @@ try {
     check('再删同一 id → 404', del404.status === 404);
 
     check('超长 title（501 字）→ 400', (await post('/v1/todos', { title: '长'.repeat(501) })).status === 400);
+    check('emoji 按码位计（300 个 😀 ≤ 上限）→ 201', (await post('/v1/todos', { title: '😀'.repeat(300) })).status === 201);
+    check('emoji 按码位计（501 个 😀 超限）→ 400', (await post('/v1/todos', { title: '😀'.repeat(501) })).status === 400);
     check('缺 title → 400', (await post('/v1/todos', {})).status === 400);
     check('非法 urgency → 400', (await post('/v1/todos', { title: 'x', urgency: '高' })).status === 400);
     check('非法 status → 400', (await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'todo' }) })).status === 400);
@@ -693,7 +695,7 @@ INSERT INTO part VALUES ('m5', 'session_ccc', 1, ${j({ type: 'text', text: '很�
     check('zcode: 合成注入（todo_reminder）被过滤', !s?.messages?.some((m) => m.text.includes('提醒')), JSON.stringify(s?.messages?.map((m) => m.text)));
     check('zcode: reasoning 不进素材', !s?.messages?.some((m) => m.text.includes('思考中')));
     check('zcode: 消息时间均在窗口内', s?.messages?.every((m) => m.time >= WIN.startMs && m.time < WIN.endMs));
-    check('zcode: 会话起止 = 窗口内消息实际首末', s && s.messages.length > 0 && s.startTime <= s.messages[0].time && s.endTime >= s.messages[s.messages.length - 1].time, JSON.stringify([s?.startTime, s?.endTime]));
+    check('zcode: 会话起止 = 窗口内消息实际首末（严格相等）', s && s.messages.length > 0 && s.startTime === s.messages[0].time && s.endTime === s.messages[s.messages.length - 1].time, JSON.stringify([s?.startTime, s?.endTime]));
 
     process.env.CANNBOT_ZCODE_DB = path.join(tmp, 'no-such.db');
     let rejected = false;
@@ -805,15 +807,25 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const WIN = { startMs: NOW - 3600_000, endMs: NOW + 3600_000 };
     const U1 = '11111111-2222-3333-4444-555555555555';
     const U2 = 'aaaa1111-bbbb-2222-cccc-333333333333';
+    const U3 = 'bbbb2222-cccc-3333-dddd-444444444444';
     const dir1 = path.join(tmp, 'cursor-projects', 'Users-x-proj', 'agent-transcripts', U1);
     fs.mkdirSync(dir1, { recursive: true });
-    const tag = (offsetMs) => {
-      const d = new Date(NOW + offsetMs);
-      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      let h = d.getHours(); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12;
-      const mm = String(d.getMinutes()).padStart(2, '0');
-      return `<timestamp>${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}, ${h}:${mm} ${ap} (UTC+8)</timestamp>`;
+    // 标签固定标注 (UTC+8)：墙上分量必须按 UTC+8 墙上时钟生成（对本机时区无关——
+    // 用本地分量拼 +8 标注在任何 TZ≠+8 的环境都会解析偏移、锚点掉出窗口）
+    const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const wallClock = (epochMs) => {
+      const d = new Date(epochMs);
+      let h = d.getUTCHours(); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12;
+      return `${DAYS[d.getUTCDay()]}, ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}, ${h}:${String(d.getUTCMinutes()).padStart(2, '0')} ${ap}`;
+    };
+    const tag = (offsetMs) => `<timestamp>${wallClock(NOW + offsetMs + 8 * 3600_000)} (UTC+8)</timestamp>`;
+    // 指定时区标注的标签（墙上时钟 = 真实 epoch + 偏移）：覆盖负偏移与半时区解析分支
+    const zoneTag = (epochMs, zone) => {
+      const sign = zone.startsWith('-') ? -1 : 1;
+      const [hh, mm] = zone.replace(/^[+-]/, '').split(':');
+      const off = sign * (Number(hh) * 3600_000 + Number(mm ?? 0) * 60_000);
+      return `<timestamp>${wallClock(epochMs + off)} (UTC${zone})</timestamp>`;
     };
     const line = (role, text) => JSON.stringify({ role, message: { content: [{ type: 'text', text }] } });
     // 会话 1：窗口外标签行 + 窗口内标签锚点行 + 无标签行；subagents 平行目录
@@ -839,11 +851,25 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     // 空 transcript 目录（0 个 uuid.jsonl）
     const dir3 = path.join(tmp, 'cursor-projects', 'Users-x-proj', 'agent-transcripts', 'empty-transcript');
     fs.mkdirSync(dir3, { recursive: true });
+    // 时区算术会话：(UTC-5) 负偏移与 (UTC+5:30) 半时区标注，断言解析回精确 epoch。
+    // 标签格式只有分钟精度：期望值先取整到分钟，往返才能严格相等。
+    // 被测标签时间放窗口外：锚点=最后一条「窗口内」标签（首行 +8），锚点后全保留，
+    // 行时间沿用各自标签时间——解析正确性与窗口过滤解耦验证。
+    const floorMin = (ms) => Math.floor(ms / 60_000) * 60_000;
+    const T_NEG = floorMin(NOW - 7200_000);
+    const T_HALF = floorMin(NOW - 7100_000);
+    const dir4 = path.join(tmp, 'cursor-projects', 'Users-x-proj', 'agent-transcripts', U3);
+    fs.mkdirSync(dir4, { recursive: true });
+    fs.writeFileSync(path.join(dir4, `${U3}.jsonl`), [
+      line('user', `${tag(-430_000)}\n<user_query>\n时区算术会话\n</user_query>`),
+      line('user', `${zoneTag(T_NEG, '-5')}\n<user_query>\n负偏移时区消息\n</user_query>`),
+      line('user', `${zoneTag(T_HALF, '+5:30')}\n<user_query>\n半时区消息\n</user_query>`),
+    ].join('\n') + '\n');
 
     process.env.CANNBOT_CURSOR_DIR = path.join(tmp, 'cursor-projects');
     const { listSessions } = await import(path.join(ROOT, 'lib/report/sources/cursor.mjs') + '?t=' + Date.now());
     const sessions = await listSessions(WIN);
-    check('cursor: 产出 2 会话（空目录不产出）', sessions.length === 2, JSON.stringify(sessions.map((x) => x.sessionId)));
+    check('cursor: 产出 3 会话（空目录不产出）', sessions.length === 3, JSON.stringify(sessions.map((x) => x.sessionId)));
     const s1 = sessions.find((x) => x.sessionId === U1);
     const s2 = sessions.find((x) => x.sessionId === U2);
     check('cursor: 项目路径由目录名还原', s1?.project === '/Users/x/proj' && s1?.source === 'cursor', JSON.stringify(s1?.project));
@@ -858,6 +884,9 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('cursor: subagents 内容被排除', !JSON.stringify(sessions).includes('子代理探索内容'));
     check('cursor: 无窗口内标签 → tailOnly 整会话', s2?.tailOnly === true && s2?.messages?.some((m) => m.text.includes('历史标签会话')) && s2?.messages?.some((m) => m.text.includes('无标签的新近内容')), JSON.stringify(s2 && { tailOnly: s2.tailOnly, n: s2.messages.length }));
     check('cursor: 时间戳标签不留在正文里', !JSON.stringify(sessions).includes('<timestamp>'));
+    const s3 = sessions.find((x) => x.sessionId === U3);
+    check('cursor: (UTC-5) 负偏移标签解析回精确 epoch', s3?.messages?.find((m) => m.text.includes('负偏移时区消息'))?.time === T_NEG, JSON.stringify(s3?.messages?.map((m) => [m.text.slice(0, 10), m.time])));
+    check('cursor: (UTC+5:30) 半时区标签解析回精确 epoch', s3?.messages?.find((m) => m.text.includes('半时区消息'))?.time === T_HALF);
 
     process.env.CANNBOT_CURSOR_DIR = path.join(tmp, 'no-such-cursor-dir');
     let rejected = false;
@@ -878,6 +907,10 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     ].join('\n') + '\n');
     fs.writeFileSync(path.join(projDir, 'sess-long.jsonl'), [
       JSON.stringify({ type: 'user', message: { content: '压'.repeat(2000) }, promptSource: 'typed', cwd: '/Users/x/real-proj', timestamp: T(-200_000) }),
+    ].join('\n') + '\n');
+    // emoji（astral 平面）：600 码位 > 500 上限必截断——UTF-16 回归会劈开代理对产生乱码
+    fs.writeFileSync(path.join(projDir, 'sess-emoji.jsonl'), [
+      JSON.stringify({ type: 'user', message: { content: '😀'.repeat(600) }, promptSource: 'typed', cwd: '/Users/x/real-proj', timestamp: T(-150_000) }),
     ].join('\n') + '\n');
 
     // todos 联动：经 HTTP 建两条（gateway 写穿落盘），一条完成
@@ -907,11 +940,12 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const projNames = m.projects.map((p) => p.name);
     check('collect: 双源归并出项目（real-proj / proj）', projNames.includes('real-proj') && projNames.includes('proj'), JSON.stringify(projNames));
     check('collect: 失败源降级并记原因（zcode/opencode）', m.sourcesFailed.length === 2 && m.sourcesFailed.join(';').includes('zcode') && m.sourcesFailed.join(';').includes('opencode'), JSON.stringify(m.sourcesFailed));
-    check('collect: sources 计数正确', m.sources['claude-code'] === 3 && m.sources.cursor === 2 && m.sources.zcode === 0 && m.sources.opencode === 0, JSON.stringify(m.sources));
+    check('collect: sources 计数正确', m.sources['claude-code'] === 4 && m.sources.cursor === 3 && m.sources.zcode === 0 && m.sources.opencode === 0, JSON.stringify(m.sources));
     const realProj = m.projects.find((p) => p.name === 'real-proj');
     check('collect: 素材总字符数 > 0', m.chars > 0, String(m.chars));
     check('collect: 密钥脱敏（sk- → [REDACTED]）', realProj?.summaryText.includes('[REDACTED]') && !realProj.summaryText.includes('sk-abcdefghijklmnop123'), realProj?.summaryText.slice(0, 120));
     check('collect: 超长真人输入截到 500 字（码位）', realProj?.summaryText.includes('压'.repeat(500)) && !realProj.summaryText.includes('压'.repeat(501)));
+    check('collect: emoji 码位截断不劈代理对（剥合法对后无孤立代理）', !/[\uD800-\uDFFF]/.test(realProj?.summaryText?.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '') ?? '\uD800'));
     check('collect: todos 联动（窗口内新增/完成）', m.todos.created.some((t) => t.title === 'collect 测试 A') && m.todos.created.some((t) => t.title === 'collect 测试 B') && m.todos.completed.some((t) => t.title === 'collect 测试 A'), JSON.stringify({ c: m.todos.created.length, d: m.todos.completed.length }));
     check('collect: usage 聚合（请求数/ tokens/费用/分订阅）', m.usage.totalRequests === 10 && m.usage.totalTokens === 3000 && Math.abs(m.usage.totalCost - 0.5) < 1e-9 && m.usage.byProvider['mock-oai']?.requests === 10, JSON.stringify(m.usage));
     const old = await collectMaterials({ startMs: 0, endMs: 1000 });
@@ -945,8 +979,9 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('轮询 job → done（途经 collect→summarize→final）', done.state === 'done' && typeof done.reportId === 'string', JSON.stringify(done).slice(0, 200));
     const rep = await (await fetch(`${GW}/admin/report/${done.reportId}`)).json();
     check('报告正文含 ECHO（素材经两级总结到 mock 上游）', typeof rep.report === 'string' && rep.report.includes('ECHO:'), String(rep.report).slice(0, 120));
-    check('报告元数据（时间窗/模型/素材统计）', rep.range?.start === WIN.startMs && rep.model === 'mock-pro' && rep.provider === 'mock-oai' && rep.materials?.sources?.['claude-code'] === 3 && rep.materials?.sources?.cursor === 2, JSON.stringify(rep.materials));
+    check('报告元数据（时间窗/模型/素材统计）', rep.range?.start === WIN.startMs && rep.model === 'mock-pro' && rep.provider === 'mock-oai' && rep.materials?.sources?.['claude-code'] === 4 && rep.materials?.sources?.cursor === 3, JSON.stringify(rep.materials));
     check('失败源如实记录在素材统计', rep.materials?.sourcesFailed?.length === 2, JSON.stringify(rep.materials?.sourcesFailed));
+    check('失败源进报告正文（数据源状态附注）', rep.report.includes('数据源状态') && rep.report.includes('zcode'), String(rep.report).slice(0, 300));
     check('待办联动进 prompt（报告含 collect 测试 A）', rep.report.includes('collect 测试 A'), String(rep.report).slice(0, 200));
 
     // 窗口校验（不启动 job）
@@ -996,6 +1031,26 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       check('兜底链报告仍含 ECHO', rep3.report?.includes('ECHO:') === true && rep3.provider === 'mock-oai', JSON.stringify({ provider: rep3.provider, model: rep3.model }));
     }
 
+    // 场景 C'：静态 list 的字符串条目形态（models 层一等公民）也走通兜底链
+    {
+      const cfg = readCfg();
+      cfg.providers = [{ id: 'staticstr', name: 'StaticStr', baseUrl: `http://127.0.0.1:${MOCK_PORT}/oai`, protocol: 'openai', auth: { type: 'static-token', token: 'mock-token-oai' }, models: { source: 'static', list: ['mock-pro'] } }];
+      cfg.routing.defaultProvider = 'staticstr';
+      delete cfg.workbench;
+      writeCfg(cfg);
+      const g5 = await post('/admin/report/generate', WIN);
+      check('字符串 list：POST 200', g5.status === 200);
+      const d5 = await waitJob('done');
+      check('字符串静态 list 兜底链解析出模型（job done 非上游 400）', d5.state === 'done', JSON.stringify(d5).slice(0, 200));
+      const rep5 = await (await fetch(`${GW}/admin/report/${d5.reportId}`)).json();
+      check('字符串 list：模型名取条目字符串', rep5.model === 'mock-pro', JSON.stringify({ model: rep5.model, provider: rep5.provider }));
+      // 恢复配置供后续场景
+      const back = readCfg();
+      back.providers = [{ id: 'mock-oai', name: 'MockOAI', baseUrl: `http://127.0.0.1:${MOCK_PORT}/oai`, protocol: 'openai', auth: { type: 'static-token', token: 'mock-token-oai' }, models: { source: 'api' } }];
+      back.routing.defaultProvider = 'mock-oai';
+      writeCfg(back);
+    }
+
     // 场景 D：workbench 指向不存在的 provider → failed 且 error 指引配置
     {
       writeCfg({ ...readCfg(), workbench: { reportProvider: 'ghost' } });
@@ -1008,14 +1063,23 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
 
     // 历史报告：list（无正文）/ 删除 / 404
     const list = await (await fetch(`${GW}/admin/report/list`)).json();
-    check('list 返回 2 份元数据且不含正文', list.reports?.length === 2 && list.reports.every((r) => typeof r.report !== 'string'), JSON.stringify(list.reports?.map((r) => r.id)));
+    check('list 返回 3 份元数据且不含正文', list.reports?.length === 3 && list.reports.every((r) => typeof r.report !== 'string'), JSON.stringify(list.reports?.map((r) => r.id)));
     const del = await fetch(`${GW}/admin/report/${done.reportId}`, { method: 'DELETE' });
     check('DELETE 报告 → 204', del.status === 204, `got ${del.status}`);
     const gone = await fetch(`${GW}/admin/report/${done.reportId}`);
     check('删后 GET → 404', gone.status === 404);
     const list2 = await (await fetch(`${GW}/admin/report/list`)).json();
-    check('删除后 list 剩 1 份', list2.reports?.length === 1);
+    check('删除后 list 剩 2 份（场景 C/C′ 各一）', list2.reports?.length === 2, JSON.stringify(list2.reports?.length));
     check('GET 不存在的报告 → 404', (await fetch(`${GW}/admin/report/nope`)).status === 404);
+    // 默认存档路径：必须在服务根目录（lib/report/ 少算一层 dirname 会落 lib/ 子目录，
+    // 且 install.sh 的 cp -R lib/. 会用调试存档覆盖运行时真实报告——见审查修复）
+    {
+      const savedReports = process.env.CANNBOT_REPORTS_FILE;
+      delete process.env.CANNBOT_REPORTS_FILE;
+      const { REPORTS_FILE } = await import(path.join(ROOT, 'lib/report/generate.mjs') + '?path=' + Date.now());
+      if (savedReports != null) process.env.CANNBOT_REPORTS_FILE = savedReports;
+      check('reports.json 默认路径在服务根目录（非 lib/ 子目录）', path.dirname(REPORTS_FILE) === ROOT, REPORTS_FILE);
+    }
   }
 
   console.log('— 工作台静态资源（/workbench、/workbench.css、admin 外链改造） —');
