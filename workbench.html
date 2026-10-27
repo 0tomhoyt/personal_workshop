@@ -369,6 +369,8 @@ async function refreshTodos() {
     else renderTodos();
   } catch (e) {
     setOnline(false);
+    // 编辑中不清列表（未保存输入不能丢）；在线灯变离线即已给出状态
+    if (editingId) return;
     $('todoList').innerHTML = '<span class="bad">待办加载失败：' + esc(e.message) + '</span>';
   }
 }
