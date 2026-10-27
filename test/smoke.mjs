@@ -1032,6 +1032,9 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const wb = await fetch(`${GW}/workbench`);
     const wbText = await wb.text();
     check('/workbench → 200 含「工作台」', wb.status === 200 && wbText.includes('工作台'), `got ${wb.status}`);
+    check('工作台页含待办/报告两区', wbText.includes('待办') && wbText.includes('报告'), '缺功能区字样');
+    check('工作台页含 token 获取逻辑（/admin/config）', wbText.includes('/admin/config'), '缺 loadToken 逻辑');
+    check('工作台页引用共享样式', wbText.includes('/workbench.css'));
   }
 
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');

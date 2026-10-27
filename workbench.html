@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
-<title>个人工作台</title>
+<title>个人工作台 · 待办与汇报</title>
 <script>
-// 首屏先定主题（localStorage 覆盖 > 跟随系统），避免渲染后闪色
+// 首屏先定主题（localStorage 覆盖 > 跟随系统），避免渲染后闪色（与管理台同一约定）
 (function () {
   try {
     var m = localStorage.getItem('gw-theme') || 'auto';
@@ -16,25 +16,527 @@
 })();
 </script>
 <link rel="stylesheet" href="/workbench.css">
+<style>
+  /* 工作台视图专属样式：主题令牌 / 骨架 / 通用组件在 workbench.css。
+     语言与管理台一致——遥测行、等宽数据、琥珀游标；此处定义待办行与报告区形态。 */
+
+  /* ---- 待办：快速添加行 -------------------------------------------------- */
+  .todo-add { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .todo-add input[type="text"] {
+    flex: 1; min-width: 220px; font: 13px var(--sans); padding: 7.5px 11px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--inset); color: var(--ink);
+    transition: border-color .16s, box-shadow .16s;
+  }
+  .todo-add input::placeholder { color: var(--faint); }
+  .todo-add input.proj { flex: none; width: 130px; font-family: var(--mono); font-size: 12px; }
+
+  /* ---- 待办：遥测行 ------------------------------------------------------ */
+  .tgroup { margin-top: 14px; }
+  .tgroup-label {
+    font: 600 10.5px var(--mono); color: var(--faint); letter-spacing: .22em;
+    text-transform: uppercase; margin: 0 2px 7px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .tgroup-label .cnt { color: var(--amber); }
+  .titem {
+    display: flex; align-items: center; gap: 11px;
+    padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line-soft);
+    background: var(--inset); margin-bottom: 5px;
+    transition: border-color .15s, background-color .15s;
+    animation: viewin .3s both;
+  }
+  .titem:hover { border-color: var(--line); background: var(--panel-2); }
+  .titem.done { opacity: .55; }
+  .titem.done .ttitle { text-decoration: line-through; text-decoration-color: var(--faint); }
+  /* 紧急度标：左侧短竖条（紧急红 / 普通琥珀 / 不急灰） */
+  .turg { width: 3px; height: 26px; border-radius: 99px; flex: none; }
+  .turg.urgent { background: var(--red); box-shadow: 0 0 7px rgba(var(--red-rgb), .5); }
+  .turg.normal { background: var(--amber); opacity: .65; }
+  .turg.someday { background: var(--faint); }
+  .tmain { flex: 1; min-width: 0; }
+  .ttitle { font-size: 13.5px; line-height: 1.45; word-break: break-word; }
+  .tmeta { display: flex; gap: 8px; align-items: center; margin-top: 3px; font: 10.5px var(--mono); color: var(--faint); flex-wrap: wrap; }
+  .tmeta .tproj { color: var(--blue); }
+  .tmeta .tagent { color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; }
+  .tacts { display: flex; gap: 6px; flex: none; }
+  .tacts button { padding: 3px 11px; font-size: 11.5px; border-radius: 5px; }
+  details.tdone-group { margin-top: 6px; }
+  details.tdone-group summary {
+    cursor: pointer; font: 600 10.5px var(--mono); color: var(--faint); letter-spacing: .22em;
+    text-transform: uppercase; user-select: none; padding: 6px 2px;
+  }
+  details.tdone-group summary:hover { color: var(--amber-hi); }
+
+  /* ---- 报告：区间选择与生成 --------------------------------------------- */
+  .rng { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .rng input[type="datetime-local"] {
+    font: 12.5px var(--mono); padding: 6px 9px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--inset); color: var(--ink);
+  }
+  /* 生成进度：琥珀扫掠条，像仪表校准 */
+  .rprog { display: none; margin: 12px 0; }
+  .rprog .rline { display: flex; align-items: center; gap: 10px; font: 12px var(--mono); color: var(--amber-hi); }
+  .rprog .rbar {
+    flex: 1; height: 4px; border-radius: 99px; overflow: hidden;
+    background: rgba(var(--amber-rgb), .12); position: relative;
+  }
+  .rprog .rbar::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 34%; border-radius: 99px;
+    background: linear-gradient(90deg, transparent, var(--amber), var(--amber-hi), transparent);
+    animation: rscan 1.6s ease-in-out infinite;
+  }
+  @keyframes rscan { 0% { left: -36%; } 100% { left: 100%; } }
+
+  /* ---- 报告：成稿渲染 ---------------------------------------------------- */
+  .rout { display: none; margin-top: 14px; }
+  .rmeta { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 9px; font: 11px var(--mono); color: var(--faint); }
+  .rmeta .rmodel { color: var(--amber); }
+  .rbody {
+    border-left: 2px solid var(--amber); border-radius: 4px 10px 10px 4px;
+    background: var(--inset); padding: 15px 19px; line-height: 1.85; font-size: 13.5px;
+    max-height: 620px; overflow-y: auto;
+  }
+  .rbody h2 { font: 600 16px/1.5 var(--serif); letter-spacing: .06em; color: var(--amber-hi); margin: 15px 0 8px; }
+  .rbody h2:first-child { margin-top: 0; }
+  .rbody h3 { font: 600 14px/1.5 var(--serif); margin: 12px 0 6px; }
+  .rbody ul { padding-left: 20px; margin: 6px 0; }
+  .rbody li { margin: 3px 0; }
+  .rbody p { margin: 7px 0; }
+  .rbody pre {
+    background: var(--panel); border: 1px solid var(--line-soft); border-radius: 8px;
+    padding: 10px 13px; margin: 8px 0; overflow-x: auto;
+  }
+
+  /* 历史报告表格行操作 */
+  .rhist { margin-top: 16px; }
+  .empty { color: var(--faint); font-size: 12.5px; padding: 10px 2px; }
+</style>
 </head>
 <body>
 <div class="frame">
+
+  <!-- 左通道栏：品牌 + 待办遥测 + 导航 -->
   <aside class="rail">
     <div class="brand">
       <h1><span class="zh-mark">◈</span>个人工作台</h1>
-      <div class="sub">Workbench</div>
+      <div class="sub">Personal Workbench</div>
+    </div>
+    <div class="rail-rule"></div>
+    <div class="rail-tel">
+      <div class="statline"><span class="dot ok"></span><span>网关在线</span><span class="dim">·</span><button id="themeBtn" style="padding:3px 9px;font-size:12px" title="切换主题（自动/浅色/深色）">☾</button></div>
+      <div class="statline dim">待办 <span class="mono" id="railTodo">–</span><span class="dim">·</span>进行 <span class="mono" id="railDoing">–</span><span class="dim">·</span>今日完成 <span class="mono" id="railDone">–</span></div>
+      <div class="statline dim">汇报 <span class="mono" id="railReports">–</span><span class="dim">份存档</span></div>
     </div>
     <nav class="views">
       <a class="viewbtn" href="/"><span class="idx">01</span><span class="vname">管理台</span><span class="ven">Console</span></a>
       <a class="viewbtn active" href="/workbench"><span class="idx">02</span><span class="vname">工作台</span><span class="ven">Workbench</span></a>
     </nav>
+    <div class="rail-foot">
+      <div class="sub">Sources</div>
+      <div class="rail-proto">Claude Code · zcode · opencode · Cursor<br>本地会话记录直读</div>
+    </div>
   </aside>
+
+  <!-- 右主区 -->
   <main class="main">
+
+    <div class="banner red" id="errBanner"></div>
+
+    <!-- 01 待办事项 -->
     <section class="sec">
-      <div class="sechead"><span class="idx">00</span><h2>工作台</h2><span class="en">Workbench</span></div>
-      <div class="card"><span class="dim">页面建设中（Task 10 完整实现）—— 待办事项与时间段工作总结将在此呈现。</span></div>
+      <div class="sechead">
+        <span class="idx">01</span><h2>待办事项</h2><span class="en">Todos</span><span class="spacer"></span>
+        <span class="note">人与 agent 共用 · agent 经 <code>/v1/todos</code> 读写</span>
+      </div>
+      <div class="card">
+        <div class="todo-add">
+          <input type="text" id="addTitle" placeholder="要做什么？一句话说清（回车添加）" maxlength="500">
+          <div class="seg" id="addUrg">
+            <button data-urg="urgent">紧急</button>
+            <button data-urg="normal" class="active">普通</button>
+            <button data-urg="someday">不急</button>
+          </div>
+          <input type="text" id="addProj" class="proj" placeholder="项目标签（可空）" maxlength="60">
+          <button class="primary" id="addBtn">添加</button>
+        </div>
+        <div id="todoList"><span class="dim">加载中…</span></div>
+      </div>
     </section>
+
+    <!-- 02 工作总结 -->
+    <section class="sec">
+      <div class="sechead">
+        <span class="idx">02</span><h2>时间段工作总结</h2><span class="en">Report</span><span class="spacer"></span>
+        <span class="note">读各 agent 本地会话 → 两级总结 → 给上级的汇报</span>
+      </div>
+      <div class="card">
+        <div class="rng">
+          <div class="seg" id="rngSeg">
+            <button data-rng="today" class="active">今日</button>
+            <button data-rng="yesterday">昨天</button>
+            <button data-rng="week">本周</button>
+            <button data-rng="lastweek">上周</button>
+            <button data-rng="d7">近7天</button>
+            <button data-rng="d30">近30天</button>
+          </div>
+          <input type="datetime-local" id="rngStart" title="自定义起点">
+          <span class="dim">→</span>
+          <input type="datetime-local" id="rngEnd" title="自定义终点">
+          <button class="primary" id="genBtn">生成报告</button>
+        </div>
+        <div class="rprog" id="rprog">
+          <div class="rline"><span id="rphase">提取会话素材…</span><span class="rbar"></span></div>
+        </div>
+        <div class="rout" id="rout">
+          <div class="rmeta">
+            <span class="rmodel" id="rModel">–</span>
+            <span id="rWindow">–</span>
+            <span id="rMaterials">–</span>
+            <span style="flex:1"></span>
+            <button id="copyBtn">复制 Markdown</button>
+          </div>
+          <div class="rbody" id="rbody"></div>
+        </div>
+        <div class="rhist">
+          <div class="tgroup-label">历史报告 <span class="cnt" id="rhistCnt"></span></div>
+          <div class="scroll"><table class="tbl" id="rhistTbl">
+            <thead><tr><th style="width:44%">时间段</th><th>生成时间</th><th>模型 / 素材</th><th style="width:110px">操作</th></tr></thead>
+            <tbody id="rhistBody"><tr><td colspan="4" class="empty">加载中…</td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="foot">PERSONAL WORKBENCH · 网关本地服务</div>
   </main>
 </div>
+
+<script>
+'use strict';
+// ── 基础设施：token 获取 / 带 Bearer 的请求 / 转义（照抄管理台模式）──────────
+let gwToken = null;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+async function loadToken() {
+  try {
+    const r = await fetch('/admin/config');
+    const j = await r.json();
+    gwToken = j.clientToken || null;
+  } catch { gwToken = null; }
+}
+
+async function apiFetch(url, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (url.startsWith('/v1/') && gwToken) headers.authorization = `Bearer ${gwToken}`;
+  let r = await fetch(url, { ...opts, headers });
+  if (r.status === 401 && url.startsWith('/v1/')) { // token 可能刚轮换：重取一次
+    await loadToken();
+    if (gwToken) r = await fetch(url, { ...opts, headers: { ...headers, authorization: `Bearer ${gwToken}` } });
+  }
+  return r;
+}
+
+function showErr(msg) {
+  const b = $('errBanner');
+  b.innerHTML = '<b>出错了。</b>' + esc(msg);
+  b.style.display = 'block';
+  clearTimeout(showErr._t);
+  showErr._t = setTimeout(() => { b.style.display = 'none'; }, 8000);
+}
+
+// ── 待办 ───────────────────────────────────────────────────────────────────
+const URG_LABEL = { urgent: '紧急', normal: '普通', someday: '不急' };
+const URG_ORDER = { urgent: 0, normal: 1, someday: 2 };
+let allTodos = [];
+
+async function refreshTodos() {
+  try {
+    const r = await apiFetch('/v1/todos');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    allTodos = j.todos || [];
+    renderTodos();
+  } catch (e) { $('todoList').innerHTML = '<span class="bad">待办加载失败：' + esc(e.message) + '</span>'; }
+}
+
+function renderTodos() {
+  const doing = allTodos.filter((t) => t.status === 'in_progress');
+  const pending = allTodos.filter((t) => t.status === 'pending').sort((a, b) => (URG_ORDER[a.urgency] ?? 1) - (URG_ORDER[b.urgency] ?? 1));
+  const done = allTodos.filter((t) => t.status === 'done');
+
+  const item = (t) => {
+    const agent = t.source && t.source !== 'user' ? `<span class="tagent">${esc(String(t.source).replace(/^agent:/, ''))}</span>` : '';
+    const proj = t.project ? `<span class="tproj">${esc(t.project)}</span>` : '';
+    const next = t.status === 'pending' ? ['in_progress', '▸ 开始'] : t.status === 'in_progress' ? ['done', '✓ 完成'] : ['pending', '↺ 重开'];
+    return `<div class="titem ${t.status === 'done' ? 'done' : ''}">
+      <span class="turg ${esc(t.urgency)}" title="${esc(URG_LABEL[t.urgency] || t.urgency)}"></span>
+      <div class="tmain">
+        <div class="ttitle">${esc(t.title)}</div>
+        <div class="tmeta">${proj}${agent}<span>${t.completed_at ? '完成于 ' + fmtTime(t.completed_at) : '建于 ' + fmtTime(t.created_at)}</span></div>
+      </div>
+      <div class="tacts">
+        <button data-act="cycle" data-id="${esc(t.id)}" data-next="${next[0]}">${next[1]}</button>
+        <button class="danger" data-act="del" data-id="${esc(t.id)}">删除</button>
+      </div>
+    </div>`;
+  };
+
+  let html = '';
+  if (doing.length) html += `<div class="tgroup"><div class="tgroup-label">进行中 <span class="cnt">${doing.length}</span></div>${doing.map(item).join('')}</div>`;
+  if (pending.length) html += `<div class="tgroup"><div class="tgroup-label">待办 <span class="cnt">${pending.length}</span></div>${pending.map(item).join('')}</div>`;
+  if (done.length) html += `<details class="tdone-group" ${done.length && !doing.length && !pending.length ? 'open' : ''}><summary>已完成 · ${done.length} 项（点击展开）</summary>${done.slice().reverse().map(item).join('')}</details>`;
+  $('todoList').innerHTML = html || '<div class="empty">暂无待办——从上面添加，或在任意 agent 里说一句「把 XX 加到待办」。</div>';
+
+  // 通道栏遥测
+  $('railTodo').textContent = String(pending.length);
+  $('railDoing').textContent = String(doing.length);
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  $('railDone').textContent = String(done.filter((t) => (t.completed_at ?? 0) >= todayStart.getTime()).length);
+}
+
+async function addTodo() {
+  const title = $('addTitle').value.trim();
+  if (!title) { $('addTitle').focus(); return; }
+  const urgency = document.querySelector('#addUrg button.active')?.dataset.urg || 'normal';
+  const project = $('addProj').value.trim();
+  const r = await apiFetch('/v1/todos', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title, urgency, ...(project ? { project } : {}) }),
+  });
+  if (r.status === 201) {
+    $('addTitle').value = ''; $('addProj').value = '';
+    refreshTodos();
+  } else showErr((await r.json().catch(() => ({}))).error?.message || `添加失败（HTTP ${r.status}）`);
+}
+
+async function cycleTodo(id, next) {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: next }),
+  });
+  if (r.ok) refreshTodos(); else showErr(`状态更新失败（HTTP ${r.status}）`);
+}
+
+async function delTodo(id) {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (r.status === 204) refreshTodos(); else showErr(`删除失败（HTTP ${r.status}）`);
+}
+
+// ── 报告 ───────────────────────────────────────────────────────────────────
+const DAY = 24 * 3600_000;
+const fmtTime = (ms) => {
+  const d = new Date(ms); const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const fmtTimeFull = (ms) => {
+  const d = new Date(ms); const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const dayStart = (ms) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
+
+function currentRange() {
+  // 自定义起止优先；否则按预设区间（本地日边界）
+  const sv = $('rngStart').value, ev = $('rngEnd').value;
+  if (sv && ev) {
+    const s = new Date(sv).getTime(), e = new Date(ev).getTime();
+    if (Number.isFinite(s) && Number.isFinite(e) && e > s) return { startMs: s, endMs: e };
+  }
+  const now = Date.now();
+  const today0 = dayStart(now);
+  const dow = (new Date(now).getDay() + 6) % 7; // 周一=0
+  const week0 = today0 - dow * DAY;
+  const rng = document.querySelector('#rngSeg button.active')?.dataset.rng || 'today';
+  switch (rng) {
+    case 'yesterday': return { startMs: today0 - DAY, endMs: today0 };
+    case 'week': return { startMs: week0, endMs: now };
+    case 'lastweek': return { startMs: week0 - 7 * DAY, endMs: week0 };
+    case 'd7': return { startMs: now - 7 * DAY, endMs: now };
+    case 'd30': return { startMs: now - 30 * DAY, endMs: now };
+    default: return { startMs: today0, endMs: now };
+  }
+}
+
+const PHASE_TEXT = { collect: '提取会话素材…', summarize: '分项目总结', final: '汇总成稿…' };
+let genTimer = null;
+
+async function generateReport() {
+  const win = currentRange();
+  const r = await fetch('/admin/report/generate', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ startMs: win.startMs, endMs: win.endMs }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 409) { showErr(j.error?.message || '已有任务在生成中'); pollJob(); return; }
+  if (!r.ok) { showErr(j.error?.message || `启动失败（HTTP ${r.status}）`); return; }
+  $('genBtn').disabled = true;
+  $('rprog').style.display = 'block';
+  $('rout').style.display = 'none';
+  $('rphase').textContent = PHASE_TEXT.collect;
+  pollJob();
+}
+
+function pollJob() {
+  clearInterval(genTimer);
+  genTimer = setInterval(async () => {
+    try {
+      const j = await (await fetch('/admin/report/job')).json();
+      if (j.state === 'running') {
+        const p = j.progress || {};
+        $('rphase').textContent = p.phase === 'summarize'
+          ? `${PHASE_TEXT.summarize}（${p.projectsDone ?? 0}/${p.projectsTotal ?? '?'}）`
+          : (PHASE_TEXT[p.phase] || '生成中…');
+        $('genBtn').disabled = true;
+        $('rprog').style.display = 'block';
+        return;
+      }
+      clearInterval(genTimer);
+      $('genBtn').disabled = false;
+      if (j.state === 'failed') {
+        $('rprog').style.display = 'none';
+        showErr(`报告生成失败：${j.error || '未知错误'}`);
+      } else if (j.state === 'done' && j.reportId) {
+        $('rprog').style.display = 'none';
+        await showReport(j.reportId);
+      } else {
+        $('rprog').style.display = 'none';
+      }
+      refreshHistory();
+    } catch { /* 轮询瞬时失败：下轮再试 */ }
+  }, 2000);
+}
+
+async function showReport(id) {
+  const r = await fetch(`/admin/report/${encodeURIComponent(id)}`);
+  if (!r.ok) { showErr(`报告读取失败（HTTP ${r.status}）`); return; }
+  const rep = await r.json();
+  $('rModel').textContent = `${rep.provider}/${rep.model}`;
+  $('rWindow').textContent = `${fmtTimeFull(rep.range.start)} ~ ${fmtTimeFull(rep.range.end)}`;
+  const m = rep.materials || {};
+  const srcTxt = Object.entries(m.sources || {}).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`).join(' · ') || '无会话';
+  $('rMaterials').textContent = `${m.projects ?? 0} 项目 / ${m.sessions ?? 0} 会话（${srcTxt}）`;
+  $('rbody').innerHTML = mdToHtml(rep.report || '');
+  $('rout').style.display = 'block';
+  $('rbody').scrollTop = 0;
+  showReport._last = rep.report || '';
+}
+
+// Markdown 简易渲染：先整体转义，再做结构替换（标题/列表/粗体/行内代码/代码块）
+function mdToHtml(md) {
+  const lines = esc(md).split('\n');
+  const out = [];
+  let inCode = false, inList = false;
+  const inline = (s) => s
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+  const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
+  for (const line of lines) {
+    if (line.startsWith('```')) {
+      closeList();
+      if (inCode) { out.push('</pre>'); inCode = false; }
+      else { out.push('<pre>'); inCode = true; }
+      continue;
+    }
+    if (inCode) { out.push(line); continue; }
+    const h = /^(#{2,4})\s+(.*)$/.exec(line);
+    if (h) { closeList(); const lv = Math.min(h[1].length, 3); out.push(`<h${lv}>${inline(h[2])}</h${lv}>`); continue; }
+    const li = /^[-*]\s+(.*)$/.exec(line);
+    if (li) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${inline(li[1])}</li>`); continue; }
+    closeList();
+    if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+  }
+  closeList();
+  if (inCode) out.push('</pre>');
+  return out.join('\n');
+}
+
+async function copyReport() {
+  const text = showReport._last || '';
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    $('copyBtn').textContent = '已复制 ✓';
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+    $('copyBtn').textContent = '已复制 ✓';
+  }
+  setTimeout(() => { $('copyBtn').textContent = '复制 Markdown'; }, 1600);
+}
+
+async function refreshHistory() {
+  try {
+    const r = await fetch('/admin/report/list');
+    const j = await r.json();
+    const rows = j.reports || [];
+    $('rhistCnt').textContent = rows.length ? String(rows.length) : '';
+    $('railReports').textContent = String(rows.length);
+    $('rhistBody').innerHTML = rows.length ? rows.map((x) => {
+      const m = x.materials || {};
+      return `<tr>
+        <td>${fmtTimeFull(x.range.start)}<br><span class="dim">→ ${fmtTimeFull(x.range.end)}</span></td>
+        <td>${fmtTime(x.generated_at)}</td>
+        <td><span class="dim">${esc(x.provider)}/${esc(x.model)} · ${m.sessions ?? 0} 会话</span></td>
+        <td><button data-act="view" data-id="${esc(x.id)}">查看</button> <button class="danger" data-act="rdel" data-id="${esc(x.id)}">删除</button></td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="4" class="empty">还没有生成过报告。</td></tr>';
+  } catch { $('rhistBody').innerHTML = '<tr><td colspan="4" class="empty">历史加载失败。</td></tr>'; }
+}
+
+// ── 主题切换（三态循环，与管理台同一约定）──────────────────────────────────
+function applyTheme(mode) {
+  const dark = mode === 'auto' ? matchMedia('(prefers-color-scheme: dark)').matches : mode === 'dark';
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  $('themeBtn').textContent = mode === 'auto' ? '◐' : (mode === 'dark' ? '☾' : '☀');
+  localStorage.setItem('gw-theme', mode);
+}
+$('themeBtn').addEventListener('click', () => {
+  const cur = localStorage.getItem('gw-theme') || 'auto';
+  applyTheme(cur === 'auto' ? 'light' : cur === 'light' ? 'dark' : 'auto');
+});
+
+// ── 事件绑定与启动 ─────────────────────────────────────────────────────────
+$('addBtn').addEventListener('click', addTodo);
+$('addTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTodo(); });
+$('addUrg').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#addUrg button').forEach((x) => x.classList.remove('active'));
+  b.classList.add('active');
+});
+$('rngSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#rngSeg button').forEach((x) => x.classList.remove('active'));
+  b.classList.add('active');
+});
+$('genBtn').addEventListener('click', generateReport);
+$('copyBtn').addEventListener('click', copyReport);
+// 待办行 / 历史表的事件委托
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-act]'); if (!b) return;
+  const id = b.dataset.id;
+  if (b.dataset.act === 'cycle') cycleTodo(id, b.dataset.next);
+  else if (b.dataset.act === 'del') delTodo(id);
+  else if (b.dataset.act === 'view') showReport(id);
+  else if (b.dataset.act === 'rdel') {
+    if (!confirm('删除这份报告？')) return;
+    fetch(`/admin/report/${encodeURIComponent(id)}`, { method: 'DELETE' }).then((r) => {
+      if (r.status === 204) { refreshHistory(); if ($('rout').style.display === 'block') $('rout').style.display = 'none'; }
+      else showErr(`删除失败（HTTP ${r.status}）`);
+    });
+  }
+});
+// 页面被打开时若上一次任务仍在跑：接着轮询
+(async () => {
+  applyTheme(localStorage.getItem('gw-theme') || 'auto');
+  await loadToken();
+  await refreshTodos();
+  await refreshHistory();
+  try {
+    const j = await (await fetch('/admin/report/job')).json();
+    if (j.state === 'running') { $('genBtn').disabled = true; $('rprog').style.display = 'block'; pollJob(); }
+  } catch {}
+})();
+</script>
 </body>
 </html>
