@@ -5,7 +5,7 @@
 //   ④ openai 客户端 → anthropic 上游（反向翻译，流式/非流式，含 tool）
 //   以及网关 token 鉴权、模型名路由（裸名/显式前缀/重名消歧/默认上游兜底）、统计维度。
 // 运行: node test/smoke.mjs
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -644,6 +644,56 @@ try {
     process.env.CANNBOT_CONFIG_FILE = prev;
     const wb = getConfig().workbench;
     check('workbench 坏值静默剔除（非字符串/空串/未知键）', wb && Object.keys(wb).length === 0, JSON.stringify(wb));
+  }
+
+  console.log('— 报告源：zcode（db.sqlite 适配器，fixture） —');
+  {
+    const NOW = Date.now();
+    const WIN = { startMs: NOW - 3600_000, endMs: NOW + 3600_000 };
+    // fixture：最小列集 = 适配器 SQL 引用的列；SQL 从 stdin 喂给系统 sqlite3
+    const j = (v) => `'${JSON.stringify(v).replace(/'/g, "''")}'`;
+    const db = path.join(tmp, 'zcode-fixture.db');
+    spawnSync('/usr/bin/sqlite3', [db], {
+      input: `
+CREATE TABLE session (id TEXT, project_id TEXT, directory TEXT, title TEXT, task_type TEXT, parent_id TEXT, version TEXT, time_created INTEGER, time_updated INTEGER, time_deleted INTEGER);
+CREATE TABLE message (id TEXT, session_id TEXT, sequence INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);
+CREATE TABLE part (message_id TEXT, session_id TEXT, sequence INTEGER, data TEXT);
+INSERT INTO session VALUES ('session_aaa', NULL, '/Users/x/proj-a', '会话A', 'interactive', NULL, '0.17.0', ${NOW - 600_000}, ${NOW - 300_000}, NULL);
+INSERT INTO session VALUES ('session_bbb', NULL, '/Users/x/proj-a', '会话B', 'subagent', 'session_aaa', '0.17.0', ${NOW - 600_000}, ${NOW - 300_000}, NULL);
+INSERT INTO session VALUES ('session_ccc', NULL, '/Users/x/proj-c', '会话C', 'interactive', NULL, '0.17.0', ${NOW - 100 * 3600_000}, ${NOW - 200_000}, NULL);
+INSERT INTO message VALUES ('m1', 'session_aaa', 1, ${NOW - 500_000}, ${NOW - 500_000}, ${j({ role: 'user', semantics: { kind: 'user_prompt', origin: 'real_user' } })});
+INSERT INTO message VALUES ('m2', 'session_aaa', 2, ${NOW - 450_000}, ${NOW - 450_000}, ${j({ role: 'user', semantics: { kind: 'todo_reminder', origin: 'system' } })});
+INSERT INTO message VALUES ('m3', 'session_aaa', 3, ${NOW - 400_000}, ${NOW - 400_000}, ${j({ role: 'assistant' })});
+INSERT INTO message VALUES ('m5', 'session_ccc', 1, ${NOW - 100 * 3600_000}, ${NOW - 100 * 3600_000}, ${j({ role: 'user', semantics: { kind: 'user_prompt', origin: 'real_user' } })});
+INSERT INTO part VALUES ('m1', 'session_aaa', 1, ${j({ type: 'text', text: '帮我优化 unigemm 的 SME 内核' })});
+INSERT INTO part VALUES ('m2', 'session_aaa', 1, ${j({ type: 'text', text: '提醒：你有 3 个待办' })});
+INSERT INTO part VALUES ('m3', 'session_aaa', 1, ${j({ type: 'reasoning', text: '思考中' })});
+INSERT INTO part VALUES ('m3', 'session_aaa', 2, ${j({ type: 'text', text: '已完成内核优化，性能提升 15%' })});
+INSERT INTO part VALUES ('m3', 'session_aaa', 3, ${j({ type: 'tool', tool: 'Bash', state: { input: { command: 'python bench.py' } } })});
+INSERT INTO part VALUES ('m5', 'session_ccc', 1, ${j({ type: 'text', text: '很早以前的消息' })});
+`,
+    });
+
+    process.env.CANNBOT_ZCODE_DB = db;
+    const { listSessions } = await import(path.join(ROOT, 'lib/report/sources/zcode.mjs') + '?t=' + Date.now());
+    const sessions = await listSessions(WIN);
+    check('zcode: 恰 1 会话（subagent 整会话排除、窗口外消息清空不产出）', sessions.length === 1, JSON.stringify(sessions.map((s) => s.sessionId)));
+    const s = sessions[0];
+    check('zcode: project 取 directory、title、source 标记', s?.project === '/Users/x/proj-a' && s?.title === '会话A' && s?.source === 'zcode', JSON.stringify(s && { project: s.project, title: s.title, source: s.source }));
+    check('zcode: 真人输入与 assistant 正文都在素材里',
+      s?.messages?.some((m) => m.role === 'user' && m.text.includes('SME 内核'))
+      && s?.messages?.some((m) => m.role === 'assistant' && m.text.includes('性能提升 15%')), JSON.stringify(s?.messages));
+    check('zcode: 工具调用产出摘要行（工具名 + 参数）', s?.messages?.some((m) => m.text.includes('[Bash]') && m.text.includes('python bench.py')), JSON.stringify(s?.messages));
+    check('zcode: 合成注入（todo_reminder）被过滤', !s?.messages?.some((m) => m.text.includes('提醒')), JSON.stringify(s?.messages?.map((m) => m.text)));
+    check('zcode: reasoning 不进素材', !s?.messages?.some((m) => m.text.includes('思考中')));
+    check('zcode: 消息时间均在窗口内', s?.messages?.every((m) => m.time >= WIN.startMs && m.time < WIN.endMs));
+    check('zcode: 会话起止 = 窗口内消息实际首末', s && s.messages.length > 0 && s.startTime <= s.messages[0].time && s.endTime >= s.messages[s.messages.length - 1].time, JSON.stringify([s?.startTime, s?.endTime]));
+
+    process.env.CANNBOT_ZCODE_DB = path.join(tmp, 'no-such.db');
+    let rejected = false;
+    try { await listSessions(WIN); } catch { rejected = true; }
+    check('zcode: db 不存在 → reject（collect 层降级用）', rejected);
+    process.env.CANNBOT_ZCODE_DB = db;
   }
 
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');
