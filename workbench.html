@@ -199,7 +199,7 @@
     </div>
     <div class="rail-rule"></div>
     <div class="rail-tel">
-      <div class="statline"><span class="dot ok"></span><span>网关在线</span><span class="dim">·</span><button id="themeBtn" style="padding:3px 9px;font-size:12px" title="切换主题（自动/浅色/深色）">☾</button></div>
+      <div class="statline"><span class="dot ok" id="onlineDot"></span><span id="onlineText">网关在线</span><span class="dim">·</span><button id="themeBtn" style="padding:3px 9px;font-size:12px" title="切换主题（自动/浅色/深色）">☾</button></div>
       <div class="rail-stats">
         <div class="rs">待办 <span class="mono" id="railTodo">–</span></div>
         <div class="rs">进行 <span class="mono" id="railDoing">–</span></div>
@@ -350,14 +350,24 @@ try { todoFilters = { ...todoFilters, ...JSON.parse(localStorage.getItem('wb-tod
 const saveFilters = () => { try { localStorage.setItem('wb-todo-filters', JSON.stringify(todoFilters)); } catch {} };
 let editingId = null; // 就地编辑中的待办 id
 
+// 在线状态灯随真实请求结果走（写死会与列表区的加载失败自相矛盾）
+function setOnline(ok) {
+  $('onlineDot').className = 'dot ' + (ok ? 'ok' : 'bad');
+  $('onlineText').textContent = ok ? '网关在线' : '网关离线';
+}
+
 async function refreshTodos() {
   try {
     const r = await apiFetch('/v1/todos');
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
     allTodos = j.todos || [];
+    setOnline(true);
     renderTodos();
-  } catch (e) { $('todoList').innerHTML = '<span class="bad">待办加载失败：' + esc(e.message) + '</span>'; }
+  } catch (e) {
+    setOnline(false);
+    $('todoList').innerHTML = '<span class="bad">待办加载失败：' + esc(e.message) + '</span>';
+  }
 }
 
 function renderTodos() {
@@ -846,6 +856,10 @@ document.addEventListener('keydown', (e) => {
     if (j.state === 'running') { setGenerating(true); $('rprog').style.display = 'block'; pollJob(); }
   } catch {}
 })();
+// 切回标签页时静默拉一次：agent 经 API 写入的待办/报告无需手动刷新（不做轮询）
+window.addEventListener('focus', () => {
+  if (!document.hidden) { refreshTodos(); refreshHistory(); }
+});
 </script>
 </body>
 </html>
