@@ -508,6 +508,12 @@ const PHASE_TEXT = { collect: '提取会话素材…', summarize: '分项目总�
 let genTimer = null;
 
 async function generateReport() {
+  // 用户填了自定义起止但区间无效（end<=start / 解析失败）时明示，不静默退回预设
+  const sv = $('rngStart').value, ev = $('rngEnd').value;
+  if (sv && ev) {
+    const s = new Date(sv).getTime(), e = new Date(ev).getTime();
+    if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) { showErr('结束时间要晚于开始时间——请调整自定义起止。'); return; }
+  }
   const win = currentRange();
   const r = await fetch('/admin/report/generate', {
     method: 'POST', headers: { 'content-type': 'application/json' },
@@ -704,7 +710,7 @@ document.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-act]'); if (!b) return;
   const id = b.dataset.id;
   if (b.dataset.act === 'cycle') cycleTodo(id, b.dataset.next);
-  else if (b.dataset.act === 'del') delTodo(id);
+  else if (b.dataset.act === 'del') { if (confirm('删除这条待办？')) delTodo(id); }
   else if (b.dataset.act === 'editcancel') { editingId = null; renderTodos(); }
   else if (b.dataset.act === 'view') showReport(id);
   else if (b.dataset.act === 'rdel') {
@@ -725,10 +731,9 @@ document.addEventListener('submit', (e) => {
   const project = f.elements.project.value.trim();
   saveTodoEdit(f.dataset.editform, { title, urgency, project });
 });
-// Esc 退出就地编辑
+// Esc 退出就地编辑（编辑中无论焦点在哪，与点外取消一致）
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  if (e.target.closest && e.target.closest('form[data-editform]')) { editingId = null; renderTodos(); }
+  if (e.key === 'Escape' && editingId) { editingId = null; renderTodos(); }
 });
 // 页面被打开时若上一次任务仍在跑：接着轮询
 (async () => {

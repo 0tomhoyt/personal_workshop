@@ -28,7 +28,7 @@ html[data-theme="light"] {
   color-scheme: light;
   --bg: #f7f4ec;
   --panel: #fdfbf6; --panel-2: #f7f3ea; --inset: #efeade;
-  --ink: #27231a; --dim: #7b7566; --faint: #a9a393;
+  --ink: #27231a; --dim: #7b7566; --faint: #7a7360; /* 原 #a9a393 对比约 2.5:1，加深到约 4:1（次要文字/未选中态） */
   --line: #e2dccb; --line-soft: #eae5d6;
   --amber: #b97f2a; --amber-hi: #8c5c14; --amber-rgb: 185, 127, 42;
   --amber-dim: rgba(185, 127, 42, .1);
