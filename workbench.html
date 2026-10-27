@@ -48,6 +48,10 @@
   .titem:hover { border-color: var(--line); background: var(--panel-2); }
   .titem.done { opacity: .55; }
   .titem.done .ttitle { text-decoration: line-through; text-decoration-color: var(--faint); }
+  /* 进行中：边框微琥珀，与待办/已完成行拉开视觉区分（不加底色，保持克制） */
+  .titem.ip { border-color: rgba(var(--amber-rgb), .45); }
+  /* 行内状态推进（开始/完成/重开）是每行主操作：文字用琥珀强调，不加底色 */
+  .tacts button[data-next] { color: var(--amber-hi); }
   /* 紧急度标：左侧短竖条（紧急红 / 普通琥珀 / 不急灰） */
   .turg { width: 3px; height: 26px; border-radius: 99px; flex: none; }
   .turg.urgent { background: var(--red); box-shadow: 0 0 7px rgba(var(--red-rgb), .5); }
@@ -365,7 +369,8 @@ function renderTodos() {
     (!todoFilters.source || t.source === todoFilters.source) &&
     (!todoFilters.urgency || t.urgency === todoFilters.urgency) && matchQ(t));
 
-  const doing = visible.filter((t) => t.status === 'in_progress');
+  // 进行中与待办组同口径按紧急度排序（多任务并行时紧急项靠上）
+  const doing = visible.filter((t) => t.status === 'in_progress').sort((a, b) => (URG_ORDER[a.urgency] ?? 1) - (URG_ORDER[b.urgency] ?? 1));
   const pending = visible.filter((t) => t.status === 'pending').sort((a, b) => (URG_ORDER[a.urgency] ?? 1) - (URG_ORDER[b.urgency] ?? 1));
   const done = visible.filter((t) => t.status === 'done');
 
@@ -392,7 +397,7 @@ function renderTodos() {
     const agent = t.source && t.source !== 'user' ? `<span class="tagent">${esc(String(t.source).replace(/^agent:/, ''))}</span>` : '';
     const proj = t.project ? `<span class="tproj">${esc(t.project)}</span>` : '';
     const next = t.status === 'pending' ? ['in_progress', '▸ 开始'] : t.status === 'in_progress' ? ['done', '✓ 完成'] : ['pending', '↺ 重开'];
-    return `<div class="titem ${t.status === 'done' ? 'done' : ''}">
+    return `<div class="titem ${t.status === 'done' ? 'done' : ''}${t.status === 'in_progress' ? ' ip' : ''}">
       <span class="turg ${esc(t.urgency)}" title="${esc(URG_LABEL[t.urgency] || t.urgency)}"></span>
       <div class="tmain">
         <div class="ttitle editable" data-edit="${esc(t.id)}" title="点击编辑">${esc(t.title)}</div>
