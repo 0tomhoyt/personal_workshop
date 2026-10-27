@@ -127,6 +127,7 @@
   .tfilter .flabel { color: var(--faint); letter-spacing: .08em; }
   .tfilter button { padding: 2.5px 10px; font-size: 11.5px; border-radius: 99px; }
   .tfilter button.on { border-color: var(--amber); color: var(--amber-hi); background: var(--amber-dim); }
+  .tfilter .fcount { color: var(--dim); }
 
   /* ---- 待办就地编辑 ------------------------------------------------------ */
   .titem.editing { border-color: rgba(var(--amber-rgb), .5); background: var(--panel-2); }
@@ -157,6 +158,10 @@
     /* 卡片操作区换行收进卡片底部；输入行独占整行 */
     .titem { flex-wrap: wrap; }
     .tacts { flex: 1 1 100%; justify-content: flex-end; }
+    /* 就地编辑：标题输入整行、项目输入可收缩、按钮换行收底 */
+    .tedit input[type="text"] { width: 100%; }
+    .tedit .row { flex-wrap: wrap; }
+    .tedit input.proj { flex: 1 1 110px; width: auto; min-width: 0; }
     .todo-add input[type="text"] { flex: 1 1 100%; min-width: 0; }
     .todo-add .seg, .rng .seg { flex: 1 1 100%; overflow-x: auto; }
     .todo-add .proj { flex: none; }
@@ -213,10 +218,11 @@
             <button data-urg="normal" class="active">普通</button>
             <button data-urg="someday">不急</button>
           </div>
-          <input type="text" id="addProj" class="proj" placeholder="项目标签（可空）" maxlength="60">
+          <input type="text" id="addProj" class="proj" placeholder="项目标签（可空）" maxlength="60" list="projList">
           <button class="primary" id="addBtn">添加</button>
         </div>
-        <div class="tfilter" id="todoFilter"></div>
+        <datalist id="projList"></datalist>
+        <div class="tfilter" id="todoFilter"><span id="todoChips"></span></div>
         <div id="todoList"><span class="dim">加载中…</span></div>
       </div>
     </section>
@@ -347,7 +353,7 @@ function renderTodos() {
         <input type="text" name="title" value="${esc(t.title)}" maxlength="500">
         <div class="row">
           <div class="seg" data-urgseg>${urgBtn('urgent')}${urgBtn('normal')}${urgBtn('someday')}</div>
-          <input type="text" name="project" class="proj" value="${esc(t.project || '')}" maxlength="60" placeholder="项目标签（可空）">
+          <input type="text" name="project" class="proj" value="${esc(t.project || '')}" maxlength="60" placeholder="项目标签（可空）" list="projList">
           <span style="flex:1"></span>
           <button type="submit" class="primary">保存</button>
           <button type="button" data-act="editcancel">取消</button>
@@ -383,12 +389,13 @@ function renderTodos() {
     || (filtered ? '<div class="empty">筛选下没有待办。</div>'
       : '<div class="empty">暂无待办——从上面添加，或在任意 agent 里说一句「把 XX 加到待办」。</div>');
 
-  // 筛选行：项目 / 来源 chips（来源 user 显示为「手动」）
+  // 项目建议（datalist，复用现有标签）；筛选行 chips 只重绘 span，搜索框不动（保焦点）
+  $('projList').innerHTML = projects.map((p) => `<option value="${esc(p)}">`).join('');
   const chip = (kind, val, label) => `<button data-flt="${kind}" data-val="${esc(val)}" class="${todoFilters[kind] === val ? 'on' : ''}">${esc(label)}</button>`;
   let fhtml = '';
   if (projects.length) fhtml += `<span class="flabel">项目</span>` + projects.map((p) => chip('project', p, p)).join('');
   if (sources.length) fhtml += (fhtml ? '<span style="width:6px"></span>' : '') + `<span class="flabel">来源</span>` + sources.map((s) => chip('source', s, s === 'user' ? '手动' : s.replace(/^agent:/, ''))).join('');
-  if (filtered) fhtml += `<button data-flt="clear">✕ 清除筛选</button>`;
+  if (filtered) fhtml += `<button data-flt="clear">✕ 清除筛选</button><span class="fcount">显示 ${visible.length} / 共 ${allTodos.length}</span>`;
   $('todoFilter').innerHTML = fhtml;
 
   // 通道栏遥测（全量口径，不受筛选影响）
@@ -643,6 +650,11 @@ $('genBtn').addEventListener('click', generateReport);
 $('copyBtn').addEventListener('click', copyReport);
 // 待办行 / 历史表 / 筛选行 / 就地编辑的事件委托
 document.addEventListener('click', (e) => {
+  // 点编辑表单以外区域退出就地编辑（点另一条标题则在下一段切换编辑目标）
+  if (editingId && !e.target.closest('form[data-editform]') && !e.target.closest('.ttitle.editable')) {
+    editingId = null;
+    renderTodos();
+  }
   // 点标题进入就地编辑
   const et = e.target.closest('.ttitle.editable');
   if (et) {
@@ -687,7 +699,7 @@ document.addEventListener('submit', (e) => {
   const f = e.target.closest('form[data-editform]'); if (!f) return;
   e.preventDefault();
   const title = f.elements.title.value.trim();
-  if (!title) { f.elements.title.focus(); return; }
+  if (!title) { showErr('标题不能为空——填一句或点「取消」退出编辑。'); f.elements.title.focus(); return; }
   const urgency = f.querySelector('[data-urgseg] button.active')?.dataset.urg || 'normal';
   const project = f.elements.project.value.trim();
   saveTodoEdit(f.dataset.editform, { title, urgency, project });
