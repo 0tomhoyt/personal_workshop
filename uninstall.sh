@@ -20,7 +20,13 @@ PORT="$(cat "$RUNTIME_DIR/port" 2>/dev/null || echo 8484)"
 
 msg() { printf '[uninstall] %s\n' "$*"; }
 
-launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && msg "服务已停止" || msg "服务本就未在运行"
+# 演练/测试守卫：launchctl 作用于用户域（与 HOME 无关），沙箱 HOME 下跑也会停掉真实服务。
+# 设 CGP_SKIP_LAUNCHCTL=1 跳过 launchctl 步骤（2026-10 r6 验证本脚本时曾因此误停正式 8484）。
+if [ "${CGP_SKIP_LAUNCHCTL:-0}" = "1" ]; then
+  msg "CGP_SKIP_LAUNCHCTL=1：跳过 launchctl 步骤（演练模式，不停止/注销真实服务）"
+else
+  launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && msg "服务已停止" || msg "服务本就未在运行"
+fi
 rm -f "$INSTALLED_PLIST" && msg "已移除 ${INSTALLED_PLIST}（开机自启一并取消）"
 
 # 用户创作数据不随卸载销毁：待办与报告存档先抢救到备份目录，再清理运行时副本。

@@ -37,7 +37,13 @@ NODE_MAJOR="$("$NODE_BIN" -p 'process.versions.node.split(".")[0]')"
 msg "node: $NODE_BIN ($("$NODE_BIN" --version))"
 
 # 2) 先停掉旧实例（幂等；放在端口检查前，保证升级时能覆盖运行中的旧版本）
-launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+#    演练守卫：CGP_SKIP_LAUNCHCTL=1 时跳过全部 launchctl 步骤（launchctl 作用于用户域、
+#    与 HOME 无关，沙箱 HOME 演练也会停掉真实服务——r6 事故教训）
+if [ "${CGP_SKIP_LAUNCHCTL:-0}" = "1" ]; then
+  msg "CGP_SKIP_LAUNCHCTL=1：跳过 launchctl 步骤（演练模式，不停止/加载真实服务）"
+else
+  launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+fi
 sleep 1
 
 # 3) 前置检查：端口
@@ -91,6 +97,10 @@ fi
 
 # 6) 加载并启动（bootout 后服务域偶有短暂未清干净 → bootstrap 报 5 I/O error，
 #    实为竞态：等 2 秒重试一次即可成功）
+if [ "${CGP_SKIP_LAUNCHCTL:-0}" = "1" ]; then
+  msg "演练模式：已跳过 bootstrap，不做健康检查（文件拷贝/配置引导已执行完毕）"
+  exit 0
+fi
 if ! launchctl bootstrap "gui/$(id -u)" "$INSTALLED_PLIST" 2>/dev/null; then
   sleep 2
   launchctl bootstrap "gui/$(id -u)" "$INSTALLED_PLIST" || true

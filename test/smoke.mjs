@@ -745,6 +745,12 @@ try {
     const un = fs.readFileSync(path.join(ROOT, 'uninstall.sh'), 'utf8');
     check('uninstall.sh 卸载前抢救 .bad 现场备份', un.includes('*.bad') && un.includes('*.bad.*'),
       un.split('\n').filter((l) => l.includes('.bad')).join(' | ').slice(0, 120));
+    // r6 事故防护：launchctl 作用于用户域（与 HOME 无关），两脚本必须有演练守卫
+    const ins = fs.readFileSync(path.join(ROOT, 'install.sh'), 'utf8');
+    check('install.sh 含 CGP_SKIP_LAUNCHCTL 演练守卫', (ins.match(/CGP_SKIP_LAUNCHCTL/g) ?? []).length >= 2,
+      'bootout 与 bootstrap 两处都需守卫');
+    check('uninstall.sh 含 CGP_SKIP_LAUNCHCTL 演练守卫', (un.match(/CGP_SKIP_LAUNCHCTL/g) ?? []).length >= 2,
+      'bootout 与文案都需守卫');
   }
 
   console.log('— 报告源：zcode（db.sqlite 适配器，fixture） —');
