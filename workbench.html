@@ -131,10 +131,13 @@
   .rail-stats .rs { white-space: nowrap; }
   .rail-stats .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
-  /* ---- 待办筛选行 -------------------------------------------------------- */
-  .tfilter { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; font: 11.5px var(--mono); }
-  .tfilter .flabel { color: var(--faint); letter-spacing: .08em; }
-  .tfilter button { padding: 2.5px 10px; font-size: 11.5px; border-radius: 99px; }
+  /* ---- 待办筛选行：搜索/计数一行 + 每组筛选各占一行（标签不与自己的 chip 分家）-- */
+  .tfilter { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; font: 11.5px var(--mono); }
+  .tfilter .frow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tfilter .flabel { color: var(--faint); letter-spacing: .08em; flex: none; }
+  .tfilter button { padding: 2.5px 10px; font-size: 11.5px; border-radius: 99px; max-width: 190px; }
+  /* 超长项目 chip 截断省略，完整名看 title */
+  .tfilter button[data-flt] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tfilter button.on { border-color: var(--amber); color: var(--amber-hi); background: var(--amber-dim); }
   .tfilter input[type="search"] {
     font: 11.5px var(--mono); padding: 4px 10px; border-radius: 99px; min-width: 0; width: 150px;
@@ -238,7 +241,11 @@
         </div>
         <datalist id="projList"></datalist>
         <div class="tfilter">
-          <input type="search" id="todoSearch" placeholder="搜标题…" title="按标题关键字过滤（与项目/来源筛选叠加）">
+          <div class="frow">
+            <input type="search" id="todoSearch" placeholder="搜标题…" title="按标题关键字过滤（与项目/来源筛选叠加）">
+            <span style="flex:1"></span>
+            <span id="todoMeta"></span>
+          </div>
           <span id="todoChips"></span>
         </div>
         <div id="todoList"><span class="dim">加载中…</span></div>
@@ -421,14 +428,17 @@ function renderTodos() {
 
   // 项目建议（datalist，复用现有标签）；筛选行 chips 只重绘 span，搜索框不动（保焦点）
   $('projList').innerHTML = projects.map((p) => `<option value="${esc(p)}">`).join('');
-  const chip = (kind, val, label) => `<button data-flt="${kind}" data-val="${esc(val)}" class="${todoFilters[kind] === val ? 'on' : ''}">${esc(label)}</button>`;
+  const chip = (kind, val, label) => `<button data-flt="${kind}" data-val="${esc(val)}" title="${esc(val)}" class="${todoFilters[kind] === val ? 'on' : ''}">${esc(label)}</button>`;
+  // 每组一行（frow）：组标签永远与自己的 chip 同行，不与其他组混排
   let fhtml = '';
-  if (projects.length) fhtml += `<span class="flabel">项目</span>` + projects.map((p) => chip('project', p, p)).join('');
-  if (sources.length) fhtml += (fhtml ? '<span style="width:6px"></span>' : '') + `<span class="flabel">来源</span>` + sources.map((s) => chip('source', s, s === 'user' ? '手动' : s.replace(/^agent:/, ''))).join('');
+  if (projects.length) fhtml += `<span class="frow"><span class="flabel">项目</span>${projects.map((p) => chip('project', p, p)).join('')}</span>`;
+  if (sources.length) fhtml += `<span class="frow"><span class="flabel">来源</span>${sources.map((s) => chip('source', s, s === 'user' ? '手动' : s.replace(/^agent:/, ''))).join('')}</span>`;
   // 紧急度 chips：现有数据里出现过的紧急度才显示
-  if (urgencies.length) fhtml += (fhtml ? '<span style="width:6px"></span>' : '') + `<span class="flabel">紧急度</span>` + urgencies.map((u) => chip('urgency', u, URG_LABEL[u] || u)).join('');
-  if (filtered) fhtml += `<button data-flt="clear">✕ 清除筛选</button><span class="fcount">显示 ${visible.length} / 共 ${allTodos.length}</span>`;
+  if (urgencies.length) fhtml += `<span class="frow"><span class="flabel">紧急度</span>${urgencies.map((u) => chip('urgency', u, URG_LABEL[u] || u)).join('')}</span>`;
   $('todoChips').innerHTML = fhtml;
+  // 计数与清除固定在搜索框同行右侧，不混进 chip 流
+  $('todoMeta').innerHTML = filtered
+    ? `<span class="fcount">显示 ${visible.length} / 共 ${allTodos.length}</span><button data-flt="clear">✕ 清除筛选</button>` : '';
   // 零待办且无任何生效筛选时收起搜索框（chips 本就为空，空占位显得多余）
   $('todoSearch').style.display = (allTodos.length === 0 && !filtered) ? 'none' : '';
 
