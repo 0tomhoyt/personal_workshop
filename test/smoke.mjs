@@ -1469,6 +1469,15 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('stats 落盘内容含记账桶', flushed.days && Object.values(flushed.days)[0]?.providers?.p1?.models?.m1?.req === 1, JSON.stringify(flushed).slice(0, 120));
     // 写一半被 kill 模拟：flush 完成后目录无残留 tmp（rename 已原子换名）
     check('stats 落盘无残留 tmp 文件', !fs.readdirSync(tmp).some((f) => f.startsWith('stats-flush.json') && f.endsWith('.tmp')), fs.readdirSync(tmp).filter((f) => f.includes('stats-flush')).join(','));
+    // 坏 stats.json 起步：留 .bad 备份（与 todos/reports 同口径），空状态起步不崩
+    const statsBad = path.join(tmp, 'stats-bad.json');
+    fs.writeFileSync(statsBad, '{not-json');
+    process.env.CANNBOT_STATS_FILE = statsBad;
+    const statsBadMod = await import(path.join(ROOT, 'lib/stats.mjs') + '?t=' + Date.now() + 'b');
+    statsBadMod.recordStats({ provider: 'p1', model: 'm1', status: 200, ms: 5 });
+    statsBadMod.flushStats();
+    check('坏 stats.json：留 .bad 备份且内容原样', fs.existsSync(statsBad + '.bad') && fs.readFileSync(statsBad + '.bad', 'utf8') === '{not-json');
+    check('坏 stats.json：按空起步重新记账落盘', (() => { const d = JSON.parse(fs.readFileSync(statsBad, 'utf8')); return Object.values(d.days)[0]?.providers?.p1?.models?.m1?.req === 1; })());
     if (prevStats === undefined) delete process.env.CANNBOT_STATS_FILE; else process.env.CANNBOT_STATS_FILE = prevStats;
   }
 } catch (e) {
