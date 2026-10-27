@@ -632,6 +632,29 @@ try {
     check('todos.json 落盘且与列表一致', Array.isArray(fileState.todos) && fileState.todos.length === listed.todos.length, `${fileState.todos?.length} vs ${listed.todos?.length}`);
     check('todos.json 权限 0600', (fs.statSync(path.join(tmp, 'todos.json')).mode & 0o777) === 0o600, fs.statSync(path.join(tmp, 'todos.json')).mode.toString(8));
 
+    // 「清理已完成」按钮走的 DELETE 循环路径（API 侧）：3 done + 2 未完成 → 只删 done，未完成原样
+    const doneIds = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await post('/v1/todos', { title: `已完成项 ${i + 1}` });
+      const id = (await r.json()).todo.id;
+      await fetch(`${GW}/v1/todos/${id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'done' }) });
+      doneIds.push(id);
+    }
+    const keep = [];
+    for (const title of ['未完成 A', '未完成 B']) {
+      const r = await post('/v1/todos', { title });
+      keep.push({ id: (await r.json()).todo.id, title });
+    }
+    let delOk = 0;
+    for (const id of doneIds) {
+      if ((await fetch(`${GW}/v1/todos/${id}`, { method: 'DELETE', headers: todosHeaders })).status === 204) delOk++;
+    }
+    check('清理循环：3 条 done 全部 204 删除', delOk === 3, String(delOk));
+    const afterClear = await (await fetch(`${GW}/v1/todos`, { headers: todosHeaders })).json();
+    const afterIds = new Set(afterClear.todos.map((t) => t.id));
+    check('清理循环：未完成项原样保留、done 不残留', keep.every((k) => afterIds.has(k.id) && afterClear.todos.find((t) => t.id === k.id).title === k.title) && !doneIds.some((id) => afterIds.has(id)), JSON.stringify(afterClear.todos.map((t) => t.title)));
+    for (const k of keep) await fetch(`${GW}/v1/todos/${k.id}`, { method: 'DELETE', headers: todosHeaders });
+
     // 坏文件自愈：另起实例指向损坏的 todos.json / reports.json → 空列表起步、主业务不崩、
     // 坏文件留 .bad 备份（不静默清掉用户数据）
     fs.writeFileSync(path.join(tmp, 'todos-bad.json'), '{not-json');
@@ -1244,6 +1267,9 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       const invalid = reportFileName(null);
       check('下载文件名：无效区间占位且无非法字符', invalid === '工作总结_无效区间.md' && !/[\\/:*?"<>|]/.test(invalid) && !/[\\/:*?"<>|]/.test(crossMidnight), invalid);
     }
+    // 清理已完成按钮：存在 + confirm 文案口径（全量范围/不可撤销/跳过编辑项）
+    check('工作台页含「清理已完成」按钮', wbText.includes('id="clearDoneBtn"') && wbText.includes('清理已完成') && wbText.includes('clearDoneTodos'));
+    check('清理已完成：confirm 含全量范围与不可撤销、跳过编辑项口径', wbText.includes('此操作不可撤销') && wbText.includes('不受当前筛选影响') && wbText.includes('跳过编辑中的'));
   }
 
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');

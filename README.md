@@ -44,7 +44,7 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
 | `admin.html` | 网页管理台（`http://127.0.0.1:8484/`，provider 健康卡 + 供应商增删改 + 统计 + 测试） |
 | `workbench.html` / `workbench.css` | 个人工作台页（`/workbench`：待办 + AI 工作总结）与两页共享的主题样式 |
 | `providers.template.json` | providers.json 模板（install.sh 首次安装时生成到运行时目录） |
-| `test/mock-upstream.mjs` `test/smoke.mjs` | 端到端冒烟测试：mock 双协议上游 + 285 项断言（`node test/smoke.mjs`） |
+| `test/mock-upstream.mjs` `test/smoke.mjs` | 端到端冒烟测试：mock 双协议上游 + 三百余项断言（`node test/smoke.mjs`） |
 | `install.sh` / `uninstall.sh` / `status.sh` / `plist.template` | launchd 部署与状态 |
 | `cannbot-creds.sh` | cannbot 订阅凭证诊断（可选；`--sync-zcode` 重写 zcode 指向网关并写入 token） |
 | `打开管理界面.command` | **双击即可**：自动确保网关已启动并打开管理台 |
