@@ -127,6 +127,11 @@
   .tfilter .flabel { color: var(--faint); letter-spacing: .08em; }
   .tfilter button { padding: 2.5px 10px; font-size: 11.5px; border-radius: 99px; }
   .tfilter button.on { border-color: var(--amber); color: var(--amber-hi); background: var(--amber-dim); }
+  .tfilter input[type="search"] {
+    font: 11.5px var(--mono); padding: 4px 10px; border-radius: 99px; min-width: 0; width: 150px;
+    border: 1px solid var(--line); background: var(--inset); color: var(--ink);
+  }
+  .tfilter input[type="search"]::placeholder { color: var(--faint); }
   .tfilter .fcount { color: var(--dim); }
 
   /* ---- 待办就地编辑 ------------------------------------------------------ */
@@ -162,6 +167,7 @@
     .tedit input[type="text"] { width: 100%; }
     .tedit .row { flex-wrap: wrap; }
     .tedit input.proj { flex: 1 1 110px; width: auto; min-width: 0; }
+    .tfilter input[type="search"] { flex: 1 1 100%; width: 100%; }
     .todo-add input[type="text"] { flex: 1 1 100%; min-width: 0; }
     .todo-add .seg, .rng .seg { flex: 1 1 100%; overflow-x: auto; }
     .todo-add .proj { flex: none; }
@@ -222,7 +228,10 @@
           <button class="primary" id="addBtn">添加</button>
         </div>
         <datalist id="projList"></datalist>
-        <div class="tfilter" id="todoFilter"><span id="todoChips"></span></div>
+        <div class="tfilter">
+          <input type="search" id="todoSearch" placeholder="搜标题…" title="按标题关键字过滤（与项目/来源筛选叠加）">
+          <span id="todoChips"></span>
+        </div>
         <div id="todoList"><span class="dim">加载中…</span></div>
       </div>
     </section>
@@ -315,7 +324,7 @@ const URG_ORDER = { urgent: 0, normal: 1, someday: 2 };
 let allTodos = [];
 
 // 筛选（项目标签 / 来源）：存 localStorage，跨会话保留；失效选项下次渲染自动清除
-let todoFilters = { project: '', source: '' };
+let todoFilters = { project: '', source: '', q: '' };
 try { todoFilters = { ...todoFilters, ...JSON.parse(localStorage.getItem('wb-todo-filters') || '{}') }; } catch {}
 const saveFilters = () => { try { localStorage.setItem('wb-todo-filters', JSON.stringify(todoFilters)); } catch {} };
 let editingId = null; // 就地编辑中的待办 id
@@ -336,9 +345,12 @@ function renderTodos() {
   const sources = [...new Set(allTodos.map((t) => t.source).filter(Boolean))].sort();
   if (todoFilters.project && !projects.includes(todoFilters.project)) todoFilters.project = '';
   if (todoFilters.source && !sources.includes(todoFilters.source)) todoFilters.source = '';
+  // 标题关键字（大小写不敏感子串）与项目/来源筛选叠加（AND）
+  const q = (todoFilters.q || '').toLowerCase();
+  const matchQ = (t) => !q || (t.title || '').toLowerCase().includes(q);
   const visible = allTodos.filter((t) =>
     (!todoFilters.project || t.project === todoFilters.project) &&
-    (!todoFilters.source || t.source === todoFilters.source));
+    (!todoFilters.source || t.source === todoFilters.source) && matchQ(t));
 
   const doing = visible.filter((t) => t.status === 'in_progress');
   const pending = visible.filter((t) => t.status === 'pending').sort((a, b) => (URG_ORDER[a.urgency] ?? 1) - (URG_ORDER[b.urgency] ?? 1));
@@ -384,7 +396,7 @@ function renderTodos() {
   if (doing.length) html += `<div class="tgroup"><div class="tgroup-label">进行中 <span class="cnt">${doing.length}</span></div>${doing.map(item).join('')}</div>`;
   if (pending.length) html += `<div class="tgroup"><div class="tgroup-label">待办 <span class="cnt">${pending.length}</span></div>${pending.map(item).join('')}</div>`;
   if (done.length) html += `<details class="tdone-group" ${done.length && !doing.length && !pending.length ? 'open' : ''}><summary>已完成 · ${done.length} 项（点击展开）</summary>${done.slice().reverse().map(item).join('')}</details>`;
-  const filtered = !!(todoFilters.project || todoFilters.source);
+  const filtered = !!(todoFilters.project || todoFilters.source || q);
   $('todoList').innerHTML = html
     || (filtered ? '<div class="empty">筛选下没有待办。</div>'
       : '<div class="empty">暂无待办——从上面添加，或在任意 agent 里说一句「把 XX 加到待办」。</div>');
@@ -396,7 +408,7 @@ function renderTodos() {
   if (projects.length) fhtml += `<span class="flabel">项目</span>` + projects.map((p) => chip('project', p, p)).join('');
   if (sources.length) fhtml += (fhtml ? '<span style="width:6px"></span>' : '') + `<span class="flabel">来源</span>` + sources.map((s) => chip('source', s, s === 'user' ? '手动' : s.replace(/^agent:/, ''))).join('');
   if (filtered) fhtml += `<button data-flt="clear">✕ 清除筛选</button><span class="fcount">显示 ${visible.length} / 共 ${allTodos.length}</span>`;
-  $('todoFilter').innerHTML = fhtml;
+  $('todoChips').innerHTML = fhtml;
 
   // 通道栏遥测（全量口径，不受筛选影响）
   $('railTodo').textContent = String(allTodos.filter((t) => t.status === 'pending').length);
@@ -648,6 +660,13 @@ $('rngSeg').addEventListener('click', (e) => {
 });
 $('genBtn').addEventListener('click', generateReport);
 $('copyBtn').addEventListener('click', copyReport);
+// 搜索框：输入即过滤（与项目/来源 AND），状态并入 wb-todo-filters
+$('todoSearch').addEventListener('input', (e) => {
+  todoFilters.q = e.target.value.trim();
+  saveFilters();
+  renderTodos();
+});
+
 // 待办行 / 历史表 / 筛选行 / 就地编辑的事件委托
 document.addEventListener('click', (e) => {
   // 点编辑表单以外区域退出就地编辑（点另一条标题则在下一段切换编辑目标）
@@ -667,8 +686,10 @@ document.addEventListener('click', (e) => {
   // 筛选 chips
   const fl = e.target.closest('button[data-flt]');
   if (fl) {
-    if (fl.dataset.flt === 'clear') todoFilters = { project: '', source: '' };
-    else todoFilters[fl.dataset.flt] = todoFilters[fl.dataset.flt] === fl.dataset.val ? '' : fl.dataset.val;
+    if (fl.dataset.flt === 'clear') {
+      todoFilters = { project: '', source: '', q: '' };
+      $('todoSearch').value = '';
+    } else todoFilters[fl.dataset.flt] = todoFilters[fl.dataset.flt] === fl.dataset.val ? '' : fl.dataset.val;
     saveFilters();
     renderTodos();
     return;
@@ -713,6 +734,7 @@ document.addEventListener('keydown', (e) => {
 (async () => {
   applyTheme(localStorage.getItem('gw-theme') || 'auto');
   backfillPreset(); // 首屏默认「今日」回填起止框
+  $('todoSearch').value = todoFilters.q || ''; // 恢复上次的标题关键字筛选
   await loadToken();
   await refreshTodos();
   await refreshHistory();

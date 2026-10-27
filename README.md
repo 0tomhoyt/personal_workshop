@@ -205,8 +205,8 @@ API Key  : ANTHROPIC_AUTH_TOKEN = 网关 token
 
 - **待办事项**：标题 + 紧急程度（紧急/普通/不急）+ 可选项目标签；进行中 → 待办 → 已完成（折叠）
   分组；紧急排前。点标题可就地编辑（标题/紧急度/项目标签，走 `PATCH /v1/todos/:id`），列表上方可按
-  项目标签与来源（user / agent）筛选，筛选状态记在浏览器 localStorage。数据在 `todos.json`（运行时
-  目录），人与 agent 共用同一份。
+  项目标签与来源（user / agent）筛选，也可按标题关键字搜索（纯前端，与筛选叠加），筛选状态记在浏览器
+  localStorage。数据在 `todos.json`（运行时目录），人与 agent 共用同一份。
 - **时间段工作总结**：预设区间（今日/昨天/本周/上周/近7天/近30天）或自定义起止 → 点「生成报告」。
   网关读取 **Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录**（只读各自的
   数据文件，互相独立、单源故障只降级不失败），按项目归并压缩、脱敏（密钥样式 → `[REDACTED]`），
