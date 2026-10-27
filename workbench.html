@@ -112,6 +112,9 @@
   .empty { color: var(--faint); font-size: 12.5px; padding: 10px 2px; }
   /* 表头窄屏不折行；页脚贴近内容 */
   #rhistTbl th { white-space: nowrap; }
+  /* 历史表当前查看行：琥珀淡底 + 左缘游标，与整页语言一致 */
+  #rhistTbl tr.is-viewing td { background: rgba(var(--amber-rgb), .08); }
+  #rhistTbl tr.is-viewing td:first-child { box-shadow: inset 2px 0 0 var(--amber); }
   .foot { margin-top: 16px; }
 
   /* ---- 通道栏统计：两列网格 + 不拆字 ------------------------------------- */
@@ -511,6 +514,7 @@ function currentRange() {
 
 const PHASE_TEXT = { collect: '提取会话素材…', summarize: '分项目总结', final: '汇总成稿…' };
 let genTimer = null;
+let viewingReportId = null; // 历史表当前查看的报告 id（行高亮用）
 
 async function generateReport() {
   // 用户填了自定义起止但区间无效（end<=start / 解析失败）时明示，不静默退回预设
@@ -578,6 +582,12 @@ async function showReport(id) {
   $('rout').style.display = 'block';
   $('rbody').scrollTop = 0;
   showReport._last = rep.report || '';
+  // 成稿区滚进视野（点「查看」时页面常停在历史表附近，用户会以为没反应）
+  $('rout').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // 历史表高亮当前查看行
+  viewingReportId = id;
+  document.querySelectorAll('#rhistBody tr').forEach((tr) =>
+    tr.classList.toggle('is-viewing', tr.querySelector('[data-act="view"]')?.dataset.id === id));
 }
 
 // Markdown 简易渲染：先整体转义，再做结构替换（标题/列表/粗体/行内代码/代码块）
@@ -633,7 +643,7 @@ async function refreshHistory() {
     $('railReports').textContent = String(rows.length);
     $('rhistBody').innerHTML = rows.length ? rows.map((x) => {
       const m = x.materials || {};
-      return `<tr>
+      return `<tr${x.id === viewingReportId ? ' class="is-viewing"' : ''}>
         <td>${fmtTimeFull(x.range.start)}<br><span class="dim">→ ${fmtTimeFull(x.range.end)}</span></td>
         <td>${fmtTime(x.generated_at)}</td>
         <td><span class="dim">${esc(x.provider)}/${esc(x.model)} · ${m.sessions ?? 0} 会话</span></td>
@@ -668,6 +678,26 @@ $('rngSeg').addEventListener('click', (e) => {
   document.querySelectorAll('#rngSeg button').forEach((x) => x.classList.remove('active'));
   b.classList.add('active');
   backfillPreset();
+});
+// 起止框手动改动：与任一预设窗口完全相等才亮对应预设，否则全部熄灭（currentRange 实际走自定义，视觉保持一致）
+const PRESET_KEYS = ['today', 'yesterday', 'week', 'lastweek', 'd7', 'd30'];
+function syncPresetFromInputs() {
+  const sv = $('rngStart').value, ev = $('rngEnd').value;
+  if (!sv || !ev) return;
+  const s = new Date(sv).getTime(), e = new Date(ev).getTime();
+  if (!Number.isFinite(s) || !Number.isFinite(e)) return;
+  // 分钟粒度比较：datetime-local 本就无秒，预设的 now 端点取整到分钟再对
+  const hit = PRESET_KEYS.find((r) => { const w = presetRange(r); return Math.floor(w.startMs / 60000) === Math.floor(s / 60000) && Math.floor(w.endMs / 60000) === Math.floor(e / 60000); });
+  document.querySelectorAll('#rngSeg button').forEach((x) => x.classList.toggle('active', !!hit && x.dataset.rng === hit));
+}
+['rngStart', 'rngEnd'].forEach((id) => {
+  const el = $(id);
+  el.addEventListener('input', syncPresetFromInputs);
+  el.addEventListener('change', syncPresetFromInputs);
+  // 回车 = 生成（生成中按钮 disabled 时同样不响应）
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !$('genBtn').disabled) { e.preventDefault(); generateReport(); }
+  });
 });
 $('genBtn').addEventListener('click', generateReport);
 $('copyBtn').addEventListener('click', copyReport);
@@ -721,7 +751,10 @@ document.addEventListener('click', (e) => {
   else if (b.dataset.act === 'rdel') {
     if (!confirm('删除这份报告？')) return;
     fetch(`/admin/report/${encodeURIComponent(id)}`, { method: 'DELETE' }).then((r) => {
-      if (r.status === 204) { refreshHistory(); if ($('rout').style.display === 'block') $('rout').style.display = 'none'; }
+      if (r.status === 204) {
+        if (viewingReportId === id) { viewingReportId = null; if ($('rout').style.display === 'block') $('rout').style.display = 'none'; }
+        refreshHistory();
+      }
       else showErr(`删除失败（HTTP ${r.status}）`);
     });
   }
