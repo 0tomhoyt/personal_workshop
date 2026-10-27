@@ -95,6 +95,7 @@ const gateway = spawnNode([path.join(ROOT, 'server.mjs')], {
   CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
   CANNBOT_LOG_FILE: path.join(tmp, 'proxy.log'),
   CANNBOT_STATS_FILE: path.join(tmp, 'stats.json'),
+  CANNBOT_TODOS_FILE: path.join(tmp, 'todos.json'),
   CANNBOT_M1DDC: path.join(ROOT, 'test/mock-m1ddc.mjs'),
   MOCK_M1DDC_STATE: path.join(tmp, 'mon-state.json'),
   MOCK_M1DDC_LOG: path.join(tmp, 'mon-log.txt'),
@@ -558,6 +559,70 @@ try {
     check('最后一个 provider 拒绝删除 → 400', delLast.status === 400);
     const d4 = await (await fetch(`${GW}/v1/models`, { headers: { authorization: `Bearer ${TOKEN}` } })).json();
     check('删除 mock-anth 后目录仍可用（仅剩 mock-oai）', d4.data.some((m) => m.id === 'mock-pro') && !d4.data.some((m) => m.owned_by === 'mock-anth'));
+  }
+
+  console.log('— 待办事项（/v1/todos CRUD + 持久化） —');
+  {
+    const noAuth = await fetch(`${GW}/v1/todos`);
+    check('无 token 访问 /v1/todos → 401', noAuth.status === 401, `got ${noAuth.status}`);
+
+    const c1 = await post('/v1/todos', { title: '适配 unigemm SME' });
+    const t1 = (await c1.json()).todo;
+    check('POST 新建 → 201 且缺省 normal/user', c1.status === 201 && t1?.urgency === 'normal' && t1?.source === 'user' && t1?.status === 'pending' && typeof t1?.id === 'string' && typeof t1?.created_at === 'number', JSON.stringify(t1));
+    const c2 = await post('/v1/todos', { title: '排查网关 403', urgency: 'urgent', project: 'cannbot', note: '来自会话的上下文', source: 'agent:claude-code' });
+    const t2 = (await c2.json()).todo;
+    check('POST 全字段 → 201 且逐字段回显', c2.status === 201 && t2?.urgency === 'urgent' && t2?.project === 'cannbot' && t2?.source === 'agent:claude-code' && t2?.completed_at === null, JSON.stringify(t2));
+
+    const todosHeaders = { authorization: `Bearer ${TOKEN}` };
+    const list = await (await fetch(`${GW}/v1/todos`, { headers: todosHeaders })).json();
+    check('GET 列表含 2 条', list.todos?.length === 2, JSON.stringify(list.todos?.length));
+    const doneOnly = await (await fetch(`${GW}/v1/todos?status=done`, { headers: todosHeaders })).json();
+    check('GET ?status=done 过滤为空', doneOnly.todos?.length === 0, JSON.stringify(doneOnly.todos?.length));
+
+    const upd = await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'done' }) });
+    const uJ = await upd.json();
+    check('PUT 置 done → 200 且盖 completed_at', upd.status === 200 && typeof uJ.todo?.completed_at === 'number', JSON.stringify(uJ.todo));
+    const back = await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'pending' }) });
+    const bJ = await back.json();
+    check('PUT 改回 pending → completed_at 清空', back.status === 200 && bJ.todo?.completed_at === null, JSON.stringify(bJ.todo));
+    const upd404 = await fetch(`${GW}/v1/todos/no-such-id`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'done' }) });
+    check('PUT 不存在的 id → 404', upd404.status === 404);
+    const doneNow = await (await fetch(`${GW}/v1/todos?status=done`, { headers: todosHeaders })).json();
+    check('?status=done 此刻为 0（已改回）', doneNow.todos?.length === 0);
+
+    const del = await fetch(`${GW}/v1/todos/${t2.id}`, { method: 'DELETE', headers: todosHeaders });
+    check('DELETE → 204', del.status === 204, `got ${del.status}`);
+    const afterDel = await (await fetch(`${GW}/v1/todos`, { headers: todosHeaders })).json();
+    check('删除后列表剩 1 条', afterDel.todos?.length === 1, JSON.stringify(afterDel.todos?.length));
+    const del404 = await fetch(`${GW}/v1/todos/${t2.id}`, { method: 'DELETE', headers: todosHeaders });
+    check('再删同一 id → 404', del404.status === 404);
+
+    check('超长 title（501 字）→ 400', (await post('/v1/todos', { title: '长'.repeat(501) })).status === 400);
+    check('缺 title → 400', (await post('/v1/todos', {})).status === 400);
+    check('非法 urgency → 400', (await post('/v1/todos', { title: 'x', urgency: '高' })).status === 400);
+    check('非法 status → 400', (await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'todo' }) })).status === 400);
+    check('未知方法 PATCH → 405', (await fetch(`${GW}/v1/todos`, { method: 'PATCH', headers: authHeaders, body: '{}' })).status === 405);
+
+    // 持久化：直读 todos.json（合法 JSON、与内存一致、0600）
+    const fileState = JSON.parse(fs.readFileSync(path.join(tmp, 'todos.json'), 'utf8'));
+    const listed = await (await fetch(`${GW}/v1/todos`, { headers: todosHeaders })).json();
+    check('todos.json 落盘且与列表一致', Array.isArray(fileState.todos) && fileState.todos.length === listed.todos.length, `${fileState.todos?.length} vs ${listed.todos?.length}`);
+    check('todos.json 权限 0600', (fs.statSync(path.join(tmp, 'todos.json')).mode & 0o777) === 0o600, fs.statSync(path.join(tmp, 'todos.json')).mode.toString(8));
+
+    // 坏文件自愈：另起实例指向损坏的 todos.json → 空列表起步、主业务不崩
+    fs.writeFileSync(path.join(tmp, 'todos-bad.json'), '{not-json');
+    const gwTodo = spawnNode([path.join(ROOT, 'server.mjs')], {
+      CANNBOT_PROXY_PORT: '6294',
+      CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
+      CANNBOT_LOG_FILE: path.join(tmp, 'proxy4.log'),
+      CANNBOT_STATS_FILE: path.join(tmp, 'stats4.json'),
+      CANNBOT_TODOS_FILE: path.join(tmp, 'todos-bad.json'),
+    }, 'gateway-bad-todos');
+    await sleep(1500);
+    const badList = await (await fetch('http://127.0.0.1:6294/v1/todos', { headers: todosHeaders })).json();
+    check('坏 todos.json：实例存活且空列表起步', Array.isArray(badList.todos) && badList.todos.length === 0, JSON.stringify(badList));
+    check('坏 todos.json：主业务正常', (await (await fetch('http://127.0.0.1:6294/healthz')).json()).service === 'unified-subscription-gateway');
+    gwTodo.kill();
   }
 
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');
