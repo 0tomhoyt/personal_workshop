@@ -1275,6 +1275,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       wbText.includes("e.key !== '/'") && wbText.includes('e.isComposing') && wbText.includes('isContentEditable')
         && wbText.includes('e.ctrlKey || e.metaKey || e.altKey') && wbText.includes('preventDefault'));
     check('/ 快捷键：搜索框随空列表收起时不 preventDefault 白吞按键', wbText.includes('offsetParent'));
+    check('两页均有内联 favicon（消除 /favicon.ico 404）', wbText.includes('<link rel="icon"') && adminHtml.includes('<link rel="icon"'));
     check('搜索框 Esc：有内容走同一清空+持久化路径、无内容失焦', wbText.includes('todoSearch\').addEventListener(\'keydown\'') && wbText.includes('e.target.blur()'));
     check('清理已完成：全部已完成项在编辑态时的空清理提示', wbText.includes('已跳过——退出编辑后再清理'));
     // feature-4：按此时间段重新生成（复用 generateReport 路径，坏区间禁用）
