@@ -213,6 +213,7 @@
           <input type="text" id="addProj" class="proj" placeholder="项目标签（可空）" maxlength="60">
           <button class="primary" id="addBtn">添加</button>
         </div>
+        <div class="tfilter" id="todoFilter"></div>
         <div id="todoList"><span class="dim">加载中…</span></div>
       </div>
     </section>
@@ -304,6 +305,12 @@ const URG_LABEL = { urgent: '紧急', normal: '普通', someday: '不急' };
 const URG_ORDER = { urgent: 0, normal: 1, someday: 2 };
 let allTodos = [];
 
+// 筛选（项目标签 / 来源）：存 localStorage，跨会话保留；失效选项下次渲染自动清除
+let todoFilters = { project: '', source: '' };
+try { todoFilters = { ...todoFilters, ...JSON.parse(localStorage.getItem('wb-todo-filters') || '{}') }; } catch {}
+const saveFilters = () => { try { localStorage.setItem('wb-todo-filters', JSON.stringify(todoFilters)); } catch {} };
+let editingId = null; // 就地编辑中的待办 id
+
 async function refreshTodos() {
   try {
     const r = await apiFetch('/v1/todos');
@@ -315,18 +322,46 @@ async function refreshTodos() {
 }
 
 function renderTodos() {
-  const doing = allTodos.filter((t) => t.status === 'in_progress');
-  const pending = allTodos.filter((t) => t.status === 'pending').sort((a, b) => (URG_ORDER[a.urgency] ?? 1) - (URG_ORDER[b.urgency] ?? 1));
-  const done = allTodos.filter((t) => t.status === 'done');
+  // 筛选选项从现有数据动态生成；已失效的筛选值自动清除
+  const projects = [...new Set(allTodos.map((t) => t.project).filter(Boolean))].sort();
+  const sources = [...new Set(allTodos.map((t) => t.source).filter(Boolean))].sort();
+  if (todoFilters.project && !projects.includes(todoFilters.project)) todoFilters.project = '';
+  if (todoFilters.source && !sources.includes(todoFilters.source)) todoFilters.source = '';
+  const visible = allTodos.filter((t) =>
+    (!todoFilters.project || t.project === todoFilters.project) &&
+    (!todoFilters.source || t.source === todoFilters.source));
+
+  const doing = visible.filter((t) => t.status === 'in_progress');
+  const pending = visible.filter((t) => t.status === 'pending').sort((a, b) => (URG_ORDER[a.urgency] ?? 1) - (URG_ORDER[b.urgency] ?? 1));
+  const done = visible.filter((t) => t.status === 'done');
+
+  // 就地编辑表单（标题/紧急度/项目标签）：回车或「保存」提交 PATCH，Esc 或「取消」退出
+  const editForm = (t) => {
+    const urgBtn = (u) => `<button type="button" data-urg="${u}" class="${t.urgency === u ? 'active' : ''}">${URG_LABEL[u]}</button>`;
+    return `<div class="titem editing">
+      <span class="turg ${esc(t.urgency)}"></span>
+      <form class="tedit" data-editform="${esc(t.id)}">
+        <input type="text" name="title" value="${esc(t.title)}" maxlength="500">
+        <div class="row">
+          <div class="seg" data-urgseg>${urgBtn('urgent')}${urgBtn('normal')}${urgBtn('someday')}</div>
+          <input type="text" name="project" class="proj" value="${esc(t.project || '')}" maxlength="60" placeholder="项目标签（可空）">
+          <span style="flex:1"></span>
+          <button type="submit" class="primary">保存</button>
+          <button type="button" data-act="editcancel">取消</button>
+        </div>
+      </form>
+    </div>`;
+  };
 
   const item = (t) => {
+    if (editingId === t.id) return editForm(t);
     const agent = t.source && t.source !== 'user' ? `<span class="tagent">${esc(String(t.source).replace(/^agent:/, ''))}</span>` : '';
     const proj = t.project ? `<span class="tproj">${esc(t.project)}</span>` : '';
     const next = t.status === 'pending' ? ['in_progress', '▸ 开始'] : t.status === 'in_progress' ? ['done', '✓ 完成'] : ['pending', '↺ 重开'];
     return `<div class="titem ${t.status === 'done' ? 'done' : ''}">
       <span class="turg ${esc(t.urgency)}" title="${esc(URG_LABEL[t.urgency] || t.urgency)}"></span>
       <div class="tmain">
-        <div class="ttitle">${esc(t.title)}</div>
+        <div class="ttitle editable" data-edit="${esc(t.id)}" title="点击编辑">${esc(t.title)}</div>
         <div class="tmeta">${proj}${agent}<span>${t.completed_at ? '完成于 ' + fmtTime(t.completed_at) : '建于 ' + fmtTime(t.created_at)}</span></div>
       </div>
       <div class="tacts">
@@ -340,13 +375,32 @@ function renderTodos() {
   if (doing.length) html += `<div class="tgroup"><div class="tgroup-label">进行中 <span class="cnt">${doing.length}</span></div>${doing.map(item).join('')}</div>`;
   if (pending.length) html += `<div class="tgroup"><div class="tgroup-label">待办 <span class="cnt">${pending.length}</span></div>${pending.map(item).join('')}</div>`;
   if (done.length) html += `<details class="tdone-group" ${done.length && !doing.length && !pending.length ? 'open' : ''}><summary>已完成 · ${done.length} 项（点击展开）</summary>${done.slice().reverse().map(item).join('')}</details>`;
-  $('todoList').innerHTML = html || '<div class="empty">暂无待办——从上面添加，或在任意 agent 里说一句「把 XX 加到待办」。</div>';
+  const filtered = !!(todoFilters.project || todoFilters.source);
+  $('todoList').innerHTML = html
+    || (filtered ? '<div class="empty">筛选下没有待办。</div>'
+      : '<div class="empty">暂无待办——从上面添加，或在任意 agent 里说一句「把 XX 加到待办」。</div>');
 
-  // 通道栏遥测
-  $('railTodo').textContent = String(pending.length);
-  $('railDoing').textContent = String(doing.length);
+  // 筛选行：项目 / 来源 chips（来源 user 显示为「手动」）
+  const chip = (kind, val, label) => `<button data-flt="${kind}" data-val="${esc(val)}" class="${todoFilters[kind] === val ? 'on' : ''}">${esc(label)}</button>`;
+  let fhtml = '';
+  if (projects.length) fhtml += `<span class="flabel">项目</span>` + projects.map((p) => chip('project', p, p)).join('');
+  if (sources.length) fhtml += (fhtml ? '<span style="width:6px"></span>' : '') + `<span class="flabel">来源</span>` + sources.map((s) => chip('source', s, s === 'user' ? '手动' : s.replace(/^agent:/, ''))).join('');
+  if (filtered) fhtml += `<button data-flt="clear">✕ 清除筛选</button>`;
+  $('todoFilter').innerHTML = fhtml;
+
+  // 通道栏遥测（全量口径，不受筛选影响）
+  $('railTodo').textContent = String(allTodos.filter((t) => t.status === 'pending').length);
+  $('railDoing').textContent = String(allTodos.filter((t) => t.status === 'in_progress').length);
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-  $('railDone').textContent = String(done.filter((t) => (t.completed_at ?? 0) >= todayStart.getTime()).length);
+  $('railDone').textContent = String(allTodos.filter((t) => t.status === 'done' && (t.completed_at ?? 0) >= todayStart.getTime()).length);
+}
+
+async function saveTodoEdit(id, patch) {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(id)}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch),
+  });
+  if (r.ok) { editingId = null; refreshTodos(); }
+  else showErr((await r.json().catch(() => ({}))).error?.message || `保存失败（HTTP ${r.status}）`);
 }
 
 async function addTodo() {
@@ -584,12 +638,38 @@ $('rngSeg').addEventListener('click', (e) => {
 });
 $('genBtn').addEventListener('click', generateReport);
 $('copyBtn').addEventListener('click', copyReport);
-// 待办行 / 历史表的事件委托
+// 待办行 / 历史表 / 筛选行 / 就地编辑的事件委托
 document.addEventListener('click', (e) => {
+  // 点标题进入就地编辑
+  const et = e.target.closest('.ttitle.editable');
+  if (et) {
+    editingId = et.dataset.edit;
+    renderTodos();
+    const f = document.querySelector('form[data-editform]');
+    if (f) { f.elements.title.focus(); f.elements.title.select(); }
+    return;
+  }
+  // 筛选 chips
+  const fl = e.target.closest('button[data-flt]');
+  if (fl) {
+    if (fl.dataset.flt === 'clear') todoFilters = { project: '', source: '' };
+    else todoFilters[fl.dataset.flt] = todoFilters[fl.dataset.flt] === fl.dataset.val ? '' : fl.dataset.val;
+    saveFilters();
+    renderTodos();
+    return;
+  }
+  // 编辑表单内的紧急度分段切换
+  const ub = e.target.closest('[data-urgseg] button[data-urg]');
+  if (ub) {
+    ub.closest('[data-urgseg]').querySelectorAll('button').forEach((x) => x.classList.remove('active'));
+    ub.classList.add('active');
+    return;
+  }
   const b = e.target.closest('button[data-act]'); if (!b) return;
   const id = b.dataset.id;
   if (b.dataset.act === 'cycle') cycleTodo(id, b.dataset.next);
   else if (b.dataset.act === 'del') delTodo(id);
+  else if (b.dataset.act === 'editcancel') { editingId = null; renderTodos(); }
   else if (b.dataset.act === 'view') showReport(id);
   else if (b.dataset.act === 'rdel') {
     if (!confirm('删除这份报告？')) return;
@@ -598,6 +678,21 @@ document.addEventListener('click', (e) => {
       else showErr(`删除失败（HTTP ${r.status}）`);
     });
   }
+});
+// 编辑表单提交（回车或「保存」）：空标题不放行
+document.addEventListener('submit', (e) => {
+  const f = e.target.closest('form[data-editform]'); if (!f) return;
+  e.preventDefault();
+  const title = f.elements.title.value.trim();
+  if (!title) { f.elements.title.focus(); return; }
+  const urgency = f.querySelector('[data-urgseg] button.active')?.dataset.urg || 'normal';
+  const project = f.elements.project.value.trim();
+  saveTodoEdit(f.dataset.editform, { title, urgency, project });
+});
+// Esc 退出就地编辑
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (e.target.closest && e.target.closest('form[data-editform]')) { editingId = null; renderTodos(); }
 });
 // 页面被打开时若上一次任务仍在跑：接着轮询
 (async () => {

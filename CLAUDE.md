@@ -95,7 +95,7 @@ workbench.html/css    工作台页（待办管理 + 报告生成/历史）与 ad
 |---|---|
 | `/v1/messages`、`/messages` | Anthropic 客户端：先 checkClientAuth → 解析 model → 路由 → 直通或翻译 |
 | `/v1/todos`、`/v1/todos/:id` | 工作台待办 CRUD（Bearer 鉴权；**必须排在 /v1/* catch-all 之前**）：
-  GET（`?status=` 过滤）/ POST / PUT 部分字段（status=done 盖 completed_at）/ DELETE |
+  GET（`?status=` 过滤）/ POST / PUT·PATCH 部分字段（PATCH 与 PUT 同义，工作台就地编辑用；status=done 盖 completed_at）/ DELETE |
 | `/v1/*` 其余 | OpenAI 客户端：鉴权 → 路由 → openai 上游透传 / anthropic 上游反向翻译 |
 | `/v1/models` | 聚合所有 provider 目录（重名消歧为 `pid/model`，`owned_by`=provider id） |
 | `/workbench`、`/workbench.css` | 工作台页与共享主题样式（静态文件，硬编码路由） |
