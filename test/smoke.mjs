@@ -107,6 +107,7 @@ const gateway = spawnNode([path.join(ROOT, 'server.mjs')], {
   CANNBOT_M1DDC: path.join(ROOT, 'test/mock-m1ddc.mjs'),
   MOCK_M1DDC_STATE: path.join(tmp, 'mon-state.json'),
   MOCK_M1DDC_LOG: path.join(tmp, 'mon-log.txt'),
+  CANNBOT_REPORT_RETRY_DELAY_MS: '0', // 总结重试演练不等真实 1.5s
 }, 'gateway');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1140,6 +1141,30 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     writeCfg(cfg0); // 还原配置
     await sleep(600);
 
+    // 总结重试（两级同纪律）：mock 上游模拟 kimi 式偶发空响应（mock-empty-* 见 mock-upstream.mjs）
+    {
+      const genWithModel = async (model) => {
+        const d = structuredClone(cfg0);
+        const p = d.providers.find((x) => x.id === 'mock-oai');
+        p.models = { source: 'static', list: [{ id: model }] }; // 静态目录：模型解析不联网
+        d.workbench = { reportProvider: 'mock-oai', reportModel: model };
+        writeCfg(d);
+        await sleep(600);
+        await post('/admin/report/generate', WIN);
+        return await waitJob();
+      };
+      const r1 = await genWithModel('mock-empty-final-once');
+      const rep1 = r1.state === 'done' ? await (await fetch(`${GW}/admin/report/${r1.reportId}`)).json() : {};
+      check('二级首次空响应 → 重试一次后 done 且成稿正常', r1.state === 'done' && (rep1.report ?? '').includes('ECHO:'), JSON.stringify({ s: r1.state, e: r1.error }));
+      const r2 = await genWithModel('mock-empty-final');
+      check('二级两次都空 → failed 且文案点名响应无文本内容', r2.state === 'failed' && /上游 mock-oai 响应无文本内容/.test(r2.error || ''), JSON.stringify({ s: r2.state, e: r2.error }));
+      const r3 = await genWithModel('mock-empty-project-once');
+      const rep3 = r3.state === 'done' ? await (await fetch(`${GW}/admin/report/${r3.reportId}`)).json() : {};
+      check('一级首次空响应 → 重试一次后 done（一级同样视空为失败）', r3.state === 'done' && (rep3.report ?? '').includes('ECHO:'), JSON.stringify({ s: r3.state, e: r3.error }));
+      writeCfg(cfg0); // 还原配置
+      await sleep(600);
+    }
+
     // 四源全部采集成功但该窗口无会话 → 走「无记录」固定成稿（另起实例指到 fixture 库，未来窗口 0 会话）
     {
       const gwEmpty = spawnNode([path.join(ROOT, 'server.mjs')], {
@@ -1306,13 +1331,13 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
 
     // 历史报告：list（无正文）/ 删除 / 404
     const list = await (await fetch(`${GW}/admin/report/list`)).json();
-    check('list 返回 5 份元数据且不含正文（场景 A/空素材/C/C′/F）', list.reports?.length === 5 && list.reports.every((r) => typeof r.report !== 'string'), JSON.stringify(list.reports?.map((r) => r.id)));
+    check('list 返回 7 份元数据且不含正文（场景 A/空素材/C/C′/F + 重试演练成功 2 份）', list.reports?.length === 7 && list.reports.every((r) => typeof r.report !== 'string'), JSON.stringify(list.reports?.map((r) => r.id)));
     const del = await fetch(`${GW}/admin/report/${done.reportId}`, { method: 'DELETE' });
     check('DELETE 报告 → 204', del.status === 204, `got ${del.status}`);
     const gone = await fetch(`${GW}/admin/report/${done.reportId}`);
     check('删后 GET → 404', gone.status === 404);
     const list2 = await (await fetch(`${GW}/admin/report/list`)).json();
-    check('删除后 list 剩 4 份（场景 空素材/C/C′/F 各一）', list2.reports?.length === 4, JSON.stringify(list2.reports?.length));
+    check('删除后 list 剩 6 份（场景 空素材/C/C′/F 各一 + 重试演练成功 2 份）', list2.reports?.length === 6, JSON.stringify(list2.reports?.length));
     check('GET 不存在的报告 → 404', (await fetch(`${GW}/admin/report/nope`)).status === 404);
     // 默认存档路径：必须在服务根目录（lib/report/ 少算一层 dirname 会落 lib/ 子目录，
     // 且 install.sh 的 cp -R lib/. 会用调试存档覆盖运行时真实报告——见审查修复）

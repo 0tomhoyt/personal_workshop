@@ -21,6 +21,9 @@ const KIMI_TOKEN = 'mock-token-kimi';
 
 const ECHO = (extra) => 'ECHO:' + JSON.stringify(extra);
 
+// 报告重试演练的调用计数（模型:级 → 次数），见 /oai chat 分支
+const emptySeen = {};
+
 function readBody(req) {
   return new Promise((resolve) => {
     const chunks = [];
@@ -102,6 +105,22 @@ const server = http.createServer(async (req, res) => {
   if (url === '/oai/v1/chat/completions') {
     if (auth !== `Bearer ${OAI_TOKEN}`) return json(res, 401, { error: { message: 'bad token', type: 'authentication_error' } });
     if (body.model === 'mock-500') return json(res, 500, { error: { message: 'mock 上游 5xx 演练' } }); // 报告失败口径测试用
+    // 报告重试演练：按 system prompt 区分两级（systemFinal 含「汇报助手」），模拟 kimi 式偶发空响应
+    {
+      const sys = (body.messages ?? []).find((m) => m?.role === 'system')?.content ?? '';
+      const isFinal = typeof sys === 'string' && sys.includes('汇报助手');
+      const key = `${body.model}:${isFinal ? 'final' : 'project'}`;
+      emptySeen[key] = (emptySeen[key] ?? 0) + 1;
+      if (body.model === 'mock-empty-final' && isFinal) {
+        return json(res, 200, openaiChatResult('   \n', body.model, { prompt_tokens: 9, completion_tokens: 0 }));
+      }
+      if (body.model === 'mock-empty-final-once' && isFinal && emptySeen[key] <= 1) {
+        return json(res, 200, openaiChatResult('  \n ', body.model, { prompt_tokens: 9, completion_tokens: 0 }));
+      }
+      if (body.model === 'mock-empty-project-once' && !isFinal && emptySeen[key] <= 1) {
+        return json(res, 200, openaiChatResult('', body.model, { prompt_tokens: 9, completion_tokens: 0 }));
+      }
+    }
     const echo = ECHO(openaiEcho(body, auth));
     if (!body.stream) {
       return json(res, 200, openaiChatResult(echo, body.model, { prompt_tokens: 9, completion_tokens: 12, prompt_tokens_details: { cached_tokens: 5 } }));
