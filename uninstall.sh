@@ -32,8 +32,17 @@ for f in todos.json reports.json providers.json; do
     cp "$RUNTIME_DIR/$f" "$DATA_BACKUP/$f"
   fi
 done
+# 坏文件自愈的 .bad 现场备份可能含真实待办/报告内容（todos/reports/stats.json.bad[.时间戳]），
+# 同属用户数据，一并抢救再清理
+for f in "$RUNTIME_DIR"/*.bad "$RUNTIME_DIR"/*.bad.*; do
+  [ -f "$f" ] || continue
+  mkdir -p "$DATA_BACKUP"
+  cp "$f" "$DATA_BACKUP/"
+done
 if [ -d "$DATA_BACKUP" ]; then
-  msg "用户数据已备份: $DATA_BACKUP（providers.json 凭证 / todos.json 待办 / reports.json 报告存档）"
+  # 注意 ${DATA_BACKUP} 必须花括号：后跟全角（时 macOS bash 3.2 会把括号字节并入
+  # 变量名，set -u 下报 unbound variable、脚本崩在 rm -rf 之前
+  msg "用户数据已备份: ${DATA_BACKUP}（providers.json 凭证 / todos.json 待办 / reports.json 报告存档）"
 fi
 rm -rf "$RUNTIME_DIR" && msg "已清理运行时副本 $RUNTIME_DIR"
 
@@ -52,7 +61,7 @@ if [ "${1:-}" = "--revert-configs" ]; then
       cp "$backup" "$target"
       msg "已回滚 $target ← $(basename "$backup")"
     else
-      msg "跳过 $target（无备份 $backup）"
+      msg "跳过 ${target}（无备份 ${backup}）"
     fi
   done
   msg "注意: 回滚后 zcode CLI 回到接入前状态（glm provider → bigmodel 按量 key，无余额会报 429）"

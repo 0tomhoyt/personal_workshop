@@ -732,6 +732,21 @@ try {
       gi.split('\n').filter((l) => l.includes('bad')).join(' | '));
   }
 
+  console.log('— 提交就绪：shell 脚本 $VAR 后紧跟全角标点（bash 3.2 + set -u 必崩）—');
+  {
+    // macOS 自带 bash 3.2 会把紧跟变量的全角（等标点的多字节序列并入变量名，
+    // set -u 下报 unbound variable——uninstall.sh 曾因此在 rm -rf 前崩溃
+    const bad = [];
+    for (const sh of ['install.sh', 'uninstall.sh', 'status.sh', 'cannbot-creds.sh']) {
+      const src = fs.readFileSync(path.join(ROOT, sh), 'utf8');
+      for (const m of src.matchAll(/\$[A-Za-z_][A-Za-z0-9_]*[（）。：，、]/g)) bad.push(`${sh}: ${m[0]}`);
+    }
+    check('四个 shell 脚本无 $VAR 后紧跟全角标点', bad.length === 0, bad.join(' | '));
+    const un = fs.readFileSync(path.join(ROOT, 'uninstall.sh'), 'utf8');
+    check('uninstall.sh 卸载前抢救 .bad 现场备份', un.includes('*.bad') && un.includes('*.bad.*'),
+      un.split('\n').filter((l) => l.includes('.bad')).join(' | ').slice(0, 120));
+  }
+
   console.log('— 报告源：zcode（db.sqlite 适配器，fixture） —');
   {
     const NOW = Date.now();
