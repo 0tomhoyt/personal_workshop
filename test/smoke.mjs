@@ -1017,8 +1017,17 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('失败源进报告正文（数据源状态附注）', rep.report.includes('数据源状态') && rep.report.includes('zcode'), String(rep.report).slice(0, 300));
     check('待办联动进 prompt（报告含 collect 测试 A）', rep.report.includes('collect 测试 A'), String(rep.report).slice(0, 200));
 
+    // 空素材窗口：不调模型直接成稿（model=none、固定无记录文案、不再 failed）
+    const emptyWin = { startMs: Date.now() + 5 * 24 * 3600_000, endMs: Date.now() + 5 * 24 * 3600_000 + 3600_000 };
+    check('空素材窗口：POST → 200', (await post('/admin/report/generate', emptyWin)).status === 200);
+    const emptyDone = await waitJob('done');
+    const emptyRep = await (await fetch(`${GW}/admin/report/${emptyDone.reportId}`)).json();
+    check('空素材窗口：done 且未调模型（model=none）', emptyDone.state === 'done' && emptyRep.model === 'none' && emptyRep.provider === 'none', JSON.stringify({ s: emptyDone.state, m: emptyRep.model }));
+    check('空素材窗口：固定「无记录」文案、素材为空', emptyRep.report.includes('未检索到可用的工作记录') && emptyRep.materials?.sessions === 0 && emptyRep.materials?.chars === 0, String(emptyRep.report).slice(0, 120));
+
     // 窗口校验（不启动 job）
     check('end<=start → 400', (await post('/admin/report/generate', { startMs: 100, endMs: 100 })).status === 400);
+    check('早于 2000 年（与前端 isBadReportRange 同口径）→ 400', (await post('/admin/report/generate', { startMs: 1, endMs: 7200_000 })).status === 400);
     check('跨度超 92 天 → 400', (await post('/admin/report/generate', { startMs: 0, endMs: 100 * 24 * 3600_000 })).status === 400);
     check('非数字时间 → 400', (await post('/admin/report/generate', { startMs: 'abc', endMs: 5 })).status === 400);
 
@@ -1153,13 +1162,13 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
 
     // 历史报告：list（无正文）/ 删除 / 404
     const list = await (await fetch(`${GW}/admin/report/list`)).json();
-    check('list 返回 4 份元数据且不含正文', list.reports?.length === 4 && list.reports.every((r) => typeof r.report !== 'string'), JSON.stringify(list.reports?.map((r) => r.id)));
+    check('list 返回 5 份元数据且不含正文（场景 A/空素材/C/C′/F）', list.reports?.length === 5 && list.reports.every((r) => typeof r.report !== 'string'), JSON.stringify(list.reports?.map((r) => r.id)));
     const del = await fetch(`${GW}/admin/report/${done.reportId}`, { method: 'DELETE' });
     check('DELETE 报告 → 204', del.status === 204, `got ${del.status}`);
     const gone = await fetch(`${GW}/admin/report/${done.reportId}`);
     check('删后 GET → 404', gone.status === 404);
     const list2 = await (await fetch(`${GW}/admin/report/list`)).json();
-    check('删除后 list 剩 3 份（场景 C/C′/F 各一）', list2.reports?.length === 3, JSON.stringify(list2.reports?.length));
+    check('删除后 list 剩 4 份（场景 空素材/C/C′/F 各一）', list2.reports?.length === 4, JSON.stringify(list2.reports?.length));
     check('GET 不存在的报告 → 404', (await fetch(`${GW}/admin/report/nope`)).status === 404);
     // 默认存档路径：必须在服务根目录（lib/report/ 少算一层 dirname 会落 lib/ 子目录，
     // 且 install.sh 的 cp -R lib/. 会用调试存档覆盖运行时真实报告——见审查修复）
