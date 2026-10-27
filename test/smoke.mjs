@@ -632,19 +632,25 @@ try {
     check('todos.json 落盘且与列表一致', Array.isArray(fileState.todos) && fileState.todos.length === listed.todos.length, `${fileState.todos?.length} vs ${listed.todos?.length}`);
     check('todos.json 权限 0600', (fs.statSync(path.join(tmp, 'todos.json')).mode & 0o777) === 0o600, fs.statSync(path.join(tmp, 'todos.json')).mode.toString(8));
 
-    // 坏文件自愈：另起实例指向损坏的 todos.json → 空列表起步、主业务不崩
+    // 坏文件自愈：另起实例指向损坏的 todos.json / reports.json → 空列表起步、主业务不崩、
+    // 坏文件留 .bad 备份（不静默清掉用户数据）
     fs.writeFileSync(path.join(tmp, 'todos-bad.json'), '{not-json');
+    fs.writeFileSync(path.join(tmp, 'reports-bad.json'), '{"reports": [');
     const gwTodo = spawnNode([path.join(ROOT, 'server.mjs')], {
       CANNBOT_PROXY_PORT: '6294',
       CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
       CANNBOT_LOG_FILE: path.join(tmp, 'proxy4.log'),
       CANNBOT_STATS_FILE: path.join(tmp, 'stats4.json'),
       CANNBOT_TODOS_FILE: path.join(tmp, 'todos-bad.json'),
+      CANNBOT_REPORTS_FILE: path.join(tmp, 'reports-bad.json'),
     }, 'gateway-bad-todos');
     await sleep(1500);
     const badList = await (await fetch('http://127.0.0.1:6294/v1/todos', { headers: todosHeaders })).json();
     check('坏 todos.json：实例存活且空列表起步', Array.isArray(badList.todos) && badList.todos.length === 0, JSON.stringify(badList));
     check('坏 todos.json：主业务正常', (await (await fetch('http://127.0.0.1:6294/healthz')).json()).service === 'unified-subscription-gateway');
+    check('坏 todos.json：留 .bad 备份且内容原样', fs.readFileSync(path.join(tmp, 'todos-bad.json.bad'), 'utf8') === '{not-json');
+    check('坏 todos.json：.bad 备份权限 0600', (fs.statSync(path.join(tmp, 'todos-bad.json.bad')).mode & 0o777) === 0o600);
+    check('坏 reports.json：留 .bad 备份且内容原样', fs.readFileSync(path.join(tmp, 'reports-bad.json.bad'), 'utf8') === '{"reports": [');
     gwTodo.kill();
   }
 
