@@ -651,7 +651,21 @@ try {
     check('坏 todos.json：留 .bad 备份且内容原样', fs.readFileSync(path.join(tmp, 'todos-bad.json.bad'), 'utf8') === '{not-json');
     check('坏 todos.json：.bad 备份权限 0600', (fs.statSync(path.join(tmp, 'todos-bad.json.bad')).mode & 0o777) === 0o600);
     check('坏 reports.json：留 .bad 备份且内容原样', fs.readFileSync(path.join(tmp, 'reports-bad.json.bad'), 'utf8') === '{"reports": [');
+    // 第二次坏文件：固定名 .bad 已存在 → 备份改带时间戳后缀，不覆盖第一次的现场
     gwTodo.kill();
+    fs.writeFileSync(path.join(tmp, 'todos-bad.json'), '{worse-not-json');
+    const gwTodo2 = spawnNode([path.join(ROOT, 'server.mjs')], {
+      CANNBOT_PROXY_PORT: '6294',
+      CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
+      CANNBOT_LOG_FILE: path.join(tmp, 'proxy4.log'),
+      CANNBOT_STATS_FILE: path.join(tmp, 'stats4.json'),
+      CANNBOT_TODOS_FILE: path.join(tmp, 'todos-bad.json'),
+      CANNBOT_REPORTS_FILE: path.join(tmp, 'reports-ok2.json'),
+    }, 'gateway-bad-todos-2');
+    await sleep(1500);
+    const stamped = fs.readdirSync(tmp).filter((f) => /^todos-bad\.json\.bad\.\d{14}$/.test(f));
+    check('第二次坏文件：.bad 不被覆盖，改带时间戳后缀', stamped.length === 1 && fs.readFileSync(path.join(tmp, 'todos-bad.json.bad'), 'utf8') === '{not-json' && fs.readFileSync(path.join(tmp, stamped[0]), 'utf8') === '{worse-not-json', JSON.stringify(stamped));
+    gwTodo2.kill();
   }
 
   console.log('— 配置 workbench 节（报告模型设置，热加载） —');
