@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
 <title>个人工作台 · 待办与汇报</title>
 <script>
@@ -110,6 +110,56 @@
   /* 历史报告表格行操作 */
   .rhist { margin-top: 16px; }
   .empty { color: var(--faint); font-size: 12.5px; padding: 10px 2px; }
+  /* 表头窄屏不折行；页脚贴近内容 */
+  #rhistTbl th { white-space: nowrap; }
+  .foot { margin-top: 16px; }
+
+  /* ---- 通道栏统计：两列网格 + 不拆字 ------------------------------------- */
+  .rail-stats {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px;
+    font-size: 12px; color: var(--dim); padding: 2px 4px 0;
+  }
+  .rail-stats .rs { white-space: nowrap; }
+  .rail-stats .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ---- 待办筛选行 -------------------------------------------------------- */
+  .tfilter { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; font: 11.5px var(--mono); }
+  .tfilter .flabel { color: var(--faint); letter-spacing: .08em; }
+  .tfilter button { padding: 2.5px 10px; font-size: 11.5px; border-radius: 99px; }
+  .tfilter button.on { border-color: var(--amber); color: var(--amber-hi); background: var(--amber-dim); }
+
+  /* ---- 待办就地编辑 ------------------------------------------------------ */
+  .titem.editing { border-color: rgba(var(--amber-rgb), .5); background: var(--panel-2); }
+  .tedit { display: flex; flex-direction: column; gap: 7px; width: 100%; min-width: 0; }
+  .tedit input[type="text"] {
+    font: 13px var(--sans); padding: 6px 10px; border-radius: 6px; width: 100%;
+    border: 1px solid var(--line); background: var(--inset); color: var(--ink);
+  }
+  .tedit input.proj { font-family: var(--mono); font-size: 12px; width: 130px; flex: none; }
+  .tedit .seg button { padding: 2.5px 10px; font-size: 11.5px; }
+  .tedit .row { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  .ttitle.editable { cursor: pointer; }
+  .ttitle.editable:hover { color: var(--amber-hi); }
+
+  /* 分段控件与时间框在窄容器里可收缩，页面不出横向滚动 */
+  .seg { max-width: 100%; }
+  .seg button { white-space: nowrap; }
+  .sechead code { word-break: break-all; }
+
+  @media (max-width: 900px) {
+    .main { padding-top: 14px; }
+    .sec { margin-top: 18px; }
+  }
+  @media (max-width: 480px) {
+    /* 卡片操作区换行收进卡片底部；输入行独占整行 */
+    .titem { flex-wrap: wrap; }
+    .tacts { flex: 1 1 100%; justify-content: flex-end; }
+    .todo-add input[type="text"] { flex: 1 1 100%; min-width: 0; }
+    .todo-add .seg, .rng .seg { flex: 1 1 100%; overflow-x: auto; }
+    .todo-add .proj { flex: none; }
+    .rng input[type="datetime-local"] { flex: 1 1 100%; width: 100%; min-width: 0; }
+    .sechead .note { flex-basis: 100%; max-width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -124,8 +174,12 @@
     <div class="rail-rule"></div>
     <div class="rail-tel">
       <div class="statline"><span class="dot ok"></span><span>网关在线</span><span class="dim">·</span><button id="themeBtn" style="padding:3px 9px;font-size:12px" title="切换主题（自动/浅色/深色）">☾</button></div>
-      <div class="statline dim">待办 <span class="mono" id="railTodo">–</span><span class="dim">·</span>进行 <span class="mono" id="railDoing">–</span><span class="dim">·</span>今日完成 <span class="mono" id="railDone">–</span></div>
-      <div class="statline dim">汇报 <span class="mono" id="railReports">–</span><span class="dim">份存档</span></div>
+      <div class="rail-stats">
+        <div class="rs">待办 <span class="mono" id="railTodo">–</span></div>
+        <div class="rs">进行 <span class="mono" id="railDoing">–</span></div>
+        <div class="rs">今日完成 <span class="mono" id="railDone">–</span></div>
+        <div class="rs">汇报 <span class="mono" id="railReports">–</span><span class="dim">份存档</span></div>
+      </div>
     </div>
     <nav class="views">
       <a class="viewbtn" href="/"><span class="idx">01</span><span class="vname">管理台</span><span class="ven">Console</span></a>
@@ -335,18 +389,12 @@ const fmtTimeFull = (ms) => {
 };
 const dayStart = (ms) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
 
-function currentRange() {
-  // 自定义起止优先；否则按预设区间（本地日边界）
-  const sv = $('rngStart').value, ev = $('rngEnd').value;
-  if (sv && ev) {
-    const s = new Date(sv).getTime(), e = new Date(ev).getTime();
-    if (Number.isFinite(s) && Number.isFinite(e) && e > s) return { startMs: s, endMs: e };
-  }
+function presetRange(rng) {
+  // 预设区间（本地日边界）
   const now = Date.now();
   const today0 = dayStart(now);
   const dow = (new Date(now).getDay() + 6) % 7; // 周一=0
   const week0 = today0 - dow * DAY;
-  const rng = document.querySelector('#rngSeg button.active')?.dataset.rng || 'today';
   switch (rng) {
     case 'yesterday': return { startMs: today0 - DAY, endMs: today0 };
     case 'week': return { startMs: week0, endMs: now };
@@ -355,6 +403,29 @@ function currentRange() {
     case 'd30': return { startMs: now - 30 * DAY, endMs: now };
     default: return { startMs: today0, endMs: now };
   }
+}
+
+// 点预设时把起止回填进自定义框，避免原生「mm/dd/yyyy, --:--」占位观感
+function backfillPreset() {
+  const rng = document.querySelector('#rngSeg button.active')?.dataset.rng || 'today';
+  const r = presetRange(rng);
+  $('rngStart').value = toLocalInput(r.startMs);
+  $('rngEnd').value = toLocalInput(r.endMs);
+}
+
+const toLocalInput = (ms) => {
+  const d = new Date(ms); const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+function currentRange() {
+  // 自定义起止优先；否则按预设区间（本地日边界）
+  const sv = $('rngStart').value, ev = $('rngEnd').value;
+  if (sv && ev) {
+    const s = new Date(sv).getTime(), e = new Date(ev).getTime();
+    if (Number.isFinite(s) && Number.isFinite(e) && e > s) return { startMs: s, endMs: e };
+  }
+  return presetRange(document.querySelector('#rngSeg button.active')?.dataset.rng || 'today');
 }
 
 const PHASE_TEXT = { collect: '提取会话素材…', summarize: '分项目总结', final: '汇总成稿…' };
@@ -481,7 +552,7 @@ async function refreshHistory() {
         <td><span class="dim">${esc(x.provider)}/${esc(x.model)} · ${m.sessions ?? 0} 会话</span></td>
         <td><button data-act="view" data-id="${esc(x.id)}">查看</button> <button class="danger" data-act="rdel" data-id="${esc(x.id)}">删除</button></td>
       </tr>`;
-    }).join('') : '<tr><td colspan="4" class="empty">还没有生成过报告。</td></tr>';
+    }).join('') : '<tr><td colspan="4" class="empty">还没有生成过报告。选好时间段后点「生成报告」即可——素材多时约需一两分钟。</td></tr>';
   } catch { $('rhistBody').innerHTML = '<tr><td colspan="4" class="empty">历史加载失败。</td></tr>'; }
 }
 
@@ -509,6 +580,7 @@ $('rngSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   document.querySelectorAll('#rngSeg button').forEach((x) => x.classList.remove('active'));
   b.classList.add('active');
+  backfillPreset();
 });
 $('genBtn').addEventListener('click', generateReport);
 $('copyBtn').addEventListener('click', copyReport);
@@ -530,6 +602,7 @@ document.addEventListener('click', (e) => {
 // 页面被打开时若上一次任务仍在跑：接着轮询
 (async () => {
   applyTheme(localStorage.getItem('gw-theme') || 'auto');
+  backfillPreset(); // 首屏默认「今日」回填起止框
   await loadToken();
   await refreshTodos();
   await refreshHistory();
