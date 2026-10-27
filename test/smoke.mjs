@@ -860,6 +860,59 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     process.env.CANNBOT_CURSOR_DIR = path.join(tmp, 'cursor-projects');
   }
 
+  console.log('— 报告素材收集（collectMaterials：归并/压缩/脱敏/佐证） —');
+  {
+    const NOW = Date.now();
+    const WIN = { startMs: NOW - 3600_000, endMs: NOW + 3600_000 };
+    const T = (offsetMs) => new Date(NOW + offsetMs).toISOString();
+    const projDir = path.join(tmp, 'cc-projects', '-Users-x-dirname-lossy---');
+    // 密钥脱敏 + 超长截断 fixture（cwd 与 Task 5 相同 → 同项目 real-proj）
+    fs.writeFileSync(path.join(projDir, 'sess-secret.jsonl'), [
+      JSON.stringify({ type: 'user', message: { content: '排查泄漏，测试密钥是 sk-abcdefghijklmnop123 不要外传' }, promptSource: 'typed', cwd: '/Users/x/real-proj', timestamp: T(-300_000) }),
+    ].join('\n') + '\n');
+    fs.writeFileSync(path.join(projDir, 'sess-long.jsonl'), [
+      JSON.stringify({ type: 'user', message: { content: '压'.repeat(2000) }, promptSource: 'typed', cwd: '/Users/x/real-proj', timestamp: T(-200_000) }),
+    ].join('\n') + '\n');
+
+    // todos 联动：经 HTTP 建两条（gateway 写穿落盘），一条完成
+    const ta = await (await post('/v1/todos', { title: 'collect 测试 A' })).json();
+    await post('/v1/todos', { title: 'collect 测试 B' });
+    await fetch(`${GW}/v1/todos/${ta.todo.id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'done' }) });
+
+    // usage 联动：进程内 stats 读独立 fixture 文件（今天的桶，数值完全可控）
+    const p2 = (n) => String(n).padStart(2, '0');
+    const now = new Date();
+    const todayKey = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
+    const statsUsageFile = path.join(tmp, 'stats-usage.json');
+    fs.writeFileSync(statsUsageFile, JSON.stringify({
+      version: 2,
+      days: { [todayKey]: {
+        total: { req: 10, err: 0, tin: 1000, tout: 2000, bin: 0, bout: 0, ms: 0, cost: 0.5 },
+        providers: { 'mock-oai': { models: { 'mock-pro': { req: 10, err: 0, tin: 1000, tout: 2000, bin: 0, bout: 0, ms: 0, cost: 0.5 } } } },
+        hours: [],
+      } },
+    }));
+    process.env.CANNBOT_STATS_FILE = statsUsageFile;
+    process.env.CANNBOT_TODOS_FILE = path.join(tmp, 'todos.json'); // 读 gateway 写穿的最新状态
+    process.env.CANNBOT_ZCODE_DB = path.join(tmp, 'no-such.db'); // 失败源降级路径
+    process.env.CANNBOT_OPENCODE_DB = path.join(tmp, 'no-such.db');
+    const { collectMaterials } = await import(path.join(ROOT, 'lib/report/collect.mjs') + '?t=' + Date.now());
+    const m = await collectMaterials(WIN);
+    const projNames = m.projects.map((p) => p.name);
+    check('collect: 双源归并出项目（real-proj / proj）', projNames.includes('real-proj') && projNames.includes('proj'), JSON.stringify(projNames));
+    check('collect: 失败源降级并记原因（zcode/opencode）', m.sourcesFailed.length === 2 && m.sourcesFailed.join(';').includes('zcode') && m.sourcesFailed.join(';').includes('opencode'), JSON.stringify(m.sourcesFailed));
+    check('collect: sources 计数正确', m.sources['claude-code'] === 3 && m.sources.cursor === 2 && m.sources.zcode === 0 && m.sources.opencode === 0, JSON.stringify(m.sources));
+    const realProj = m.projects.find((p) => p.name === 'real-proj');
+    check('collect: 素材总字符数 > 0', m.chars > 0, String(m.chars));
+    check('collect: 密钥脱敏（sk- → [REDACTED]）', realProj?.summaryText.includes('[REDACTED]') && !realProj.summaryText.includes('sk-abcdefghijklmnop123'), realProj?.summaryText.slice(0, 120));
+    check('collect: 超长真人输入截到 500 字（码位）', realProj?.summaryText.includes('压'.repeat(500)) && !realProj.summaryText.includes('压'.repeat(501)));
+    check('collect: todos 联动（窗口内新增/完成）', m.todos.created.some((t) => t.title === 'collect 测试 A') && m.todos.created.some((t) => t.title === 'collect 测试 B') && m.todos.completed.some((t) => t.title === 'collect 测试 A'), JSON.stringify({ c: m.todos.created.length, d: m.todos.completed.length }));
+    check('collect: usage 聚合（请求数/ tokens/费用/分订阅）', m.usage.totalRequests === 10 && m.usage.totalTokens === 3000 && Math.abs(m.usage.totalCost - 0.5) < 1e-9 && m.usage.byProvider['mock-oai']?.requests === 10, JSON.stringify(m.usage));
+    const old = await collectMaterials({ startMs: 0, endMs: 1000 });
+    check('collect: 窗口早于统计保留期 → outOfRange', old.usage.outOfRange === true && old.usage.totalRequests === 0, JSON.stringify(old.usage));
+    check('collect: 1970 窗口无会话素材但流程完整', old.projects.length === 0 && old.sources['claude-code'] === 0, JSON.stringify({ p: old.projects.length, s: old.sources }));
+  }
+
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');
   {
     const MON_UUIDS = ['A016429F-BCEC-4FAF-BD7D-23128391F7F1', 'F2F948D6-2F40-4DEC-8EF8-2E158BFF4328'];
