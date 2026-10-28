@@ -390,7 +390,13 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(204);
         return res.end();
       }
-      return sendJson(res, 405, { error: { message: '此端点仅支持 GET/POST/PUT/PATCH/DELETE', type: 'method_not_allowed' } });
+      // 405 文案按「为什么这个组合不行」说清楚：原先对它一律回「仅支持 GET/POST/PUT/PATCH/DELETE」，
+      // 但 GET 单条恰恰不支持——自相矛盾（GET /v1/todos/:id 读到的就是这句话）。
+      return sendJson(res, 405, {
+        error: id
+          ? { message: '单条待办不支持 GET；用 GET /v1/todos（?status= 过滤）取列表，写操作用 PUT/PATCH/DELETE /v1/todos/:id', type: 'method_not_allowed' }
+          : { message: '此端点仅支持 GET/POST', type: 'method_not_allowed' },
+      });
     }
 
     if (url === '/v1/models') {

@@ -1183,6 +1183,7 @@ function niceCeil(v) {
 let chartMetric = 'req';
 let chartBars = []; // 当前这张图的柱子数据（drawStats 时写入，悬停读数用）
 let chartHot = -1;  // 当前悬停列下标，-1 表示未悬停
+let chartPt = null; // 指针最后停在图上的位置（重绘后按它重新命中，见 restoreChartTip）
 const METRIC = {
   req: { label: '请求', of: (b) => b?.req || 0, fmt: (v) => `${v} 次` },
   tok: { label: 'Tokens', of: (b) => (b?.tin || 0) + (b?.tout || 0), fmt: (v) => `${fmtTok(v)} tok` },
@@ -1288,10 +1289,10 @@ function drawStats() {
       `data-i="${i}"></div>`;
   }).join('');
   // 柱子是 re-render 出来的，hover 监听挂容器上（委托），不必每次重建 DOM 后重挂。
-  // 但重绘意味着数据换了（轮询/切指标/切区间），旧气泡的数字已是上一份数据 → 先收起，
-  // 指针若仍停在图上，下一次 pointermove 会按新数据重新弹出。
+  // 重绘意味着数据换了（轮询/切指标/切区间）→ 按指针/焦点的新位置重新取数：
+  // 指针还停在某根柱上就用**新数据**重画气泡，绝不把上一份数据的数字留在屏上。
   chartBars = bars;
-  hideChartTip();
+  restoreChartTip();
   $('xaxis').innerHTML = xlabels.map((x) =>
     `<span class="${x.now ? 'now' : ''}">${x.text}</span>`).join('');
 
@@ -1467,10 +1468,27 @@ document.querySelectorAll('#metricSeg button').forEach((b) => {
 // 柱子每次 drawStats 都重建，所以监听挂在 .plot 上做委托，不随重渲染丢失。
 function hideChartTip() {
   chartHot = -1;
+  chartPt = null;
   const tip = $('chartTip'), col = $('chartCol');
   if (tip) tip.hidden = true;
   if (col) col.hidden = true;
   document.querySelectorAll('#chart .bar.hot').forEach((b) => b.classList.remove('hot'));
+}
+
+// 重绘后按「指针/键盘是否还停在图上」决定要不要用新数据重建气泡。
+// 不能无条件收起：3s 轮询每次都重绘，收起后指针不动就不会再有 pointermove，
+// 读数会在停留约 3 秒后自己消失、再也不回来——恰好毁掉「停下来读数字」这个用途。
+// 也不能原样留着：旧气泡里的数字属于上一份数据，必须是新数据重新算出来的。
+function restoreChartTip() {
+  const chart = $('chart');
+  if (!chart || chartHot < 0) return hideChartTip();
+  const bar = chartPt
+    // 指针还停在图上：按当前真实位置重新命中新柱子（列宽/列数可能随区间变了，不能用旧下标）
+    ? document.elementFromPoint(chartPt.x, chartPt.y)?.closest?.('#chart .bar')
+    // 键盘逐格读：焦点还在图内就沿用同一格
+    : (document.activeElement === chart ? document.querySelectorAll('#chart .bar')[chartHot] : null);
+  if (bar) showChartTip(bar);
+  else hideChartTip();
 }
 
 function showChartTip(bar) {
@@ -1504,6 +1522,7 @@ function showChartTip(bar) {
 }
 
 $('plot').addEventListener('pointermove', (e) => {
+  chartPt = { x: e.clientX, y: e.clientY };
   const bar = e.target.closest('#chart .bar');
   if (bar) showChartTip(bar);
   else hideChartTip();
@@ -1524,6 +1543,7 @@ $('chart').addEventListener('keydown', (e) => {
   const cur = chartHot < 0 ? (back ? n : -1) : chartHot;
   const next = back ? (cur - 1 + n) % n : (cur + 1) % n;
   const bar = document.querySelectorAll('#chart .bar')[next];
+  chartPt = null; // 键盘路径：之后的重绘按「焦点所在格」恢复，不按残留的指针位置
   if (bar) showChartTip(bar);
 });
 

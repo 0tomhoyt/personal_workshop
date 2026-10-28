@@ -648,6 +648,15 @@ try {
     check('非法 urgency → 400', (await post('/v1/todos', { title: 'x', urgency: '高' })).status === 400);
     check('非法 status → 400', (await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'todo' }) })).status === 400);
     check('未知方法 PATCH 打集合 → 405', (await fetch(`${GW}/v1/todos`, { method: 'PATCH', headers: authHeaders, body: '{}' })).status === 405);
+    // 405 文案不能自称「支持 GET」却又拒绝 GET：GET 单条不支持是设计（列表随 /v1/todos 取），
+    // 但文案得说清怎么替代，否则读的人只会反复试 GET
+    {
+      const rG = await fetch(`${GW}/v1/todos/${t1.id}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+      const gJ = await rG.json().catch(() => null);
+      check('GET 单条待办 → 405，且文案指明替代方式（不再自称支持 GET）',
+        rG.status === 405 && /GET \/v1\/todos/.test(gJ?.error?.message || '')
+        && !/此端点仅支持 GET/.test(gJ?.error?.message || ''), JSON.stringify(gJ));
+    }
 
     // PATCH 单条部分更新（就地编辑）：与 PUT 同一校验路径
     const p1 = await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ title: '适配 unigemm SME（修订）', urgency: 'urgent', project: 'unigemm' }) });
@@ -1740,6 +1749,13 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('趋势图悬停显示具体量（按当前指标格式化）',
       /for \(const b of bars\) b\.tipVal = met\.fmt\(b\.v\)/.test(idxHtml)
       && idxHtml.includes('d.tipVal'));
+    // 重绘后不能无条件收起：3s 轮询每次重绘，收起后指针不动就不会再派发 pointermove，
+    // 读数会在停留约 3 秒后自己消失且不再回来（实测 bug）。要按指针/焦点的新位置用新数据重建。
+    check('趋势图重绘后按指针/焦点用新数据重建气泡（不无条件收起、不留旧数字）',
+      /chartBars = bars;\s*\n\s*restoreChartTip\(\)/.test(idxHtml)
+      && /document\.elementFromPoint\(chartPt\.x, chartPt\.y\)/.test(idxHtml)
+      && /document\.activeElement === chart/.test(idxHtml)
+      && !/chartBars = bars;\s*\n\s*hideChartTip\(\)/.test(idxHtml));
     check('窄屏顶栏：分组与子项均 nowrap，容器可横向滚动',
       /@media \(max-width: 900px\)[\s\S]*\.views \{[^}]*overflow-x: auto/.test(themeCssText)
       && /@media \(max-width: 900px\)[\s\S]*\.viewbtn[^}]*white-space: nowrap/.test(themeCssText));

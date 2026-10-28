@@ -114,9 +114,10 @@ theme.css             共享主题：令牌 / 骨架 / 左栏布局契约 / 通�
 |---|---|
 | `/v1/messages`、`/messages` | Anthropic 客户端：先 checkClientAuth → 解析 model → 路由 → 直通或翻译 |
 | `/v1/todos`、`/v1/todos/:id`、`/v1/todos/:id/items(/:itemId)` | 工作台待办 CRUD（Bearer 鉴权；**必须排在 /v1/* catch-all 之前**）：
-  GET（`?status=` 过滤，子项随父返回）/ POST（可带 `items:[{title,done?}]` 初始清单）/ PUT·PATCH
-  部分字段（PATCH 与 PUT 同义；可带 items 整组替换、子项对象带 id 则保留；status=done 盖
-  completed_at）/ DELETE；子项：POST 加 / PATCH·PUT 勾选改名 / DELETE 删，写响应带整只父待办
+  GET（**仅集合**，`?status=` 过滤、子项随父返回；单条 GET 返回 405——列表已含全部字段）/ POST
+  （可带 `items:[{title,done?}]` 初始清单）/ PUT·PATCH 部分字段（PATCH 与 PUT 同义；可带 items
+  整组替换、子项对象带 id 则保留；status=done 盖 completed_at）/ DELETE；子项：POST 加 /
+  PATCH·PUT 勾选改名 / DELETE 删，写响应带整只父待办
   （全部子项完成 → 父自动 done，规则见 lib/todos.mjs 头注释） |
 | `/v1/*` 其余 | OpenAI 客户端：鉴权 → 路由 → openai 上游透传 / anthropic 上游反向翻译 |
 | `/v1/models` | 聚合所有 provider 目录（重名消歧为 `pid/model`，`owned_by`=provider id） |
@@ -207,8 +208,10 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
 
 **趋势图悬停**：柱子带 `data-i`，`#chartTip` 气泡 + `#chartCol` 参考线由 `.plot` 上的
 `pointermove` 委托驱动（柱宽仅约 10px，原生 `title` 要停一秒且位置随机）。零值柱用透明
-伪元素把命中区撑满整列高度；重绘（轮询/切指标/切区间）后自动收起气泡，避免继续显示上一份
-数据的数字。方向键可逐格读（无障碍与鼠标等价）。
+伪元素把命中区撑满整列高度；方向键可逐格读（无障碍与鼠标等价）。
+**重绘（3s 轮询/切指标/切区间）后按指针或焦点的新位置重新取数**，不保留旧气泡：无条件收起会
+让读数在停留约 3 秒后自己消失且指针不动就不再回来（毁掉「停下来读数字」），原样留着则显示的是
+上一份数据。指针已移出图、或图已失焦时才收起（`restoreChartTip`）。
 
 **给 agent 的待办 skill** 在 `skills/workbench-todos/SKILL.md`：教 agent 用回环
 `/admin/config` 现取 token 调 `/v1/todos`（**绝不写死 token**）、`source` 填自己的名字
