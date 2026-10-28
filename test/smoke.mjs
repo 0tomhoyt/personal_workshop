@@ -859,7 +859,7 @@ try {
       'bootout 与文案都需守卫');
     // r8 对比度：tgroup-label 用 --dim（暗 5.5 / 亮 4.69，WCAG AA）；亮色 --dim 加深到 #736d5e
     const wbh = fs.readFileSync(path.join(ROOT, 'workbench.html'), 'utf8');
-    const wbc = fs.readFileSync(path.join(ROOT, 'workbench.css'), 'utf8');
+    const wbc = fs.readFileSync(path.join(ROOT, 'theme.css'), 'utf8');
     check('tgroup-label 颜色为 --dim（不用 2.67:1 的 --faint）',
       /tgroup-label[\s\S]{0,200}color:\s*var\(--dim\)/.test(wbh),
       '分组标签需达 WCAG AA');
@@ -1517,17 +1517,21 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     }
   }
 
-  console.log('— 工作台静态资源（/workbench、/workbench.css、admin 外链改造） —');
+  console.log('— 工作台静态资源（/workbench、/theme.css、页面外链改造） —');
   {
+    const themeCss = await fetch(`${GW}/theme.css`);
+    const themeCssText = await themeCss.text();
+    check('/theme.css → 200 且 text/css', themeCss.status === 200 && (themeCss.headers.get('content-type') || '').includes('text/css'));
+    const idxHtml = await (await fetch(`${GW}/`)).text();
+    check('index.html 引用 /theme.css', idxHtml.includes('<link rel="stylesheet" href="/theme.css">'), '未找到 link 标签');
     const css = await fetch(`${GW}/workbench.css`);
     const cssText = await css.text();
-    check('/workbench.css → 200 且 text/css', css.status === 200 && (css.headers.get('content-type') || '').includes('text/css'));
+    check('/workbench.css → 200 且 text/css（旧页面缓存兼容）', css.status === 200 && (css.headers.get('content-type') || '').includes('text/css'));
     check('workbench.css 含主题令牌与骨架', cssText.includes('--bg') && cssText.includes('.frame') && cssText.includes('.viewbtn'), cssText.slice(0, 80));
-    const adminHtml = await (await fetch(`${GW}/`)).text();
-    check('admin.html 外链共享样式', adminHtml.includes('<link rel="stylesheet" href="/workbench.css">'), '未找到 link 标签');
-    check('admin.html 通用样式已移出（body 底纹不再内嵌）', !adminHtml.includes('body::before'), 'body::before 仍内嵌');
-    check('admin.html 视图专属样式保留（趋势图/性能表）', adminHtml.includes('.chartwrap') && adminHtml.includes('.tbl.perf'));
-    check('admin.html rail 含工作台链接', adminHtml.includes('href="/workbench"'));
+    check('index.html 外链共享样式', idxHtml.includes('<link rel="stylesheet" href="/theme.css">'), '未找到 link 标签');
+    check('index.html 通用样式已移出（body 底纹不再内嵌）', !idxHtml.includes('body::before'), 'body::before 仍内嵌');
+    check('index.html 视图专属样式保留（趋势图/性能表）', idxHtml.includes('.chartwrap') && idxHtml.includes('.tbl.perf'));
+    check('index.html rail 含工作台链接', idxHtml.includes('href="/workbench"'));
     const wb = await fetch(`${GW}/workbench`);
     const wbText = await wb.text();
     check('/workbench → 200 含「工作台」', wb.status === 200 && wbText.includes('工作台'), `got ${wb.status}`);
@@ -1557,7 +1561,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       wbText.includes("e.key !== '/'") && wbText.includes('e.isComposing') && wbText.includes('isContentEditable')
         && wbText.includes('e.ctrlKey || e.metaKey || e.altKey') && wbText.includes('preventDefault'));
     check('/ 快捷键：搜索框随空列表收起时不 preventDefault 白吞按键', wbText.includes('offsetParent'));
-    check('两页均有内联 favicon（消除 /favicon.ico 404）', wbText.includes('<link rel="icon"') && adminHtml.includes('<link rel="icon"'));
+    check('两页均有内联 favicon（消除 /favicon.ico 404）', wbText.includes('<link rel="icon"') && idxHtml.includes('<link rel="icon"'));
     check('搜索框 Esc：有内容走同一清空+持久化路径、无内容失焦', wbText.includes('todoSearch\').addEventListener(\'keydown\'') && wbText.includes('e.target.blur()'));
     check('清理已完成：全部已完成项在编辑态时的空清理提示', wbText.includes('已跳过——退出编辑后再清理'));
     // feature-4：按此时间段重新生成（复用 generateReport 路径，坏区间禁用）
@@ -1776,7 +1780,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('install.sh：不再编译/安装热键守护（无 swiftc / hotkeys 模板 / 守护 bootstrap）', !inst.includes('swiftc') && !inst.includes('hotkeys.plist.template') && !inst.includes('monitor-hotkeys.swift'));
     const uninst = fs.readFileSync(path.join(ROOT, 'uninstall.sh'), 'utf8');
     check('install.sh / uninstall.sh：保留旧版热键 LaunchAgent 的遗留清理路径（曾装过的机器能清掉）', inst.includes('cannbot-monitor-hotkeys') && inst.includes('HOTKEY_PLIST') && uninst.includes('cannbot-monitor-hotkeys') && uninst.includes('HOTKEY_PLIST'));
-    const admText = fs.readFileSync(path.join(ROOT, 'admin.html'), 'utf8');
+    const admText = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
     check('管理台：一键切换按钮 / 热键改绑 UI / toggle 调用全部移除', !admText.includes('monToggle') && !admText.includes('monHk') && !admText.includes('/admin/monitors/hotkeys') && !admText.includes("mode: 'toggle'") && !admText.includes('{"mode":"toggle"}'));
     check('管理台：手动切换面保留（左栏整机同切 + 每屏下一输入源轮换 + 输入源/屏改名）', admText.includes('data-mminput') && admText.includes('data-mcycle') && admText.includes('monInEdit') && admText.includes('data-mnamesave'));
     const wbText2 = fs.readFileSync(path.join(ROOT, 'workbench.html'), 'utf8');
