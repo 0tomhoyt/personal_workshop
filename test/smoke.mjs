@@ -768,6 +768,12 @@ try {
     const collectSrc = fs.readFileSync(path.join(ROOT, 'lib/report/collect.mjs'), 'utf8');
     check('compressSession 预算耗尽先短路（不拼孤立「…」）', collectSrc.includes('remain <= 0) break'),
       'cut(…,0) 会返回 1 个码位的「…」伪消息');
+    // ux-r9 键盘可达性：大量待办下行内按钮全在 Tab 序里，报告区纯键盘不可达——
+    // 主区首部极简 skip link（仅 :focus-visible 显现），目标 section tabindex=-1 让焦点真落地
+    check('workbench 含「跳到报告区」skip link（focus-visible 才显现 + 落点 tabindex=-1）',
+      wbh.includes('class="skip" href="#sec-report"') && /\.skip:focus-visible/.test(wbh)
+        && /id="sec-report" tabindex="-1"/.test(wbh),
+      '键盘用户需能跳过待办行按钮直达报告区');
   }
 
   console.log('— 报告源：zcode（db.sqlite 适配器，fixture） —');

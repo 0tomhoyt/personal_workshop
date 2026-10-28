@@ -125,6 +125,18 @@
   #rhistTbl tr.is-viewing td:first-child { box-shadow: inset 2px 0 0 var(--amber); }
   .foot { margin-top: 16px; }
 
+  /* ---- 键盘跳区链接：平时隐藏，仅 Tab 聚焦时显现 -------------------------- */
+  /* 大量待办下行内按钮全在 Tab 序里，报告区纯键盘要按上百次——主区第一个 Tab 停靠点
+     给一条跳到报告区的捷径（待办→报告单向），视觉零打扰 */
+  .skip {
+    position: absolute; left: 10px; top: 8px; z-index: 9;
+    padding: 6px 13px; border-radius: 7px; font: 12.5px var(--sans);
+    background: var(--amber-dim); color: var(--amber-hi);
+    border: 1px solid var(--amber); text-decoration: none;
+    opacity: 0; pointer-events: none;
+  }
+  .skip:focus-visible { opacity: 1; pointer-events: auto; }
+
   /* ---- 通道栏统计：两列网格 + 不拆字 ------------------------------------- */
   .rail-stats {
     display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px;
@@ -222,6 +234,7 @@
   <!-- 右主区 -->
   <main class="main">
 
+    <a class="skip" href="#sec-report">跳到报告区 ↓</a>
     <div class="banner red" id="errBanner"></div>
 
     <!-- 01 待办事项 -->
@@ -255,8 +268,8 @@
       </div>
     </section>
 
-    <!-- 02 工作总结 -->
-    <section class="sec">
+    <!-- 02 工作总结（tabindex=-1：skip link 的落点，焦点真正移进报告区） -->
+    <section class="sec" id="sec-report" tabindex="-1">
       <div class="sechead">
         <span class="idx">02</span><h2>时间段工作总结</h2><span class="en">Report</span><span class="spacer"></span>
         <span class="note">读各 agent 本地会话 → 两级总结 → 给上级的汇报</span>
