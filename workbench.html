@@ -788,7 +788,8 @@ async function showReport(id) {
   const m = rep.materials || {};
   const srcTxt = Object.entries(m.sources || {}).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`).join(' · ') || '无会话';
   const failed = (m.sourcesFailed || []).length ? ` · ⚠ ${m.sourcesFailed.length} 个源不可用` : '';
-  $('rMaterials').textContent = `${m.projects ?? 0} 项目 / ${m.sessions ?? 0} 会话（${srcTxt}${failed}）`;
+  const todoCnt = m.todos && (m.todos.created || m.todos.completed) ? ` · 待办 新增 ${m.todos.created} / 完成 ${m.todos.completed}` : '';
+  $('rMaterials').textContent = `${m.projects ?? 0} 项目 / ${m.sessions ?? 0} 会话（${srcTxt}${failed}）${todoCnt}`;
   $('rbody').innerHTML = mdToHtml(rep.report || '');
   $('rout').style.display = 'block';
   $('rbody').scrollTop = 0;

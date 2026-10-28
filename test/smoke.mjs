@@ -1144,6 +1144,9 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const ta = await (await post('/v1/todos', { title: 'collect 测试 A' })).json();
     await post('/v1/todos', { title: 'collect 测试 B' });
     await fetch(`${GW}/v1/todos/${ta.todo.id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'done' }) });
+    // 子项联动：建带清单的待办并勾 1/2 —— 报告待办行应带（1/2）进度
+    const tc = (await (await post('/v1/todos', { title: 'collect 测试 C（清单）', items: [{ title: '甲' }, { title: '乙' }] })).json());
+    await fetch(`${GW}/v1/todos/${tc.todo.id}/items/${tc.todo.items[0].id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: true }) });
 
     // usage 联动：进程内 stats 读独立 fixture 文件（今天的桶，数值完全可控）
     const p2 = (n) => String(n).padStart(2, '0');
@@ -1183,6 +1186,24 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
   console.log('— 报告生成（/admin/report/*：生成/轮询/存档/防护） —');
   {
     const WIN = { startMs: Date.now() - 3600_000, endMs: Date.now() + 3600_000 };
+
+    // userFinal 单元：待办行进 prompt 的形态（纯函数直测，不起 HTTP）
+    {
+      const { PROMPTS, LIMITS } = await import(path.join(ROOT, 'lib/report-prompts.mjs') + '?t=' + Date.now());
+      const many = Array.from({ length: 40 }, (_, i) => ({ title: `待办${i}`, urgency: 'normal' }));
+      const out = PROMPTS.userFinal({ rangeText: 'x', projects: [], todos: { created: many, completed: [] }, usage: {}, sourcesFailed: [] });
+      check('userFinal：待办每列表最多 30 条、超出加「等 N 条」', out.includes('新增（40）') && out.includes('等 10 条') && !out.includes('待办39'), out.slice(out.indexOf('新增（'), out.indexOf('新增（') + 80));
+      const long = { title: '标'.repeat(60), urgency: 'normal' };
+      const out2 = PROMPTS.userFinal({ rangeText: 'x', projects: [], todos: { created: [long], completed: [] }, usage: {}, sourcesFailed: [] });
+      check(`userFinal：待办标题截 ${LIMITS.todoTitleChars} 码位`, out2.includes('标'.repeat(LIMITS.todoTitleChars)) && !out2.includes('标'.repeat(LIMITS.todoTitleChars + 1)), '');
+      const withItems = { title: '清单单', urgency: 'normal', items: [{ done: true }, { done: false }, { done: false }] };
+      const out3 = PROMPTS.userFinal({ rangeText: 'x', projects: [], todos: { created: [withItems], completed: [] }, usage: {}, sourcesFailed: [] });
+      check('userFinal：新增行带子项进度（k/j）', out3.includes('清单单（1/3）'), out3.slice(out3.indexOf('新增（'), out3.indexOf('新增（') + 60));
+      const allDone = { title: '已完成单', urgency: 'normal', items: [{ done: true }, { done: true }] };
+      const out4 = PROMPTS.userFinal({ rangeText: 'x', projects: [], todos: { created: [], completed: [allDone] }, usage: {}, sourcesFailed: [] });
+      check('userFinal：完成行不缀子项进度（必为 j/j）', out4.includes('已完成单') && !out4.includes('已完成单（2/2）'), '');
+    }
+
     const cfgPath = path.join(tmp, 'providers.json');
     const readCfg = () => JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
     const writeCfg = (c) => fs.writeFileSync(cfgPath, JSON.stringify(c, null, 2));
@@ -1210,6 +1231,8 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('失败源如实记录在素材统计', rep.materials?.sourcesFailed?.length === 2, JSON.stringify(rep.materials?.sourcesFailed));
     check('失败源进报告正文（数据源状态附注）', rep.report.includes('数据源状态') && rep.report.includes('zcode'), String(rep.report).slice(0, 300));
     check('待办联动进 prompt（报告含 collect 测试 A）', rep.report.includes('collect 测试 A'), String(rep.report).slice(0, 200));
+    check('待办子项进度进 prompt（报告含（1/2））', rep.report.includes('（1/2）'), String(rep.report).slice(0, 300));
+    check('报告素材计数 materials.todos（新增 ≥3 / 完成 ≥1）', (rep.materials?.todos?.created ?? 0) >= 3 && (rep.materials?.todos?.completed ?? 0) >= 1, JSON.stringify(rep.materials?.todos));
 
     // 空素材窗口：不调模型直接成稿（model=none、不再 failed）。
     // 主网关 zcode/opencode 指向 no-such.db（采集必失败）→ 空窗走「采集失败」口径，
@@ -1303,6 +1326,39 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       check('空素材四源正常：done 且 model=none', cleanDone.state === 'done' && cleanRep.model === 'none', JSON.stringify({ s: cleanDone.state }));
       check('空素材四源正常：固定「无记录」文案、sourcesFailed 空', cleanRep.report.includes('未检索到可用的工作记录') && cleanRep.materials?.sourcesFailed?.length === 0, String(cleanRep.report).slice(0, 120));
       gwEmpty.kill();
+    }
+
+    // 仅待办窗口：四源全部失败但窗口内有待办变动 → 不再走「无记录/采集失败」固定
+    // 快径，照常调模型出稿（待办是第一等素材；失败源如实进「数据源状态」附注）
+    {
+      const gwTodoOnly = spawnNode([path.join(ROOT, 'server.mjs')], {
+        CANNBOT_PROXY_PORT: '6296',
+        CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
+        CANNBOT_LOG_FILE: path.join(tmp, 'proxy6.log'),
+        CANNBOT_STATS_FILE: path.join(tmp, 'stats6.json'),
+        CANNBOT_TODOS_FILE: path.join(tmp, 'todos-only.json'),
+        CANNBOT_REPORTS_FILE: path.join(tmp, 'reports6.json'),
+        CANNBOT_CC_DIR: path.join(tmp, 'no-such-cc'),
+        CANNBOT_ZCODE_DB: path.join(tmp, 'no-such.db'),
+        CANNBOT_OPENCODE_DB: path.join(tmp, 'no-such.db'),
+        CANNBOT_CURSOR_DIR: path.join(tmp, 'no-such-cursor'),
+        CANNBOT_REPORT_RETRY_DELAY_MS: '0',
+      }, 'gateway-todos-only');
+      await sleep(1500);
+      const GW6 = 'http://127.0.0.1:6296';
+      await fetch(`${GW6}/v1/todos`, { method: 'POST', headers: authHeaders, body: JSON.stringify({ title: '仅待办窗口的单子' }) });
+      await fetch(`${GW6}/admin/report/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(WIN) });
+      let tJob = { state: 'timeout' };
+      for (let i = 0; i < 40; i++) {
+        tJob = await (await fetch(`${GW6}/admin/report/job`)).json();
+        if (tJob.state !== 'running') break;
+        await sleep(500);
+      }
+      const tRep = tJob.reportId ? await (await fetch(`${GW6}/admin/report/${tJob.reportId}`)).json() : {};
+      check('仅待办窗口：done 且走了模型（model ≠ none）', tJob.state === 'done' && tRep.model === 'mock-pro', JSON.stringify({ s: tJob.state, m: tRep.model, e: tJob.error }));
+      check('仅待办窗口：报告含待办标题与「数据源状态」附注', (tRep.report || '').includes('仅待办窗口的单子') && (tRep.report || '').includes('数据源状态'), String(tRep.report).slice(0, 200));
+      check('仅待办窗口：materials.todos 计数（新增 1）', tRep.materials?.todos?.created === 1, JSON.stringify(tRep.materials?.todos));
+      gwTodoOnly.kill();
     }
 
     // 窗口校验（不启动 job）
@@ -1517,6 +1573,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('工作台页含详情查看与编辑（noteEditId / data-noteform）', wbText.includes('noteEditId') && wbText.includes('data-noteform') && wbText.includes('data-notecancel'));
     check('收起行标题 2 行钳制（长标题不刷屏）', wbText.includes('-webkit-line-clamp: 2') || wbText.includes('-webkit-line-clamp:2'));
     check('收起行含子项进度徽标（子项 k/j）', wbText.includes('子项 ${'));
+    check('成稿元数据行展示待办计数（待办 新增 n / 完成 m）', wbText.includes('待办 新增 ${'));
     check('详情编辑带 agent 分级上限提示（≤300）', wbText.includes('300'));
   }
 
