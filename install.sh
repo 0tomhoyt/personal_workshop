@@ -52,13 +52,15 @@ if lsof -i ":$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 # 4) 拷贝运行时副本（server.mjs + lib/ + admin.html + 工作台页面/样式）+ 由模板生成本机 plist
-mkdir -p "$RUNTIME_DIR/logs" "$RUNTIME_DIR/lib"
+mkdir -p "$RUNTIME_DIR/logs" "$RUNTIME_DIR/lib" "$LAUNCH_DIR"
 echo "$PORT" > "$RUNTIME_DIR/port"   # 记录实际端口，供 uninstall.sh/status.sh 读取
 cp "$PROJECT_DIR/server.mjs" "$RUNTIME_DIR/server.mjs"
 [ -f "$PROJECT_DIR/admin.html" ] && cp "$PROJECT_DIR/admin.html" "$RUNTIME_DIR/admin.html"
 [ -f "$PROJECT_DIR/workbench.html" ] && cp "$PROJECT_DIR/workbench.html" "$RUNTIME_DIR/workbench.html"
 [ -f "$PROJECT_DIR/workbench.css" ] && cp "$PROJECT_DIR/workbench.css" "$RUNTIME_DIR/workbench.css"
 if [ -d "$PROJECT_DIR/lib" ]; then
+  rm -rf "$RUNTIME_DIR/lib"   # 先清空再拷：源里已删除的模块不在运行时目录残留（lib/ 全量由源派生，可整体重建）
+  mkdir -p "$RUNTIME_DIR/lib"
   cp -R "$PROJECT_DIR/lib/." "$RUNTIME_DIR/lib/"
 else
   die "源目录缺少 lib/（模块化后的服务端代码），请勿单独拷贝 server.mjs"

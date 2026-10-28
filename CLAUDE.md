@@ -84,9 +84,11 @@ lib/report/collect.mjs 素材收集：4 源并发降级（单源故障记 source
                       待办变动 + stats 用量佐证
 lib/report/generate.mjs 报告生成状态机：单任务串行（409）、collect→summarize→final 三段进度、
                       模型兜底链（workbench 节 → 默认上游目录第一个）、requestUpstream 协议
-                      分支、reports.json 原子存档（上限 200）
+                      分支、reports.json 原子存档（上限 200）；两级总结失败或空响应自动重试一次
+                      （CANNBOT_REPORT_RETRY_DELAY_MS 可调间隔）
 lib/report-prompts.mjs 两级总结 prompt + 压缩/脱敏阈值**全部集中在此**——调汇报质量只改这里
-workbench.html/css    工作台页（待办管理 + 报告生成/历史）与 admin/workbench 共享主题
+workbench.html/css    工作台页（待办管理 + 报告生成/历史，键盘 skip link「跳到报告区」）
+                      与 admin/workbench 共享主题
 ```
 
 ### 请求路由（server.mjs 主入口）
