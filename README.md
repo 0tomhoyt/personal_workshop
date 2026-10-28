@@ -81,10 +81,7 @@ $EDITOR ~/.local/share/cannbot-gateway-proxy/providers.json   # 填入各订阅�
       "name": "CANNWork",
       "baseUrl": "https://cannbot.hicann.cn/gateway/compatible-mode",   // 不带尾部 /v1（自动补协议路径）
       "protocol": "openai",                // openai | anthropic —— 默认上游协议（models/报告用）
-      "endpoints": {                       // 可选：按入站协议选直通 URL（同协议不翻译）
-        "openai": "https://cannbot.hicann.cn/gateway/compatible-mode",
-        "anthropic": "https://cannbot.hicann.cn/gateway/anthropic"
-      },
+      // "endpoints": { "openai": "…", "anthropic": "…" }  // 可选；仅当两侧真是对应协议时才配，否则会直通失败
       "auth": { "type": "cannwork-jwt-vk" },                            // JWT+VK 凭证链
       "models": { "source": "api", "exclude": [] }                      // 从上游接口拉模型列表
     },
@@ -117,10 +114,12 @@ $EDITOR ~/.local/share/cannbot-gateway-proxy/providers.json   # 填入各订阅�
 要点：
 - **baseUrl 统一填不含尾部 `/v1` 的地址**（粘贴带 `/v1` 的会被自动去掉）。openai 上游代码补
   `/v1/chat/completions`，anthropic 上游补 `/v1/messages`，与各家「Claude Code/OpenAI 兼容端点」文档一致。
-- **endpoints（可选）**：同一上游若同时提供 openai / anthropic 入口，可写
+- **endpoints（可选）**：同一上游若**真有**对应协议的入口，可写
   `{ "openai": "…", "anthropic": "…" }`。入站 `/v1/chat/completions` 绑 `endpoints.openai`，
   `/v1/messages` 绑 `endpoints.anthropic`，同协议直通、不翻译；缺省入口仍走默认
   `protocol` + `baseUrl`（含跨协议翻译）。models 列表与报告生成仍用默认 baseUrl。
+  注意：名称含 anthropic 不等于 Anthropic Messages 协议——例如 cannbot 的
+  `/gateway/anthropic` 实际仍是 OpenAI 兼容口，不要配进 `endpoints.anthropic`，否则会直通失败。
 - **静态 token 三种来源**（按优先级）：`token` 内联 / `tokenEnv` 环境变量 / `tokenFile`（可选
   `tokenJsonPath` 用 `a.b.c` 取字段，可直接复用其他工具已登录的凭证文件）。每次请求现读，外部工具
   刷新 token 后立即生效。
