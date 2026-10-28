@@ -58,7 +58,6 @@ function isLocalHost(req) {
 }
 
 const INDEX_HTML = path.join(SCRIPT_DIR, 'index.html');
-const WORKBENCH_HTML = path.join(SCRIPT_DIR, 'workbench.html');
 const THEME_CSS = path.join(SCRIPT_DIR, 'theme.css');
 const LAUNCH_LABEL = 'cn.hicann.cannbot-gateway-proxy';
 const LAUNCH_TARGET = `gui/${os.userInfo().uid}/${LAUNCH_LABEL}`;
@@ -108,24 +107,15 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    if (url === '/' || url === '/admin') {
+    // 单页应用：/ 与 /admin 是管理台入口，/workbench 是工作台旧链接（同一份页面，
+    // 页面内按 pathname 把落点强制到 #todos，见 index.html 启动逻辑）
+    if (url === '/' || url === '/admin' || url === '/workbench') {
       try {
         const html = fs.readFileSync(INDEX_HTML);
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         return res.end(html);
       } catch {
         return sendJson(res, 404, { error: { message: 'index.html 缺失：重跑 ./install.sh 安装', type: 'not_found' } });
-      }
-    }
-
-    // 个人工作台页面（待办 + 时间段工作总结）与两页共享的主题样式
-    if (url === '/workbench') {
-      try {
-        const html = fs.readFileSync(WORKBENCH_HTML);
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        return res.end(html);
-      } catch {
-        return sendJson(res, 404, { error: { message: 'workbench.html 缺失：重跑 ./install.sh 安装', type: 'not_found' } });
       }
     }
     // 共享主题样式：/theme.css 是正名；/workbench.css 为旧缓存页面的兼容入口，同一份内容
@@ -442,7 +432,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     return sendJson(res, 404, {
-      error: { message: `未知路径 ${url}；可用: / (页面), /workbench (工作台入口), /v1/chat/completions, /v1/messages, /v1/models, /v1/todos(子项 /:id/items), /admin/report/*, /healthz`, type: 'not_found' },
+      error: { message: `未知路径 ${url}；可用: / (页面), /v1/chat/completions, /v1/messages, /v1/models, /v1/todos(子项 /:id/items), /admin/report/*, /healthz`, type: 'not_found' },
     });
   } catch (e) {
     const status = e.status ?? 500;

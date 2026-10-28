@@ -858,7 +858,7 @@ try {
     check('uninstall.sh 含 CGP_SKIP_LAUNCHCTL 演练守卫', (un.match(/CGP_SKIP_LAUNCHCTL/g) ?? []).length >= 2,
       'bootout 与文案都需守卫');
     // r8 对比度：tgroup-label 用 --dim（暗 5.5 / 亮 4.69，WCAG AA）；亮色 --dim 加深到 #736d5e
-    const wbh = fs.readFileSync(path.join(ROOT, 'workbench.html'), 'utf8');
+    const wbh = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
     const wbc = fs.readFileSync(path.join(ROOT, 'theme.css'), 'utf8');
     check('tgroup-label 颜色为 --dim（不用 2.67:1 的 --faint）',
       /tgroup-label[\s\S]{0,200}color:\s*var\(--dim\)/.test(wbh),
@@ -1531,13 +1531,26 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('index.html 外链共享样式', idxHtml.includes('<link rel="stylesheet" href="/theme.css">'), '未找到 link 标签');
     check('index.html 通用样式已移出（body 底纹不再内嵌）', !idxHtml.includes('body::before'), 'body::before 仍内嵌');
     check('index.html 视图专属样式保留（趋势图/性能表）', idxHtml.includes('.chartwrap') && idxHtml.includes('.tbl.perf'));
-    check('index.html rail 含工作台链接', idxHtml.includes('href="/workbench"'));
+    // 合并后左栏不再是「跳页到工作台」，而是六个同页视图（Task 4 再分组）
+    check('左栏六个视图项（不再靠跳页切换）',
+      ['todos', 'report', 'overview', 'traffic', 'test', 'providers']
+        .every((v) => idxHtml.includes(`data-view="${v}"`)));
     const wb = await fetch(`${GW}/workbench`);
     const wbText = await wb.text();
     check('/workbench → 200 含「工作台」', wb.status === 200 && wbText.includes('工作台'), `got ${wb.status}`);
+    // -- 合并为单页：六个视图、严格模式、标识符归并 --
+    check('/workbench 与 / 返回同一份字节', wbText === idxHtml);
+    check('单页含六个视图', ['todos', 'report', 'overview', 'traffic', 'test', 'providers']
+      .every((v) => idxHtml.includes(`data-view="${v}"`)), '缺视图');
+    // 取最后一个 <script>：首个是 9 行首屏主题脚本（防闪色必须 inline），主逻辑在后面
+    const scripts = [...idxHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+    check('主脚本以严格模式开头', /^\s*'use strict';/.test((scripts.at(-1) ?? '').trim()), scripts.at(-1)?.slice(0, 40));
+    check('标识符已归并：无裸 editingId', !/\beditingId\b/.test(idxHtml) && idxHtml.includes('provEditingId') && idxHtml.includes('todoEditingId'));
+    check('esc() 转义 & < > " 四类（取工作台版）',
+      /esc\s*=\s*\(s\)\s*=>[\s\S]{0,200}&gt;/.test(idxHtml) && /&quot;/.test(idxHtml));
     check('工作台页含待办/报告两区', wbText.includes('待办') && wbText.includes('报告'), '缺功能区字样');
     check('工作台页含 token 获取逻辑（/admin/config）', wbText.includes('/admin/config'), '缺 loadToken 逻辑');
-    check('工作台页引用共享样式', wbText.includes('/workbench.css'));
+    check('工作台页引用共享样式', wbText.includes('/theme.css'));
     // 下载 .md 按钮：存在 + 文件名函数（跨日/无效区间），源码抽取后在 Node 内直跑
     check('工作台页含「下载 .md」按钮', wbText.includes('id="dlBtn"') && wbText.includes('下载 .md') && wbText.includes('downloadReport'));
     const fnMatch = wbText.match(/function reportFileName\(range\) \{[\s\S]*?\n\}/);
@@ -1781,10 +1794,9 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const uninst = fs.readFileSync(path.join(ROOT, 'uninstall.sh'), 'utf8');
     check('install.sh / uninstall.sh：保留旧版热键 LaunchAgent 的遗留清理路径（曾装过的机器能清掉）', inst.includes('cannbot-monitor-hotkeys') && inst.includes('HOTKEY_PLIST') && uninst.includes('cannbot-monitor-hotkeys') && uninst.includes('HOTKEY_PLIST'));
     const admText = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-    check('管理台：一键切换按钮 / 热键改绑 UI / toggle 调用全部移除', !admText.includes('monToggle') && !admText.includes('monHk') && !admText.includes('/admin/monitors/hotkeys') && !admText.includes("mode: 'toggle'") && !admText.includes('{"mode":"toggle"}'));
-    check('管理台：手动切换面保留（左栏整机同切 + 每屏下一输入源轮换 + 输入源/屏改名）', admText.includes('data-mminput') && admText.includes('data-mcycle') && admText.includes('monInEdit') && admText.includes('data-mnamesave'));
-    const wbText2 = fs.readFileSync(path.join(ROOT, 'workbench.html'), 'utf8');
-    check('工作台：Displays 区（随一键切换功能加入）整体移除', !wbText2.includes('monBox') && !wbText2.includes('monToggle') && !wbText2.includes('loadMonitorsOnce'));
+    check('页面：一键切换按钮 / 热键改绑 UI / toggle 调用全部移除', !admText.includes('monToggle') && !admText.includes('monHk') && !admText.includes('/admin/monitors/hotkeys') && !admText.includes("mode: 'toggle'") && !admText.includes('{"mode":"toggle"}'));
+    check('页面：手动切换面保留（左栏整机同切 + 每屏下一输入源轮换 + 输入源/屏改名）', admText.includes('data-mminput') && admText.includes('data-mcycle') && admText.includes('monInEdit') && admText.includes('data-mnamesave'));
+    check('显示器相关代码只在总览视图（工作台视图不含）', !admText.includes('monBox') && !admText.includes('loadMonitorsOnce'));
   }
 
   console.log('— 统计落盘（进程内 recordStats + flushStats：tmp+rename+0600） —');
