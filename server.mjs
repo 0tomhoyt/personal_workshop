@@ -23,7 +23,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { log, tailLog } from './lib/log.mjs';
-import { getConfig, tryGetConfig, getProvider } from './lib/config.mjs';
+import { getConfig, tryGetConfig, getProvider, bindInboundEndpoint } from './lib/config.mjs';
 import { statsSnapshot, flushStats } from './lib/stats.mjs';
 import { listModels, resolveModelRoute, defaultProvider, peekModelsKnown, checkProviderCatalog } from './lib/models.mjs';
 import { providersView, createProvider, updateProvider, deleteProvider } from './lib/providers-admin.mjs';
@@ -418,7 +418,8 @@ const server = http.createServer(async (req, res) => {
       checkClientAuth(req);
       let bodyBuf = await readRequestBody(req, MAX_BODY);
       const requestedModel = extractModel(bodyBuf);
-      const route = await routeFor(requestedModel);
+      const routed = await routeFor(requestedModel);
+      const route = { ...routed, provider: bindInboundEndpoint(routed.provider, 'openai') };
       if (route.provider.protocol === 'anthropic') {
         let body = {};
         try { body = JSON.parse(bodyBuf.toString('utf8') || '{}'); } catch { body = {}; }

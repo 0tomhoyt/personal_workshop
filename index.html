@@ -749,21 +749,25 @@ addEventListener('keydown', (e) => {
   applyGroup('workbench', st.workbench !== false);
   applyGroup('console', st.console === true);
 
-  // /workbench 是旧工作台链接：强制落待办，优先于 gw-view 记忆——旧书签的语义是
-  // 「我要工作台」，落到上次看的统计页就是违约。落地后把地址改写成 /#todos。
-  const forced = location.pathname === '/workbench' ? 'todos' : null;
+  // /workbench 是旧工作台链接：默认落待办，优先于 gw-view 记忆——旧书签的语义是
+  // 「我要工作台」，落到上次看的统计页就是违约。但若链接自带**有效** hash（/workbench#report），
+  // 用户的意图更具体，以它为准；只有 hash 缺失/无效时才退回待办。落地后统一改写成 /#<视图>。
+  const onWorkbench = location.pathname === '/workbench';
   const h = location.hash.replace(/^#/, '');
   let saved = null;
   try { saved = localStorage.getItem('gw-view'); } catch {}
   const norm = (v) => VIEW_ALIASES[v] || v;
-  if (h.startsWith('stats-')) { setView('traffic', { push: false }); }
-  else {
-    const start = forced
-      || (VIEW_IDS.includes(norm(h)) ? h : null)
-      || (VIEW_IDS.includes(norm(saved)) ? saved : 'todos');
-    setView(norm(start), { push: false });
+  const hashView = VIEW_IDS.includes(norm(h)) ? norm(h) : null;
+  if (h.startsWith('stats-')) {
+    setView('traffic', { push: false });
+  } else {
+    const start = hashView
+      || (onWorkbench ? 'todos' : null)
+      || (VIEW_IDS.includes(norm(saved)) ? norm(saved) : 'todos');
+    setView(start, { push: false });
   }
-  if (forced) history.replaceState(null, '', '/#todos');
+  // 从 /workbench 进来：把地址归一到 /#<当前视图>，刷新与再收藏都一致
+  if (onWorkbench) history.replaceState(null, '', '/#' + curView);
 })();
 // hash 变化 → 切视图：页内导航是真链接 <a href="#v">，靠这个监听生效；
 // 也覆盖「在已打开的页面里粘贴 #traffic 再回车」的场景（不会重载页面）
@@ -1187,8 +1191,8 @@ function drawStats() {
   $('ovIn').textContent = fmtTok(totalInputTok(s.models || []));
   $('ovOut').textContent = fmtTok(today.tout);
   $('ovCost').textContent = fmtCost(today.cost);
+  // 今日请求数只在上面的左栏遥测行展示，不再挂「统计」徽标（避免同一个数字出现两次）
   $('railTodayReq').textContent = fmtTok(today.req);
-  setBadge('vbTraffic', today.req ? fmtTok(today.req) : null, today.req ? 'amber' : '');
 
   const edges = s.latEdges || [];
   const tp = viewPerf(totals.perf);
@@ -2638,6 +2642,10 @@ document.addEventListener('click', (e) => {
   const idel = e.target.closest('button[data-itemdel]');
   if (idel) { safe(delItem)(idel.dataset.todo, idel.dataset.itemid); return; }
   const b = e.target.closest('button[data-act]'); if (!b) return;
+  // 供应商配置表复用同一套 data-act="del" 命名（它有自己的监听，见 #provTbl）；
+  // 不排除的话，点供应商「删除」会连带触发下面的待办删除，弹出第二个语义不符的确认框
+  // 并对 /v1/todos/<供应商 id> 发一个必然 404 的请求
+  if (b.closest('#provTbl')) return;
   const id = b.dataset.id;
   if (b.dataset.act === 'cycle') safe(cycleTodo)(id, b.dataset.next);
   else if (b.dataset.act === 'del') { if (confirm('删除这条待办？')) safe(delTodo)(id); }

@@ -1,6 +1,7 @@
 // 冒烟测试用的 mock 上游：同一端口按路径前缀模拟多类订阅。
 //   /oai/*    openai 协议上游（Bearer mock-token-oai），模型 mock-pro / mock-flash / shared-model
-//   /anth/*   anthropic 协议上游（x-api-key 或 Bearer mock-token-anthropic），模型 claude-mock / shared-model
+//   /anth/*   anthropic 协议上游（x-api-key 或 Bearer mock-token-anthropic；兼收 mock-token-dual），模型 claude-mock / shared-model
+//   /oai 兼收 mock-token-dual（双入口 smoke）
 //   /zhipu/*  智谱方言 openai 上游（Bearer mock-token-zhipu），模型 glm-mock：web_search 工具
 //             走智谱真实形态（非流式顶层 web_search 数组 / 流式 delta.content 数组传闻形态）
 //   /z.ai/*   智谱方言变体端点（处理同 /zhipu），模型 glm-zai：验证 z.ai 域名同样命中方言推断
@@ -18,6 +19,7 @@ const OAI_TOKEN = 'mock-token-oai';
 const ANTH_TOKEN = 'mock-token-anthropic';
 const ZHIPU_TOKEN = 'mock-token-zhipu';
 const KIMI_TOKEN = 'mock-token-kimi';
+const DUAL_TOKEN = 'mock-token-dual';
 
 const ECHO = (extra) => 'ECHO:' + JSON.stringify(extra);
 
@@ -103,7 +105,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url === '/oai/v1/chat/completions') {
-    if (auth !== `Bearer ${OAI_TOKEN}`) return json(res, 401, { error: { message: 'bad token', type: 'authentication_error' } });
+    if (auth !== `Bearer ${OAI_TOKEN}` && auth !== `Bearer ${DUAL_TOKEN}`) return json(res, 401, { error: { message: 'bad token', type: 'authentication_error' } });
     if (body.model === 'mock-500') return json(res, 500, { error: { message: 'mock 上游 5xx 演练' } }); // 报告失败口径测试用
     // 报告重试演练：按 system prompt 区分两级（systemFinal 含「汇报助手」），模拟 kimi 式偶发空响应
     {
@@ -215,7 +217,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url === '/anth/v1/messages') {
-    if (auth !== ANTH_TOKEN && auth !== `Bearer ${ANTH_TOKEN}`) {
+    if (auth !== ANTH_TOKEN && auth !== `Bearer ${ANTH_TOKEN}` && auth !== DUAL_TOKEN && auth !== `Bearer ${DUAL_TOKEN}`) {
       return json(res, 401, { type: 'error', error: { type: 'authentication_error', message: 'bad token' } });
     }
     const echo = ECHO(anthropicEcho(body, auth));
