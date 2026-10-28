@@ -1850,6 +1850,18 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const admText = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
     check('页面：一键切换按钮 / 热键改绑 UI / toggle 调用全部移除', !admText.includes('monToggle') && !admText.includes('monHk') && !admText.includes('/admin/monitors/hotkeys') && !admText.includes("mode: 'toggle'") && !admText.includes('{"mode":"toggle"}'));
     check('页面：手动切换面保留（左栏整机同切 + 每屏下一输入源轮换 + 输入源/屏改名）', admText.includes('data-mminput') && admText.includes('data-mcycle') && admText.includes('monInEdit') && admText.includes('data-mnamesave'));
+
+    // -- 文档与代码同步：单页事实、两级导航、左栏契约 --
+    const claudeMd = fs.readFileSync(path.join(ROOT, 'CLAUDE.md'), 'utf8');
+    const readmeMd = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    check('文档已同步单页事实',
+      !claudeMd.includes('workbench.html') && !readmeMd.includes('workbench.html')
+      && claudeMd.includes('index.html') && readmeMd.includes('index.html'));
+    check('CLAUDE.md 记录两级导航与左栏布局契约',
+      /两级|两个分组/.test(claudeMd) && claudeMd.includes('省略号') && claudeMd.includes('break-all'));
+    check('文档不把 /workbench 说成独立页面',
+      !/工作台页（workbench|独立页面/.test(readmeMd), 'README 仍把工作台当独立页');
+    check('文档记录按视图轮询', claudeMd.includes('按视图') || claudeMd.includes('可见时才拉'));
     check('显示器相关代码只在总览视图（工作台视图不含）', !admText.includes('monBox') && !admText.includes('loadMonitorsOnce'));
   }
 

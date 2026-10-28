@@ -2517,9 +2517,8 @@ async function refreshHistory() {
   } catch { $('rhistBody').innerHTML = '<tr><td colspan="4" class="empty">历史加载失败。</td></tr>'; }
 }
 
-// ── 主题切换（三态循环，与管理台同一约定）──────────────────────────────────
-
 // ── 事件绑定与启动 ─────────────────────────────────────────────────────────
+// （主题切换三态循环在「视图切换」区上方的 applyTheme / #themeBtn 处，全站唯一一份）
 $('addBtn').addEventListener('click', safe(addTodo));
 $('addTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') safe(addTodo)(); });
 $('addUrg').addEventListener('click', (e) => {
