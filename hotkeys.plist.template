@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- cn.hicann.cannbot-monitor-hotkeys — 显示器输入源系统级热键守护（与网关
+     cn.hicann.cannbot-gateway-proxy 分离的独立 LaunchAgent：热键可单独启停/升级，
+     网关重启不影响热键，反之亦然）。install.sh 由本模板 sed 生成：
+     __HOTKEY_BIN__ / __RUNTIME_DIR__ / __PORT__。 -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>cn.hicann.cannbot-monitor-hotkeys</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOTKEY_BIN__</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CANNBOT_CONFIG_FILE</key>
+        <string>__RUNTIME_DIR__/providers.json</string>
+        <key>CANNBOT_PROXY_PORT</key>
+        <string>__PORT__</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__RUNTIME_DIR__/logs/hotkeys.log</string>
+    <key>StandardErrorPath</key>
+    <string>__RUNTIME_DIR__/logs/hotkeys.log</string>
+</dict>
+</plist>

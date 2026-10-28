@@ -12,7 +12,9 @@
 set -euo pipefail
 
 LABEL="cn.hicann.cannbot-gateway-proxy"
+HOTKEY_LABEL="cn.hicann.cannbot-monitor-hotkeys"
 INSTALLED_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+HOTKEY_PLIST="$HOME/Library/LaunchAgents/$HOTKEY_LABEL.plist"
 RUNTIME_DIR="$HOME/.local/share/cannbot-gateway-proxy"
 # 安装时记录的端口（install.sh 写入）；缺失则按默认 8484 检查
 PORT="$(cat "$RUNTIME_DIR/port" 2>/dev/null || echo 8484)"
@@ -26,8 +28,10 @@ if [ "${CGP_SKIP_LAUNCHCTL:-0}" = "1" ]; then
   msg "CGP_SKIP_LAUNCHCTL=1：跳过 launchctl 步骤（演练模式，不停止/注销真实服务）"
 else
   launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && msg "服务已停止" || msg "服务本就未在运行"
+  launchctl bootout "gui/$(id -u)/$HOTKEY_LABEL" >/dev/null 2>&1 && msg "热键守护已停止" || msg "热键守护本就未在运行"
 fi
 rm -f "$INSTALLED_PLIST" && msg "已移除 ${INSTALLED_PLIST}（开机自启一并取消）"
+rm -f "$HOTKEY_PLIST"   # 热键 LaunchAgent（独立 label）：卸载时一并移除；二进制随下面的运行时目录清理
 
 # 用户创作数据不随卸载销毁：待办与报告存档先抢救到备份目录，再清理运行时副本。
 # （proxy.log/stats.json 等可再生产物不抢救；重装后想恢复：把备份文件拷回运行时目录即可）

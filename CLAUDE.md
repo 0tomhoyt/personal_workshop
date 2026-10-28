@@ -61,8 +61,15 @@ lib/pricing.mjs       模型单价表与费用折算（内置 OpenRouter 量级�
 lib/monitors.mjs      显示器输入源切换（m1ddc/DDC-CI over USB-C，串行队列 + 5s 状态缓存；
                       **只认硬件事实**：屏 = System UUID、输入 = VCP60 值，不内置任何
                       方向/主机语义；名字全由用户填，留空显示编号（屏=UUID 前 8 位、
-                      输入=「输入 N」）。默认值表在 config.mjs 的 defaultMonitors()
-lib/monitors-admin.mjs 管理台对 monitors 节的改名写回（只改 name，不动 UUID/VCP；原子落盘 0600）
+                      输入=「输入 N」）。toggleMonitors 一键切换：同源对切/异源按配置顺序
+                      轮换互换，规则通用到任意屏数（含单屏循环），不写死 VCP 值。
+                      默认值表在 config.mjs 的 defaultMonitors()——仅示例种子，可删改
+lib/monitors-admin.mjs 管理台对 monitors 节的改名/热键改绑写回（只动 name 与 hotkeys，
+                      不碰 UUID/VCP；原子落盘 0600）
+hotkeys/monitor-hotkeys.swift 系统热键守护（Carbon RegisterEventHotKey，swiftc 现场编译、
+                      独立 LaunchAgent cn.hicann.cannbot-monitor-hotkeys）：读 monitors.hotkeys
+                      （[{action:"toggle",key}]，绑动作不绑输入源值），按下 → POST switch
+                      {"mode":"toggle"}；mtime 3s 轮询热重载
 lib/log.mjs           日志（内存环形缓冲 1000 行 + 落盘 + 5MB 轮转）
 lib/util.mjs          httpError / sendJson / readBodyLimited（上游响应体有界读：content-length
                       预检 + 无/非法长度边读边检）/ token 权重（CJK 1:1 其余 4:1）/ randHex
@@ -87,7 +94,8 @@ lib/report/generate.mjs 报告生成状态机：单任务串行（409）、colle
                       分支、reports.json 原子存档（上限 200）；两级总结失败或空响应自动重试一次
                       （CANNBOT_REPORT_RETRY_DELAY_MS 可调间隔）
 lib/report-prompts.mjs 两级总结 prompt + 压缩/脱敏阈值**全部集中在此**——调汇报质量只改这里
-workbench.html/css    工作台页（待办管理 + 报告生成/历史，键盘 skip link「跳到报告区」）
+workbench.html/css    工作台页（待办管理 + 报告生成/历史，键盘 skip link「跳到报告区」；
+                      侧栏 Displays 区：一键切换按钮 + 各屏当前输入源展示，仅回环可见）
                       与 admin/workbench 共享主题
 ```
 
@@ -107,9 +115,13 @@ workbench.html/css    工作台页（待办管理 + 报告生成/历史，键盘
   报告生成（仅回环）：POST `/admin/report/generate` `{startMs,endMs}` 异步启动（在跑 409）、
   GET `/admin/report/job` 进度、GET `/admin/report/list`、GET/DELETE `/admin/report/:id`；
   显示器切换：GET `/admin/monitors`（状态，`?refresh=1` 绕缓存）/ POST `/admin/monitors/switch`
-  （body `{"input":n}` 切全部屏，可选 `"display":"<UUID 或前 8 位或名字>"` 单切一台；
-  `input` 也可写成 `"target":"<输入源名字>"`）/ POST `/admin/monitors/rename`
-  `{"input":n,"name":...}` 或 `{"display":...,"name":...}`，name 空串=恢复编号） |
+  （body `{"mode":"toggle"}` 一键切换：各屏同源→整机切到 monitors.inputs 的下一个、异源→按配置
+  list 顺序轮换互换（两屏即互换）、单屏→在已配置 inputs 间循环，不假设屏数；`{"input":n}`
+  显式切全部屏，可选 `"display":"<UUID 或前 8 位或名字>"` 单切一台；`input` 也可写成
+  `"target":"<输入源名字>"`）/ POST `/admin/monitors/rename`
+  `{"input":n,"name":...}` 或 `{"display":...,"name":...}`，name 空串=恢复编号 /
+  POST `/admin/monitors/hotkeys` `{"hotkeys":[{"action":"toggle","key":"f13"}]}` 整体替换
+  系统热键（绑动作不绑输入源值；空数组=清空；写盘后热键守护 mtime 热加载） |
 
 URL 容忍 `/v1/v1/...` 叠加前缀。restart/stop/config/providers/monitors 仅接受回环 Host（防 DNS
 rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（POST）另强制 `application/json`
@@ -135,13 +147,13 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
 
 ### 管理台
 
-`admin.html`（Claude 风格深浅色主题）由 `/` 提供，3 秒轮询 `/healthz`、`/admin/log`（内存环形缓冲）、`/admin/stats`；启动时经 `/admin/config`（仅回环）取网关 token 供测试按钮调用。订阅上游卡逐 provider 展示凭证状态；「供应商配置」卡经 `/admin/providers` 在网页上增删改 providers.json（token 脱敏、保存即热生效、`测试` 按钮经 GET /v1/models 验证端点与凭证，static 目录也走该探测）。总览页另有「显示器输入源」卡（`/admin/monitors`）：**界面不写死任何方向或主机语义**，屏显示 UUID 前 8 位、输入显示 VCP 值，名字由用户在页内「改名」按钮自填（写入 providers.json 的 monitors 节，热生效；留空恢复编号）。左侧导航栏按输入源动态生成「整机同切」按钮，状态卡每屏一个「⇄ 下一输入源」按钮点击轮换单切（不设下拉），m1ddc 缺失时降级提示；卡片底部有可直接绑热键的 curl 示例。
+`admin.html`（Claude 风格深浅色主题）由 `/` 提供，3 秒轮询 `/healthz`、`/admin/log`（内存环形缓冲）、`/admin/stats`；启动时经 `/admin/config`（仅回环）取网关 token 供测试按钮调用。订阅上游卡逐 provider 展示凭证状态；「供应商配置」卡经 `/admin/providers` 在网页上增删改 providers.json（token 脱敏、保存即热生效、`测试` 按钮经 GET /v1/models 验证端点与凭证，static 目录也走该探测）。总览页另有「显示器输入源」卡（`/admin/monitors`）：**界面不写死任何方向或主机语义**，屏显示 UUID 前 8 位、输入显示 VCP 值，名字由用户在页内「改名」按钮自填（写入 providers.json 的 monitors 节，热生效；留空恢复编号）。卡片首行与左栏顶部是「⇄ 一键切换」（toggle，与热键同一后端动作）；左栏其后按输入源动态生成显式「整机同切」按钮，状态卡每屏一个「⇄ 下一输入源」按钮点击轮换单切（不设下拉），另有系统热键改绑行（key 记号如 `f13`、`cmd+opt+d`，可多把，全部绑 toggle 动作），m1ddc 缺失时降级提示；卡片底部附 toggle 版 curl 示例。
 
 **主题共享**：admin.html 与 workbench.html 的主题令牌、骨架、通用组件在 `workbench.css`（`/workbench.css` 提供），各页只内嵌自己的视图专属样式 + 9 行首屏主题脚本（防闪色必须 inline）。admin 左栏有「工作台」跨页链接。
 
 ### 工作台页（workbench.html）
 
-`/workbench` 提供，两区：**待办**（快速添加：标题/紧急度 seg/项目标签；按 进行中→待办（紧急在前）→完成折叠 分组；行内状态循环/删除；agent 来源徽标）与**报告**（预设区间 seg + 自定义 datetime-local；生成 → 2s 轮询 job 进度（琥珀扫掠条）→ Markdown 渲染 + 复制 + 历史表格）。动态文本一律 `esc()` 转义后再做 Markdown 结构替换（XSS 防线）。API 侧：待办走 Bearer（loadToken/apiFetch 照抄 admin 模式，401 重取一次），报告端点仅回环免 token。设计文档与数据源判别式：`docs/superpowers/specs/2026-10-27-workbench-design.md`。
+`/workbench` 提供，两区：**待办**（快速添加：标题/紧急度 seg/项目标签；按 进行中→待办（紧急在前）→完成折叠 分组；行内状态循环/删除；agent 来源徽标）与**报告**（预设区间 seg + 自定义 datetime-local；生成 → 2s 轮询 job 进度（琥珀扫掠条）→ Markdown 渲染 + 复制 + 历史表格）。左栏 Displays 区有「⇄ 一键切换」（`/admin/monitors` toggle，与热键/管理台同一后端动作）+ 各屏当前输入源（用户命名 label），仅在能取到回环 admin 端点时展示、不轮询。动态文本一律 `esc()` 转义后再做 Markdown 结构替换（XSS 防线）。API 侧：待办走 Bearer（loadToken/apiFetch 照抄 admin 模式，401 重取一次），报告端点仅回环免 token。设计文档与数据源判别式：`docs/superpowers/specs/2026-10-27-workbench-design.md`。
 
 ## 外部集成（改动前了解影响面）
 
@@ -155,7 +167,7 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
 - Claude Code（`~/.claude/settings.json` env）：当前直连 GLM Coding Plan 的 anthropic 端点
   （open.bigmodel.cn），不走网关；曾经指向网关（2026-10-27 上午 zcode 桶的 130 次多轮 agent
   流量即走 Anthropic 协议直通路径）。
-- launchd label：`cn.hicann.cannbot-gateway-proxy`（plist 由 `plist.template` sed 生成；端口经 `CANNBOT_PROXY_PORT` 注入或运行时 `port` 文件记录）。
+- launchd label：`cn.hicann.cannbot-gateway-proxy`（plist 由 `plist.template` sed 生成；端口经 `CANNBOT_PROXY_PORT` 注入或运行时 `port` 文件记录）；另有**分离的**热键守护 label `cn.hicann.cannbot-monitor-hotkeys`（`hotkeys.plist.template` sed 生成，install.sh 现场编译 Swift、无 swiftc 时跳过不阻断）。
 
 ## 安全红线
 

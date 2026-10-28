@@ -226,6 +226,11 @@
       <a class="viewbtn active" href="/workbench"><span class="idx">02</span><span class="vname">工作台</span><span class="ven">Workbench</span></a>
     </nav>
     <div class="rail-foot">
+      <div class="sub">Displays</div>
+      <div class="rail-proto" id="monBox" style="display:none">
+        <div id="monList" style="margin-bottom:5px"></div>
+        <button id="monToggle" style="width:100%">⇄ 一键切换</button>
+      </div>
       <div class="sub">Sources</div>
       <div class="rail-proto">Claude Code · zcode · opencode · Cursor<br>本地会话记录直读</div>
     </div>
@@ -993,6 +998,40 @@ document.addEventListener('keydown', (e) => {
   s.focus();
   s.select();
 });
+// ---- 显示器输入源（侧栏）：一键切换 + 各屏当前输入（用用户命名的 label） ----------
+// 只在能取到 /admin/monitors（本机回环）时展示；与热键/管理台按钮走同一 toggle 逻辑。
+// 不轮询——切完等几秒手动刷新页面即可看到新状态（DDC 有数秒过渡态，轮询意义不大）。
+let monBusyWb = false;
+async function loadMonitorsOnce() {
+  try {
+    const d = await (await fetch('/admin/monitors')).json();
+    if (!d?.available) return;
+    $('monBox').style.display = 'block';
+    $('monList').innerHTML = (d.monitors || []).map((m) =>
+      m.ok ? `<div class="rs">${esc(m.label)} <span class="mono">${esc(m.inputLabel || ('输入 ' + m.input))}</span></div>`
+        : `<div class="rs dim">${esc(m.label)} 读失败</div>`
+    ).join('') || '<div class="rs dim">未配置显示器</div>';
+  } catch {} // 非本机/网关未起：整个区块保持隐藏，不影响待办/报告
+}
+$('monToggle').addEventListener('click', async () => {
+  if (monBusyWb) return;
+  monBusyWb = true;
+  $('monToggle').textContent = '切换中…';
+  try {
+    const r = await fetch('/admin/monitors/switch', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'toggle' }),
+    });
+    const j = await r.json().catch(() => null);
+    $('monToggle').textContent = r.ok && j?.ok ? '已切换 ✓' : `失败：${j?.error?.message || r.status}`;
+  } catch (e) { $('monToggle').textContent = `失败：${e}`; }
+  setTimeout(() => {
+    monBusyWb = false;
+    $('monToggle').textContent = '⇄ 一键切换';
+    loadMonitorsOnce(); // 过渡态过去后拉一次新状态
+  }, 5000);
+});
+
 // 页面被打开时若上一次任务仍在跑：接着轮询
 (async () => {
   applyTheme(localStorage.getItem('gw-theme') || 'auto');
@@ -1005,6 +1044,7 @@ document.addEventListener('keydown', (e) => {
     const j = await (await fetch('/admin/report/job')).json();
     if (j.state === 'running') { setGenerating(true); $('rprog').style.display = 'block'; pollJob(); }
   } catch {}
+  loadMonitorsOnce();
 })();
 // 切回标签页时静默拉一次：agent 经 API 写入的待办/报告无需手动刷新（不做轮询）
 window.addEventListener('focus', () => {
