@@ -1509,6 +1509,15 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const regenMatch = wbText.match(/function regenFromReport\(\) \{[\s\S]*?\n\}/);
     check('regenFromReport：回填起止+同步预设后调 generateReport（复用生成路径），坏区间直接返回', Boolean(regenMatch) && regenMatch[0].includes('generateReport()') && regenMatch[0].includes('isBadReportRange(range)') && regenMatch[0].includes('syncPresetFromInputs()'));
     check('regenBtn 禁用口径：初始/生成中/坏区间禁用', wbText.includes("$('regenBtn').disabled = on || isBadReportRange") && wbText.includes("$('regenBtn').disabled = true") && wbText.includes('该报告的时间段无效'));
+    // 待办子项/详情：收起行只扫父标题，展开看清单与详情（agent 长文默认折叠）
+    check('工作台页含展开状态与切换（expandedIds / data-expand）', wbText.includes('expandedIds') && wbText.includes('data-expand'));
+    check('工作台页含子项操作：勾选 / 添加 / 删除（toggleItem·addItem·delItem）',
+      wbText.includes('async function toggleItem') && wbText.includes('async function addItem') && wbText.includes('async function delItem')
+        && wbText.includes('data-itemform') && wbText.includes('data-itemid'));
+    check('工作台页含详情查看与编辑（noteEditId / data-noteform）', wbText.includes('noteEditId') && wbText.includes('data-noteform') && wbText.includes('data-notecancel'));
+    check('收起行标题 2 行钳制（长标题不刷屏）', wbText.includes('-webkit-line-clamp: 2') || wbText.includes('-webkit-line-clamp:2'));
+    check('收起行含子项进度徽标（子项 k/j）', wbText.includes('子项 ${'));
+    check('详情编辑带 agent 分级上限提示（≤300）', wbText.includes('300'));
   }
 
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');

@@ -41,7 +41,7 @@
   }
   .tgroup-label .cnt { color: var(--amber); }
   .titem {
-    display: flex; align-items: center; gap: 11px;
+    display: flex; align-items: center; gap: 11px; flex-wrap: wrap;
     padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line-soft);
     background: var(--inset); margin-bottom: 5px;
     transition: border-color .15s, background-color .15s;
@@ -59,9 +59,35 @@
   .turg.urgent { background: var(--red); box-shadow: 0 0 7px rgba(var(--red-rgb), .5); }
   .turg.normal { background: var(--amber); opacity: .65; }
   .turg.someday { background: var(--faint); }
+  /* 展开钮：有子项/详情的行才有；收起行只扫父标题（长标题 2 行钳制） */
+  .texp { flex: none; width: 20px; height: 22px; padding: 0; font-size: 10px; color: var(--dim); border-radius: 5px; }
+  .texp:hover { color: var(--amber-hi); border-color: var(--amber); }
+  .texp.open { color: var(--amber-hi); }
   .tmain { flex: 1; min-width: 0; }
-  .ttitle { font-size: 13.5px; line-height: 1.45; word-break: break-word; }
+  .ttitle {
+    font-size: 13.5px; line-height: 1.45; word-break: break-word;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
   .tmeta { display: flex; gap: 8px; align-items: center; margin-top: 3px; font: 10.5px var(--mono); color: var(--faint); flex-wrap: wrap; }
+  .tmeta .tiprog { color: var(--amber); }
+  .tmeta .tinhint { color: var(--faint); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; }
+  /* 展开区（.tx）：子项清单 + 详情；整行换行占满，与收起态信息密度拉开 */
+  .tx { flex: 1 1 100%; margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--line-soft); display: flex; flex-direction: column; gap: 9px; }
+  .ckitem { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 2px 2px; }
+  .ckitem input[type="checkbox"] { accent-color: var(--amber); flex: none; }
+  .ckitem .ttl { flex: 1; min-width: 0; word-break: break-word; }
+  .ckitem.done .ttl { text-decoration: line-through; text-decoration-color: var(--faint); color: var(--dim); }
+  .ckdel { flex: none; padding: 1px 7px; font-size: 10.5px; border-radius: 4px; color: var(--faint); }
+  .ckdel:hover { color: var(--red); border-color: var(--red); }
+  .ckadd { display: flex; gap: 7px; margin-top: 2px; }
+  .ckadd input[type="text"] { flex: 1; min-width: 0; font: 12.5px var(--sans); padding: 5px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--inset); color: var(--ink); }
+  .ckadd input::placeholder, .tnote-form textarea::placeholder { color: var(--faint); }
+  .ckadd button { padding: 4px 12px; font-size: 11.5px; }
+  .tdetail .tdh { display: flex; align-items: center; gap: 8px; font: 600 10.5px var(--mono); color: var(--dim); letter-spacing: .18em; text-transform: uppercase; }
+  .tdetail .tdh button, .tdetail > button { padding: 1px 9px; font-size: 10.5px; border-radius: 4px; letter-spacing: 0; text-transform: none; }
+  .tnote { font-size: 12.5px; line-height: 1.7; color: var(--dim); white-space: pre-wrap; word-break: break-word; background: var(--inset); border-radius: 6px; padding: 8px 11px; margin-top: 5px; }
+  .tnote-form textarea { width: 100%; font: 12.5px/1.7 var(--sans); padding: 8px 11px; border-radius: 6px; border: 1px solid var(--line); background: var(--inset); color: var(--ink); resize: vertical; margin-top: 5px; }
+  .tnote-form .row { display: flex; gap: 7px; margin-top: 7px; }
   .tmeta .tproj { color: var(--blue); }
   .tmeta .tagent { color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; }
   .tacts { display: flex; gap: 6px; flex: none; }
@@ -241,7 +267,7 @@
     <section class="sec">
       <div class="sechead">
         <span class="idx">01</span><h2>待办事项</h2><span class="en">Todos</span><span class="spacer"></span>
-        <span class="note">人与 agent 共用 · agent 经 <code>/v1/todos</code> 读写</span>
+        <span class="note">人与 agent 共用 · agent 经 <code>/v1/todos</code> 读写 · 标题一行可扫、agent 详情 ≤300 字</span>
       </div>
       <div class="card">
         <div class="todo-add">
@@ -371,6 +397,8 @@ let todoFilters = { project: '', source: '', urgency: '', q: '' };
 try { todoFilters = { ...todoFilters, ...JSON.parse(localStorage.getItem('wb-todo-filters') || '{}') }; } catch {}
 const saveFilters = () => { try { localStorage.setItem('wb-todo-filters', JSON.stringify(todoFilters)); } catch {} };
 let editingId = null; // 就地编辑中的待办 id
+const expandedIds = new Set(); // 展开中的待办（子项清单 + 详情）；会话内状态，收起即弃
+let noteEditId = null; // 详情编辑中的待办 id（textarea 表单态）
 
 // 在线状态灯随真实请求结果走（写死会与列表区的加载失败自相矛盾）
 function setOnline(ok) {
@@ -385,14 +413,17 @@ async function refreshTodos() {
     const j = await r.json();
     allTodos = j.todos || [];
     setOnline(true);
-    // 正在就地编辑时只更新数据与 rail 计数，不重建列表 DOM——
-    // 否则 focus 刷新会把编辑表单里未保存的输入整块重渲染掉（「打字丢失」）
-    if (editingId) renderRailStats();
+    // 正在就地编辑 / 编辑详情 / 在展开区输入（加子项框）时只更新数据与 rail 计数，
+    // 不重建列表 DOM——否则 focus 刷新会把未保存的输入整块重渲染掉（「打字丢失」）；
+    // checkbox 不算（点选后要立刻重渲染出派生的父状态）
+    const ae = document.activeElement;
+    const typing = ae && (ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && ae.type !== 'checkbox')) && $('todoList').contains(ae);
+    if (editingId || noteEditId || typing) renderRailStats();
     else renderTodos();
   } catch (e) {
     setOnline(false);
     // 编辑中不清列表（未保存输入不能丢）；在线灯变离线即已给出状态
-    if (editingId) return;
+    if (editingId || noteEditId) return;
     $('todoList').innerHTML = '<span class="bad">待办加载失败：' + esc(e.message) + '</span>';
   }
 }
@@ -436,21 +467,60 @@ function renderTodos() {
     </div>`;
   };
 
+  // 详情编辑表单：textarea + 保存/取消；上限按来源分级（agent ≤300，用户 ≤2000），
+  // 超限值交给服务端 400 兜底（maxlength 只是输入层提示）
+  const noteEditForm = (t) => {
+    const agentSrc = t.source && t.source !== 'user';
+    const max = agentSrc ? 300 : 2000;
+    return `<div class="tdetail"><div class="tdh">详情</div>
+      <form class="tnote-form" data-noteform="${esc(t.id)}">
+        <textarea name="note" rows="4" maxlength="${max}" placeholder="上下文、链接、验收标准…${agentSrc ? `（agent 来源详情 ≤ ${max} 字，长文请另存别处）` : `（≤ ${max} 字）`}">${esc(t.note || '')}</textarea>
+        <div class="row"><button type="submit" class="primary">保存</button><button type="button" data-notecancel="1">取消</button></div>
+      </form></div>`;
+  };
+
   const item = (t) => {
     if (editingId === t.id) return editForm(t);
     const agent = t.source && t.source !== 'user' ? `<span class="tagent">${esc(String(t.source).replace(/^agent:/, ''))}</span>` : '';
     const proj = t.project ? `<span class="tproj">${esc(t.project)}</span>` : '';
     const next = t.status === 'pending' ? ['in_progress', '▸ 开始'] : t.status === 'in_progress' ? ['done', '✓ 完成'] : ['pending', '↺ 重开'];
+    const items = Array.isArray(t.items) ? t.items : [];
+    const doneCnt = items.filter((x) => x.done).length;
+    const prog = items.length ? `<span class="tiprog">子项 ${doneCnt}/${items.length}</span>` : '';
+    const hint = t.note ? '<span class="tinhint">详情</span>' : '';
+    const expandable = items.length > 0 || Boolean(t.note);
+    const open = expandedIds.has(t.id);
+    // 展开区：子项清单（勾选/删除/添加走单操作端点，父状态由服务端派生）+ 详情
+    // （长文只在展开后可见——收起行永不显示 note 正文，即「默认折叠长文」）
+    let tx = '';
+    if (open && expandable) {
+      const ck = items.map((it) => `<label class="ckitem${it.done ? ' done' : ''}">
+          <input type="checkbox" data-itemid="${esc(it.id)}" data-todo="${esc(t.id)}"${it.done ? ' checked' : ''}>
+          <span class="ttl">${esc(it.title)}</span>
+          <button type="button" class="ckdel" data-itemdel="${esc(it.id)}" data-todo="${esc(t.id)}" title="删除该子项">✕</button>
+        </label>`).join('');
+      const ckAdd = `<form class="ckadd" data-itemform="${esc(t.id)}">
+          <input type="text" name="itemTitle" placeholder="添加子项，回车确认" maxlength="200">
+          <button type="submit">添加</button>
+        </form>`;
+      const noteView = t.note
+        ? `<div class="tdetail"><div class="tdh">详情<button type="button" data-noteedit="${esc(t.id)}">编辑</button></div><div class="tnote">${esc(t.note)}</div></div>`
+        : `<div class="tdetail"><button type="button" data-noteedit="${esc(t.id)}">＋ 添加详情</button></div>`;
+      const detail = noteEditId === t.id ? noteEditForm(t) : noteView;
+      tx = `<div class="tx">${items.length ? `<div class="cklist">${ck}${ckAdd}</div>` : ''}${detail}</div>`;
+    }
     return `<div class="titem ${t.status === 'done' ? 'done' : ''}${t.status === 'in_progress' ? ' ip' : ''}">
       <span class="turg ${esc(t.urgency)}" title="${esc(URG_LABEL[t.urgency] || t.urgency)}"></span>
+      ${expandable ? `<button type="button" class="texp${open ? ' open' : ''}" data-expand="${esc(t.id)}" title="${open ? '收起子项与详情' : '展开子项与详情'}">${open ? '▾' : '▸'}</button>` : ''}
       <div class="tmain">
         <div class="ttitle editable" data-edit="${esc(t.id)}" title="点击编辑">${esc(t.title)}</div>
-        <div class="tmeta">${proj}${agent}<span>${t.completed_at ? '完成于 ' + fmtTime(t.completed_at) : '建于 ' + fmtTime(t.created_at)}</span></div>
+        <div class="tmeta">${proj}${agent}${prog}${hint}<span>${t.completed_at ? '完成于 ' + fmtTime(t.completed_at) : '建于 ' + fmtTime(t.created_at)}</span></div>
       </div>
       <div class="tacts">
         <button data-act="cycle" data-id="${esc(t.id)}" data-next="${next[0]}">${next[1]}</button>
         <button class="danger" data-act="del" data-id="${esc(t.id)}">删除</button>
       </div>
+      ${tx}
     </div>`;
   };
 
@@ -505,9 +575,9 @@ async function clearDoneTodos() {
   if (clearingDone) return;
   const targets = allTodos.filter((t) => t.status === 'done');
   if (!targets.length) return;
-  // 正在就地编辑的那条即使是已完成也跳过——不能把编辑中的表单连同待办一起删掉
-  const skipEdit = targets.filter((t) => t.id === editingId);
-  const toDelete = targets.filter((t) => t.id !== editingId);
+  // 正在就地编辑/编辑详情的那条即使是已完成也跳过——不能把编辑中的表单连同待办一起删掉
+  const skipEdit = targets.filter((t) => t.id === editingId || t.id === noteEditId);
+  const toDelete = targets.filter((t) => t.id !== editingId && t.id !== noteEditId);
   // 全部已完成项都在编辑态：没东西可删，明确说一句而不是点了没反应
   if (!toDelete.length) { showErr(`已完成项正在编辑中（${skipEdit.length} 条），已跳过——退出编辑后再清理`); return; }
   const extra = skipEdit.length ? `；正在编辑的 ${skipEdit.length} 条已完成项将跳过` : '';
@@ -565,6 +635,35 @@ async function cycleTodo(id, next) {
 async function delTodo(id) {
   const r = await apiFetch(`/v1/todos/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (r.status === 204) refreshTodos(); else showErr(`删除失败（HTTP ${r.status}）`);
+}
+
+// ── 子项与详情（单操作端点：服务端派生父状态后整只父待办返回，刷新即所见） ──
+async function toggleItem(todoId, itemId, done) {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(todoId)}/items/${encodeURIComponent(itemId)}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ done }),
+  });
+  if (r.ok) refreshTodos(); else showErr(`子项更新失败（HTTP ${r.status}）`);
+}
+
+async function addItem(todoId, title) {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(todoId)}/items`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }),
+  });
+  if (r.status === 201) refreshTodos();
+  else showErr((await r.json().catch(() => ({}))).error?.message || `子项添加失败（HTTP ${r.status}）`);
+}
+
+async function delItem(todoId, itemId) {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(todoId)}/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' });
+  if (r.status === 204) refreshTodos(); else showErr(`子项删除失败（HTTP ${r.status}）`);
+}
+
+async function saveNote(todoId, note) {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(todoId)}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ note }),
+  });
+  if (r.ok) { noteEditId = null; refreshTodos(); }
+  else showErr((await r.json().catch(() => ({}))).error?.message || `详情保存失败（HTTP ${r.status}）`);
 }
 
 // ── 报告 ───────────────────────────────────────────────────────────────────
@@ -953,6 +1052,27 @@ document.addEventListener('click', (e) => {
     ub.classList.add('active');
     return;
   }
+  // 展开钮：收起 ⇄ 展开子项与详情（点击标题编辑的分支在上方，互不干扰）
+  const ex = e.target.closest('button[data-expand]');
+  if (ex) {
+    if (expandedIds.has(ex.dataset.expand)) expandedIds.delete(ex.dataset.expand);
+    else expandedIds.add(ex.dataset.expand);
+    renderTodos();
+    return;
+  }
+  // 详情编辑：进入编辑态 / 取消
+  const ne = e.target.closest('button[data-noteedit]');
+  if (ne) {
+    noteEditId = ne.dataset.noteedit;
+    renderTodos();
+    const ta = document.querySelector(`form[data-noteform="${noteEditId}"] textarea`);
+    if (ta) { ta.focus(); ta.select(); }
+    return;
+  }
+  if (e.target.closest('button[data-notecancel]')) { noteEditId = null; renderTodos(); return; }
+  // 删除子项（轻量操作，不 confirm——标题删除才有 confirm）
+  const idel = e.target.closest('button[data-itemdel]');
+  if (idel) { safe(delItem)(idel.dataset.todo, idel.dataset.itemid); return; }
   const b = e.target.closest('button[data-act]'); if (!b) return;
   const id = b.dataset.id;
   if (b.dataset.act === 'cycle') safe(cycleTodo)(id, b.dataset.next);
@@ -972,18 +1092,41 @@ document.addEventListener('click', (e) => {
 });
 // 编辑表单提交（回车或「保存」）：空标题不放行
 document.addEventListener('submit', (e) => {
-  const f = e.target.closest('form[data-editform]'); if (!f) return;
-  e.preventDefault();
-  const title = f.elements.title.value.trim();
-  if (!title) { showErr('标题不能为空——填一句或点「取消」退出编辑。'); f.elements.title.focus(); return; }
-  const urgency = f.querySelector('[data-urgseg] button.active')?.dataset.urg || 'normal';
-  const project = f.elements.project.value.trim();
-  safe(saveTodoEdit)(f.dataset.editform, { title, urgency, project });
+  const f = e.target.closest('form[data-editform]');
+  if (f) {
+    e.preventDefault();
+    const title = f.elements.title.value.trim();
+    if (!title) { showErr('标题不能为空——填一句或点「取消」退出编辑。'); f.elements.title.focus(); return; }
+    const urgency = f.querySelector('[data-urgseg] button.active')?.dataset.urg || 'normal';
+    const project = f.elements.project.value.trim();
+    safe(saveTodoEdit)(f.dataset.editform, { title, urgency, project });
+    return;
+  }
+  // 详情保存（空串 = 清空详情；超限由服务端 400 兜底并提示）
+  const nf = e.target.closest('form[data-noteform]');
+  if (nf) {
+    e.preventDefault();
+    safe(saveNote)(nf.dataset.noteform, nf.elements.note.value.trim());
+    return;
+  }
+  // 添加子项（回车即加，空标题不放行）
+  const af = e.target.closest('form[data-itemform]');
+  if (af) {
+    e.preventDefault();
+    const title = af.elements.itemTitle.value.trim();
+    if (!title) { af.elements.itemTitle.focus(); return; }
+    safe(addItem)(af.dataset.itemform, title);
+  }
 });
-// Esc 退出就地编辑（编辑中无论焦点在哪，与点外取消一致）；
+// 子项勾选（checkbox 的 change 事件，不走 click 委托——键盘空格切换同样触发）
+document.addEventListener('change', (e) => {
+  const cb = e.target.closest('input[type="checkbox"][data-itemid]');
+  if (cb) safe(toggleItem)(cb.dataset.todo, cb.dataset.itemid, cb.checked);
+});
+// Esc 退出就地编辑/详情编辑（编辑中无论焦点在哪，与点外取消一致）；
 // / 聚焦待办搜索框并全选（焦点在输入类控件内、带修饰键、IME 组合中、正在就地编辑时不抢键）
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && editingId) { editingId = null; renderTodos(); return; }
+  if (e.key === 'Escape' && (editingId || noteEditId)) { editingId = null; noteEditId = null; renderTodos(); return; }
   if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || editingId) return;
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
