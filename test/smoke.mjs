@@ -1537,6 +1537,40 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const rn415 = await fetch(`${GW}/admin/monitors/rename`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' });
     check('rename 非 JSON 内容类型 → 415', rn415.status === 415);
 
+    // 热键改绑：POST /admin/monitors/hotkeys 整体替换 monitors.hotkeys（与 rename 同威胁模型）
+    const hkPost = (body) => post('/admin/monitors/hotkeys', body).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+    const hkBadKey = await hkPost({ hotkeys: [{ input: 15, key: 'F13!' }] });
+    check('hotkeys 写：非法 key 记号 → 400', hkBadKey.status === 400, JSON.stringify(hkBadKey.body).slice(0, 120));
+    const hkBadInput = await hkPost({ hotkeys: [{ input: 99, key: 'f13' }] });
+    check('hotkeys 写：input 不在 monitors.inputs → 404', hkBadInput.status === 404, JSON.stringify(hkBadInput.body).slice(0, 120));
+    const hkClash = await hkPost({ hotkeys: [{ input: 15, key: 'f13' }, { input: 21, key: 'f13' }] });
+    check('hotkeys 写：同一 key 绑多个 input → 400', hkClash.status === 400, JSON.stringify(hkClash.body).slice(0, 120));
+    const hkDup = await hkPost({ hotkeys: [{ input: 15, key: 'f13' }, { input: 15, key: 'f14' }] });
+    check('hotkeys 写：同一 input 重复 → 400', hkDup.status === 400, JSON.stringify(hkDup.body).slice(0, 120));
+    const hkNotArr = await hkPost({ hotkeys: 'f13' });
+    check('hotkeys 写：hotkeys 非数组 → 400', hkNotArr.status === 400);
+    const hkEmpty = await hkPost({ hotkeys: [] });
+    check('hotkeys 写：显式空数组 = 清空全部热键（合法）', hkEmpty.status === 200 && hkEmpty.body.hotkeys.length === 0, JSON.stringify(hkEmpty.body).slice(0, 120));
+    const hkSet = await hkPost({ hotkeys: [{ input: 15, key: 'f15' }, { input: 21, key: 'cmd+opt+m' }] });
+    check('hotkeys 写：合法改绑 200 且返回新表', hkSet.status === 200 && hkSet.body.ok === true && hkSet.body.hotkeys.length === 2, JSON.stringify(hkSet.body).slice(0, 200));
+    check('hotkeys 写：落盘到 providers.json 且保留已有改名', (() => {
+      const c = JSON.parse(fs.readFileSync(path.join(tmp, 'providers.json'), 'utf8'));
+      return Array.isArray(c.monitors.hotkeys) && c.monitors.hotkeys.length === 2 && c.monitors.hotkeys[0].key === 'f15'
+        && c.monitors.inputs.find((i) => Number(i.value) === 21)?.name === '';
+    })(), 'providers.json monitors.hotkeys 不符');
+    const hkSt = await (await fetch(`${GW}/admin/monitors?refresh=1`)).json();
+    check('hotkeys 写：GET 状态读回新热键（写后热加载）', hkSt.hotkeys?.length === 2 && hkSt.hotkeys[1].key === 'cmd+opt+m', JSON.stringify(hkSt.hotkeys));
+    const hkHost = await new Promise((resolve, reject) => {
+      const rq = http.request({ host: '127.0.0.1', port: GW_PORT, path: '/admin/monitors/hotkeys', method: 'POST',
+        headers: { host: 'evil.example', 'content-type': 'application/json' } }, resolve);
+      rq.on('error', reject); rq.end('{}');
+    });
+    check('hotkeys 写：非回环 Host → 403', hkHost.statusCode === 403);
+    const hk415 = await fetch(`${GW}/admin/monitors/hotkeys`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' });
+    check('hotkeys 写：非 JSON 内容类型 → 415', hk415.status === 415);
+    // 收尾：恢复默认绑定，供后续（无 monitors 节实例等）不受影响
+    await post('/admin/monitors/hotkeys', { hotkeys: [{ input: 15, key: 'f13' }, { input: 21, key: 'f14' }] });
+
     // 默认配置（providers.json 没有 monitors 节）：状态查询走内置默认能跑，改名也必须能落盘
     // ——曾经改名读的是文件里的空节，默认配置下点改名直接 404「可用: 无」。
     {

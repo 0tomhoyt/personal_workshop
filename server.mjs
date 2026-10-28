@@ -32,7 +32,7 @@ import { handleAnthropicInbound, handleOpenAIToAnthropic } from './lib/proxy-ant
 import { checkClientAuth } from './lib/gwauth.mjs';
 import { authStatus } from './lib/upstream.mjs';
 import { monitorsStatus, switchMonitors } from './lib/monitors.mjs';
-import { renameMonitors } from './lib/monitors-admin.mjs';
+import { renameMonitors, setMonitorsHotkeys } from './lib/monitors-admin.mjs';
 import { listTodos, createTodo, updateTodo, deleteTodo } from './lib/todos.mjs';
 import { startReportJob, getReportJob, listReports, getReport, deleteReport } from './lib/report/generate.mjs';
 import { httpError, sendJson, extractModel } from './lib/util.mjs';
@@ -225,6 +225,24 @@ const server = http.createServer(async (req, res) => {
       let payload = null;
       try { payload = JSON.parse(bodyBuf.toString('utf8') || '{}'); } catch {}
       return sendJson(res, 200, renameMonitors(payload));
+    }
+
+    // 热键改绑：整体替换 monitors.hotkeys（写盘后热键守护按 mtime 热加载重注册），
+    // 与 rename 同一威胁模型（POST + 回环 + JSON 三件套）
+    if (url === '/admin/monitors/hotkeys') {
+      if (req.method !== 'POST') {
+        return sendJson(res, 405, { error: { message: '此端点仅接受 POST', type: 'method_not_allowed' } });
+      }
+      if (!isLocalHost(req)) {
+        return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
+      }
+      if (!(req.headers['content-type'] || '').includes('application/json')) {
+        return sendJson(res, 415, { error: { message: '请求体需为 application/json', type: 'unsupported_media_type' } });
+      }
+      const bodyBuf = await readRequestBody(req, 4096);
+      let payload = null;
+      try { payload = JSON.parse(bodyBuf.toString('utf8') || '{}'); } catch {}
+      return sendJson(res, 200, setMonitorsHotkeys(payload));
     }
 
     // 工作台 · 时间段工作总结：生成走「POST + 回环 + JSON」三件套（生成耗时长，
