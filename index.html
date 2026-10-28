@@ -361,17 +361,7 @@
       <button class="viewbtn" data-view="test"><span class="vname">诊断</span></button>
       <button class="viewbtn" data-view="providers"><span class="vname">配置</span></button>
     </nav>
-    <div class="rail-foot">
-      <div class="sub">Displays</div>
-      <div class="rail-controls" id="railMonBtns"></div>
-      <div class="dim" id="monRailMsg" style="font-size:11px;margin:3px 0 0"></div>
-      <div class="sub">Service</div>
-      <div class="rail-controls">
-        <button id="btnRestart">重启服务</button>
-        <button class="danger" id="btnStop">停止服务</button>
-      </div>
-      <div class="rail-proto" id="sProto">…</div>
-    </div>
+
   </aside>
 
   <!-- 右主区：六个视图 -->
@@ -380,7 +370,6 @@
     <!-- 三张提示条各司其职：凭证异常常驻 / 操作失败 8s 自隐 / 已停服 -->
     <div class="banner red" id="providerBanner"></div>
     <div class="banner red" id="errBanner"></div>
-    <a class="skip" href="#sec-report">跳到报告区 ↓</a>
     <div class="banner blue" id="stopBanner">
       <b>服务已停止。</b>要再次启用，双击项目文件夹里的「打开管理界面.command」，或终端执行 <code>./install.sh</code>。
     </div>
@@ -388,7 +377,7 @@
     <!-- 01 总览：订阅上游 + 模型目录 -->
     <section class="view" data-view="overview">
       <section class="sec">
-        <div class="sechead"><span class="idx">01</span><h2>订阅上游</h2><span class="en">Channels</span><span class="spacer"></span><span class="note">凭证体检 · 配额 · 目录</span></div>
+        <div class="sechead"><span class="idx">01</span><h2>订阅上游</h2><span class="en">Channels</span><span class="spacer"></span><span class="note">凭证体检 · 配额 · 目录 · <span id="sProto">…</span></span></div>
         <div class="card" id="provCard">
           <div id="provList"><span class="dim">加载中…</span></div>
         </div>
@@ -413,6 +402,8 @@
       <section class="sec">
         <div class="sechead"><span class="idx">04</span><h2>显示器输入源</h2><span class="en">Displays</span><span class="spacer"></span><span class="note">DDC/CI · 输入源切换</span></div>
         <div class="card">
+          <!-- 整机同切：所有屏一起切到指定输入源；单屏轮换在下方每行右侧 -->
+          <div class="actions" id="monWholeRow" style="margin-bottom:10px"></div>
           <div id="monList"><span class="dim">加载中…</span></div>
           <div class="dim" id="monMsg" style="font-size:12px;margin-top:8px;min-height:15px"></div>
         </div>
@@ -580,6 +571,19 @@
           </div>
         </div>
       </section>
+
+      <section class="sec">
+        <div class="sechead">
+          <span class="idx">02</span><h2>服务控制</h2><span class="en">Service</span><span class="spacer"></span>
+          <span class="note">重启会中断进行中的请求；停止后所有 agent 无法调用模型</span>
+        </div>
+        <div class="card">
+          <div class="actions">
+            <button id="btnRestart">重启服务</button>
+            <button class="danger" id="btnStop">停止服务</button>
+          </div>
+        </div>
+      </section>
     </section>
 
     <!-- 01 待办 -->
@@ -617,7 +621,7 @@
 
     <!-- 02 汇报 -->
     <section class="view" data-view="report">
-    <section class="sec" id="sec-report" tabindex="-1">
+    <section class="sec" id="sec-report">
       <div class="sechead">
         <span class="idx">02</span><h2>时间段工作总结</h2><span class="en">Report</span><span class="spacer"></span>
         <span class="note">读各 agent 本地会话 → 两级总结 → 给上级的汇报</span>
@@ -1404,22 +1408,23 @@ function monBadge(m) {
 
 function renderMonitors(d) {
   const box = $('monList');
-  const rail = $('railMonBtns');
+  const wholeRow = $('monWholeRow');
   if (!d) {
     box.innerHTML = '<span class="dim">状态获取失败（服务无响应）</span>';
-    rail.innerHTML = '';
+    wholeRow.innerHTML = '';
     return;
   }
   monState = d;
   if (!d.available) {
     box.innerHTML = `<span class="warn">m1ddc 不可用</span> — <span class="dim">${esc(d.reason || '')}</span>`;
-    rail.innerHTML = '';
+    wholeRow.innerHTML = '';
     return;
   }
   const inputs = d.inputs || [];
-  // 左侧栏：每个输入源一个显式「整机同切」按钮（首个为主按钮）
-  rail.innerHTML = inputs.map((i, idx) =>
-      `<button class="${idx === 0 ? 'primary' : ''}" data-mminput="${i.value}" ${monBusy ? 'disabled' : ''}>${esc(i.label)}</button>`
+  // 整机同切：每个输入源一个按钮（首个为主按钮）。宽度充足，不设 flex:1；
+  // 名字由用户自填可能很长，title 留全文，视觉上靠主区宽度自然换行
+  wholeRow.innerHTML = inputs.map((i, idx) =>
+      `<button class="${idx === 0 ? 'primary' : ''}" data-mminput="${i.value}"${monBusy ? ' disabled' : ''} title="所有屏一起切到「${esc(i.label)}」">${esc(i.label)}</button>`
     ).join('');
 
   box.innerHTML = (d.monitors || []).map((m) => {
@@ -1470,8 +1475,8 @@ function renderMonitors(d) {
   if (inName) inName.placeholder = `留空 = 输入 ${$('monInPick')?.value ?? 'N'}`;
 }
 
-// 左侧栏：整机显式切换
-$('railMonBtns').addEventListener('click', (e) => {
+// 总览页：整机显式切换
+$('monWholeRow').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-mminput]');
   if (b && !monBusy) switchMon({ input: Number(b.dataset.mminput) });
 });
@@ -1543,7 +1548,6 @@ async function loadMonitors(refresh = false) {
 
 function setMonMsg(text) {
   $('monMsg').textContent = text;
-  $('monRailMsg').textContent = text;
 }
 
 async function switchMon(body) {

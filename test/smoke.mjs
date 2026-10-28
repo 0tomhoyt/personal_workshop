@@ -875,10 +875,9 @@ try {
       'cut(…,0) 会返回 1 个码位的「…」伪消息');
     // ux-r9 键盘可达性：大量待办下行内按钮全在 Tab 序里，报告区纯键盘不可达——
     // 主区首部极简 skip link（仅 :focus-visible 显现），目标 section tabindex=-1 让焦点真落地
-    check('workbench 含「跳到报告区」skip link（focus-visible 才显现 + 落点 tabindex=-1）',
-      wbh.includes('class="skip" href="#sec-report"') && /\.skip:focus-visible/.test(wbh)
-        && /id="sec-report" tabindex="-1"/.test(wbh),
-      '键盘用户需能跳过待办行按钮直达报告区');
+    // 原「跳到报告区」skip link 的前提消失了：汇报已是独立视图，左栏一键可达，
+    // 不再有「大量待办行内按钮把报告区挤出 Tab 序」的问题，故移除。
+    check('skip link 已移除（汇报为独立视图，左栏直达取代）', !wbh.includes('class="skip"'));
   }
 
   console.log('— 报告源：zcode（db.sqlite 适配器，fixture） —');
@@ -1535,6 +1534,19 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('左栏六个视图项（不再靠跳页切换）',
       ['todos', 'report', 'overview', 'traffic', 'test', 'providers']
         .every((v) => idxHtml.includes(`data-view="${v}"`)));
+    // -- 左栏瘦身：塞不下的功能搬进主区（竖排的另一个来源） --
+    check('左栏不再有横向按钮组与协议串',
+      !idxHtml.includes('id="railMonBtns"') && !idxHtml.includes('id="monRailMsg"') && !idxHtml.includes('class="rail-proto"'));
+    check('整机同切搬到总览页', idxHtml.includes('id="monWholeRow"'));
+    // 必须落在 providers 视图内部：从 <section class="view" data-view="providers"> 到下一个
+    // view/main 边界之间（导航栏里的 data-view="providers" 是按钮，不能算数）
+    const provViewHtml = /<section class="view"[^>]*data-view="providers">([\s\S]*?)(?=<section class="view"|<\/main>)/.exec(idxHtml)?.[1] ?? '';
+    check('重启/停止搬到配置页', provViewHtml.includes('id="btnRestart"') && provViewHtml.includes('id="btnStop"'),
+      provViewHtml.length ? `providers 视图 ${provViewHtml.length} 字符` : '未找到 providers 视图');
+    check('skip link 已移除（汇报为独立视图）', !idxHtml.includes('class="skip"'));
+    // 截断必须仍可辨识：显示器/输入源名由用户自填，按钮被省略号截断时要留 title 全文
+    check('整机同切按钮带 title 全文（省略号截断后可辨识）',
+      /data-mminput[\s\S]{0,240}title=/.test(idxHtml));
     const wb = await fetch(`${GW}/workbench`);
     const wbText = await wb.text();
     check('/workbench → 200 含「工作台」', wb.status === 200 && wbText.includes('工作台'), `got ${wb.status}`);
