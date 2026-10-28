@@ -32,6 +32,11 @@ fs.writeFileSync(path.join(tmp, 'providers.json'), JSON.stringify({
     { id: 'mock-kimi', name: 'MockKimi', baseUrl: `http://127.0.0.1:${MOCK_PORT}/kimi`, protocol: 'openai', auth: { type: 'static-token', token: 'mock-token-kimi' }, models: { source: 'api' } },
     // z.ai 域名变体：GLM Coding Plan 的 api.z.ai 若配成 openai 协议端点，同样应命中智谱方言
     { id: 'mock-zai', name: 'MockZAI', baseUrl: `http://127.0.0.1:${MOCK_PORT}/z.ai`, protocol: 'openai', auth: { type: 'static-token', token: 'mock-token-zhipu' }, models: { source: 'api' } },
+    // 双入口：默认 openai；endpoints 按入站协议直通到对应 mock 路径（同一 token）
+    { id: 'mock-dual', name: 'MockDual', baseUrl: `http://127.0.0.1:${MOCK_PORT}/oai`, protocol: 'openai',
+      endpoints: { openai: `http://127.0.0.1:${MOCK_PORT}/oai`, anthropic: `http://127.0.0.1:${MOCK_PORT}/anth` },
+      auth: { type: 'static-token', token: 'mock-token-dual' },
+      models: { source: 'static', list: [{ id: 'dual-model' }] } },
   ],
   routing: { defaultProvider: 'mock-oai' },
   // 工作台：报告生成用的模型（Task 8 消费；此处锁定配置透传）
@@ -125,7 +130,7 @@ try {
   {
     const h = await (await fetch(`${GW}/healthz`)).json();
     check('healthz ok', h.ok === true, JSON.stringify(h.providers?.map((p) => p.auth)));
-    check('healthz 五个 provider', h.providers?.length === 5);
+    check('healthz 六个 provider', h.providers?.length === 6);
     check('healthz 标记客户端鉴权已启用', h.authRequired === true);
   }
   {
@@ -143,7 +148,7 @@ try {
   }
   {
     const c = await (await fetch(`${GW}/admin/config`)).json();
-    check('/admin/config 返回网关 token', c.clientToken === TOKEN && c.providers?.length === 5);
+    check('/admin/config 返回网关 token', c.clientToken === TOKEN && c.providers?.length === 6);
     const html = await (await fetch(`${GW}/`)).text();
     check('管理台页面可访问', html.includes('统一订阅网关'));
   }
@@ -306,6 +311,34 @@ try {
     check('③ 智谱方言流式: message_delta 的 input_tokens 落桶', (b2?.tin ?? 0) >= (b1?.tin ?? 0) + 11, `tin ${b1?.tin ?? '?'} → ${b2?.tin ?? '?'}`);
   }
 
+  console.log('— ③b 双入口 endpoints：按入站协议直通 —');
+  {
+    // Anthropic 入站 → endpoints.anthropic → /anth 直通（ECHO 带 system 键）
+    const j = await (await post('/v1/messages', {
+      model: 'mock-dual/dual-model', max_tokens: 64,
+      system: 'dual-sys',
+      messages: [{ role: 'user', content: 'hi-dual-anth' }],
+    })).json();
+    check('双入口 anth 入站: 响应为 anthropic message', j.type === 'message' && j.role === 'assistant');
+    const echo = parseEcho(j.content?.[0]?.text ?? j.content);
+    check('双入口 anth 入站: 直通到 anthropic 上游（ECHO 含 system）', echo.system === 'dual-sys' && echo.max_tokens === 64, JSON.stringify(echo).slice(0, 160));
+    check('双入口 anth 入站: 无翻译噪声（保留 system 字符串）', typeof echo.system === 'string');
+  }
+  {
+    // OpenAI 入站 → endpoints.openai → /oai 直通（ECHO 无 system 键）
+    const j = await (await post('/v1/chat/completions', {
+      model: 'mock-dual/dual-model',
+      messages: [{ role: 'system', content: 'dual-oai-sys' }, { role: 'user', content: 'hi-dual-oai' }],
+    })).json();
+    check('双入口 oai 入站: 响应为 chat.completion', j.object === 'chat.completion');
+    const echo = parseEcho(j.choices?.[0]?.message?.content);
+    check('双入口 oai 入站: 直通到 openai 上游（ECHO 无 system 顶层键）', !('system' in echo) && echo.messages?.some((m) => m.role === 'system' && m.content === 'dual-oai-sys'), JSON.stringify(echo).slice(0, 160));
+  }
+  {
+    // 仅配 anthropic 入口、默认 protocol=openai：OpenAI 入站仍走 baseUrl（翻译到 anth 不应发生——base 仍是 oai）
+    // 反向：仅有 endpoints.openai、默认 anthropic 的情况由 mock-anth 覆盖既有翻译路径，此处不重复。
+  }
+
   console.log('— ④ openai 客户端 → anthropic 上游（反向翻译） —');
   {
     const j = await (await post('/v1/chat/completions', {
@@ -444,8 +477,9 @@ try {
       return (b?.cread ?? 0) >= 6 && (b?.cwrite ?? 0) >= 2;
     })(), JSON.stringify(s.models.find((m) => m.id === 'mock-anth:claude-mock')));
     // protocols 契约：pid → 上游协议（供前端命中率分母按协议分支）
-    check('stats.protocols 契约（5 键）', s.protocols?.['mock-oai'] === 'openai' && s.protocols?.['mock-anth'] === 'anthropic'
-      && s.protocols?.['mock-kimi'] === 'openai' && s.protocols?.['mock-zhipu'] === 'openai' && s.protocols?.['mock-zai'] === 'openai' && Object.keys(s.protocols).length === 5, JSON.stringify(s.protocols));
+    check('stats.protocols 契约（6 键）', s.protocols?.['mock-oai'] === 'openai' && s.protocols?.['mock-anth'] === 'anthropic'
+      && s.protocols?.['mock-kimi'] === 'openai' && s.protocols?.['mock-zhipu'] === 'openai' && s.protocols?.['mock-zai'] === 'openai'
+      && s.protocols?.['mock-dual'] === 'openai' && Object.keys(s.protocols).length === 6, JSON.stringify(s.protocols));
     check('openai 桶缓存读落桶（P3 翻译路径）', (s.models.find((m) => m.id === 'mock-oai:mock-pro')?.cread ?? 0) >= 5, JSON.stringify(s.models.find((m) => m.id === 'mock-oai:mock-pro')?.cread));
     const kimiBucket = s.models.find((m) => m.id === 'mock-kimi:kimi-mock');
     const zhipuBucket = s.models.find((m) => m.id === 'mock-zhipu:glm-mock');
@@ -474,7 +508,7 @@ try {
   console.log('— 供应商管理（/admin/providers CRUD + 热生效） —');
   {
     const v = await (await fetch(`${GW}/admin/providers`)).json();
-    check('GET 视图含五个 provider 与默认上游', v.providers?.length === 5 && v.routing?.defaultProvider === 'mock-oai', JSON.stringify(v.routing));
+    check('GET 视图含六个 provider 与默认上游', v.providers?.length === 6 && v.routing?.defaultProvider === 'mock-oai', JSON.stringify(v.routing));
     check('GET 视图不回显明文 token（只给掩码）', !JSON.stringify(v).includes('mock-token-oai') && v.providers[0].auth?.tokenSet === true && Boolean(v.providers[0].auth?.tokenMask));
 
     // undici 的 fetch 不允许改 Host 头（会被静默丢弃），用原生 http.request 验证回环校验
@@ -559,11 +593,12 @@ try {
     check('删除后视图不含 added', !v3.providers.some((p) => p.id === 'added'));
     const del404 = await fetch(`${GW}/admin/providers/added`, { method: 'DELETE', headers: authHeaders });
     check('删除不存在的 provider → 404', del404.status === 404);
-    // 删到只剩一个时拒绝（providers 不允许为空）：依次删 mock-kimi、mock-zhipu、mock-zai、mock-anth
+    // 删到只剩一个时拒绝（providers 不允许为空）：依次删 mock-kimi、mock-zhipu、mock-zai、mock-anth、mock-dual
     await fetch(`${GW}/admin/providers/mock-kimi`, { method: 'DELETE', headers: authHeaders });
     await fetch(`${GW}/admin/providers/mock-zhipu`, { method: 'DELETE', headers: authHeaders });
     await fetch(`${GW}/admin/providers/mock-zai`, { method: 'DELETE', headers: authHeaders });
     await fetch(`${GW}/admin/providers/mock-anth`, { method: 'DELETE', headers: authHeaders });
+    await fetch(`${GW}/admin/providers/mock-dual`, { method: 'DELETE', headers: authHeaders });
     const delLast = await fetch(`${GW}/admin/providers/mock-oai`, { method: 'DELETE', headers: authHeaders });
     check('最后一个 provider 拒绝删除 → 400', delLast.status === 400);
     const d4 = await (await fetch(`${GW}/v1/models`, { headers: { authorization: `Bearer ${TOKEN}` } })).json();
