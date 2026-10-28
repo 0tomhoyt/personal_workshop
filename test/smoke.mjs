@@ -1415,6 +1415,23 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('GET 状态：未命名时输入显示编号 VCP 15', st.monitors.every((m) => m.ok && m.input === 15 && m.inputLabel === '输入 15'), JSON.stringify(st.monitors.map((m) => [m.input, m.inputLabel])));
     check('GET 状态：未命名时屏显示 UUID 前 8 位', st.monitors.every((m) => m.id === m.uuid.slice(0, 8).toUpperCase() && m.label === m.id), JSON.stringify(st.monitors.map((m) => [m.id, m.label])));
     check('GET 状态：inputs 按配置顺序回传且未命名', st.inputs?.length === 2 && st.inputs[0].value === 15 && st.inputs[1].value === 21 && st.inputs.every((i) => i.label === `输入 ${i.value}`), JSON.stringify(st.inputs));
+
+    // 系统级热键（monitors.hotkeys）：配置层解析（normalizeMonitors）+ 状态透出。
+    // 记号规则：小写、加号组合（f13 / cmd+opt+w），大写/未知记号/非法 input 静默跳过；
+    // 未写 hotkeys 节 → 播种默认 F13→输入15 / F14→输入21；显式空数组 = 不绑。
+    check('GET 状态：hotkeys 透出（配置未写 → 默认 f13/f14 播种）', Array.isArray(st.hotkeys) && st.hotkeys.length === 2 && st.hotkeys[0].input === 15 && st.hotkeys[0].key === 'f13' && st.hotkeys[1].input === 21 && st.hotkeys[1].key === 'f14', JSON.stringify(st.hotkeys));
+    {
+      const cfgMod = await import(path.join(ROOT, 'lib/config.mjs') + '?hk1');
+      const norm = cfgMod.normalizeMonitors;
+      const parsed = norm({ inputs: [15, 21], hotkeys: [
+        { input: 15, key: 'f13' }, { input: 21, key: 'BAD KEY!' }, { input: 999, key: 'f14' },
+        { input: 15, key: 'f15' }, { input: 21, key: 'cmd+opt+w' }, 'garbage',
+      ] });
+      check('hotkeys 解析：合法条目保留，非法 key/input、同 input 重复静默跳过', parsed.hotkeys.length === 2 && parsed.hotkeys[0].input === 15 && parsed.hotkeys[0].key === 'f13' && parsed.hotkeys[1].key === 'cmd+opt+w', JSON.stringify(parsed.hotkeys));
+      check('hotkeys 解析：显式空数组 = 不绑热键，缺省才播种默认', norm({ inputs: [15, 21], hotkeys: [] }).hotkeys.length === 0 && norm({ inputs: [15, 21] }).hotkeys.length === 2);
+      check('hotkeys 解析：同一 key 绑多个 input 时取首个', norm({ inputs: [15, 21], hotkeys: [{ input: 15, key: 'f13' }, { input: 21, key: 'f13' }] }).hotkeys.length === 1);
+    }
+
     const st2 = await (await fetch(`${GW}/admin/monitors`)).json();
     check('短时二次 GET 命中缓存（cached:true 且 at 相同）', st2.cached === true && st2.at === st.at);
     const fresh = await (await fetch(`${GW}/admin/monitors?refresh=1`)).json();
