@@ -1629,6 +1629,11 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       && /hashchange[\s\S]{0,500}applyStatsHash\(\)/.test(idxHtml)
       && /^applyStatsHash\(\);/m.test(idxHtml));
     check('数字键按左栏顺序映射六个视图', /const n = Number\(e\.key\)[\s\S]{0,200}n <= VIEW_IDS\.length/.test(idxHtml));
+    // 三个全局快捷键（数字键 / 的聚焦、Esc 清空）守卫口径必须一致：IME 组合期一律不抢。
+    // 此前数字键漏了 isComposing——拼音候选框里敲数字会直接跳视图。
+    check('数字键快捷键有 IME 组合守卫（与其他快捷键同口径）',
+      /addEventListener\('keydown',[\s\S]{0,400}e\.isComposing\) return;[\s\S]{0,300}VIEW_IDS\[n - 1\]/.test(idxHtml),
+      '数字键 keydown 缺 isComposing 守卫');
     // -- 按视图轮询 + 启动预取 + 徽标语义 --
     check('轮询按视图分支：统计与日志不再无条件拉',
       /if \(curView === 'overview' \|\| curView === 'traffic'\)/.test(idxHtml)

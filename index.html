@@ -741,8 +741,10 @@ document.querySelectorAll('[data-group-toggle]').forEach((head) => {
 });
 
 addEventListener('keydown', (e) => {
-  // 输入控件里不抢按键；仅无修饰键的数字 1-6 切视图（顺序同左栏从上到下）
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  // 输入控件里不抢按键；仅无修饰键的数字 1-6 切视图（顺序同左栏从上到下）。
+  // IME 组合期同理不抢：拼音/候选框里敲数字（keydown 带着 isComposing）不该跳视图，
+  // 与 / 聚焦、Esc 清空两个快捷键的守卫口径一致。
+  if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   const n = Number(e.key);
