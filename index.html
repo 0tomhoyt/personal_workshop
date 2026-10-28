@@ -342,7 +342,7 @@
     </div>
     <div class="rail-rule"></div>
     <div class="rail-tel">
-      <div class="statline"><span class="dot" id="dot"></span><span id="sState">…</span><span class="dim">·</span><button id="themeBtn" style="padding:3px 9px;font-size:12px" title="切换主题">☾</button></div>
+      <div class="statline"><span class="dot" id="dot"></span><span id="sState">…</span><span class="dim">·</span><button id="themeBtn" class="rail-theme" title="切换主题">☾</button></div>
       <div class="statline dim">运行 <span class="mono" id="sUptime">…</span><span class="dim">·</span>鉴权 <span id="sAuth">…</span></div>
       <div class="statline dim">今日 <span class="mono" id="railTodayReq">–</span><span class="dim">次</span><span class="dim">·</span>上游 <span class="mono" id="railProvN">–</span></div>
       <!-- 待办遥测（原工作台左栏）：Task 4 重建左栏时并入徽标，本任务先保持行为等价 -->
@@ -354,12 +354,22 @@
       </div>
     </div>
     <nav class="views" id="views">
-      <button class="viewbtn active" data-view="todos"><span class="vname">待办</span></button>
-      <button class="viewbtn" data-view="report"><span class="vname">汇报</span></button>
-      <button class="viewbtn" data-view="overview"><span class="vname">总览</span></button>
-      <button class="viewbtn" data-view="traffic"><span class="vname">统计</span></button>
-      <button class="viewbtn" data-view="test"><span class="vname">诊断</span></button>
-      <button class="viewbtn" data-view="providers"><span class="vname">配置</span></button>
+      <div class="navgroup" data-group="workbench">
+        <button class="grouphead" data-group-toggle="workbench" aria-expanded="true" aria-controls="sub-workbench"><span class="caret">▾</span><span class="gname">工作台</span></button>
+        <div class="groupsub" id="sub-workbench">
+          <a class="viewbtn" href="#todos"><span class="vname">待办</span><span class="vbadge" id="vbTodoN" hidden></span></a>
+          <a class="viewbtn" href="#report"><span class="vname">汇报</span><span class="vbadge" id="vbReport" hidden></span></a>
+        </div>
+      </div>
+      <div class="navgroup" data-group="console">
+        <button class="grouphead" data-group-toggle="console" aria-expanded="false" aria-controls="sub-console"><span class="caret">▸</span><span class="gname">管理台</span><span class="vbadge red" id="vbConsole" hidden></span></button>
+        <div class="groupsub" id="sub-console">
+          <a class="viewbtn" href="#overview"><span class="vname">总览</span></a>
+          <a class="viewbtn" href="#traffic"><span class="vname">统计</span></a>
+          <a class="viewbtn" href="#test"><span class="vname">诊断</span><span class="vbadge" id="vbLog" hidden></span></a>
+          <a class="viewbtn" href="#providers"><span class="vname">配置</span></a>
+        </div>
+      </div>
     </nav>
 
   </aside>
@@ -591,7 +601,7 @@
     <section class="sec">
       <div class="sechead">
         <span class="idx">01</span><h2>待办事项</h2><span class="en">Todos</span><span class="spacer"></span>
-        <span class="note">人与 agent 共用 · agent 经 <code>/v1/todos</code> 读写 · 标题一行可扫、agent 详情 ≤300 字</span>
+        <span class="note">人与 agent 共用 · agent 经 <code>/v1/todos</code> 读写 · 标题一行可扫、agent 详情 ≤300 字 · 今日完成 <span id="todoTodayDone" class="mono">–</span></span>
       </div>
       <div class="card">
         <div class="todo-add">
@@ -676,39 +686,95 @@ const fmtDur = (s) => s >= 3600 ? `${s/3600|0}时${s%3600/60|0}分` : s >= 60 ? 
 let models = [];
 let gwToken = null;
 
-/* ---- 视图切换：页签 + hash 深链 + localStorage 记忆 + 数字键 1-4 ------- */
+/* ---- 视图切换：两级分组导航 + hash 深链 + localStorage 记忆 + 数字键 1-6 ----
+   左栏是两组可折叠分组（工作台 / 管理台），子项是 <a href="#v"> 真链接——
+   可中键新开、可复制、Tab 可达；视图切换由 hashchange 驱动，不写 JS 导航。 */
 const VIEW_IDS = ['todos', 'report', 'overview', 'traffic', 'test', 'providers'];
-// 旧版 hash 深链兼容：性能已并入「统计」、日志已并入「诊断」
+// 旧版 hash 深链兼容：性能已并入「统计」、日志已并入「诊断」、工作台已并入「待办」
 const VIEW_ALIASES = { latency: 'traffic', log: 'test', stats: 'traffic', workbench: 'todos' };
+// 视图 → 所属分组（用于「当前视图的组自动展开」）
+const VIEW_GROUP = { todos: 'workbench', report: 'workbench', overview: 'console', traffic: 'console', test: 'console', providers: 'console' };
+const GROUPS_KEY = 'gw-groups';
 let curView = 'todos';
+
+// 分组折叠状态：默认工作台展开、管理台收起（用户手点后记住）
+function groupState() {
+  try { return { workbench: true, console: false, ...JSON.parse(localStorage.getItem(GROUPS_KEY) || '{}') }; }
+  catch { return { workbench: true, console: false }; }
+}
+function applyGroup(group, open) {
+  const g = document.querySelector(`.navgroup[data-group="${group}"]`);
+  if (!g) return;
+  g.classList.toggle('open', open);
+  const head = g.querySelector('.grouphead');
+  if (head) {
+    head.setAttribute('aria-expanded', String(open));
+    const caret = head.querySelector('.caret');
+    if (caret) caret.textContent = open ? '▾' : '▸';
+  }
+}
+function setGroup(group, open) {
+  applyGroup(group, open);
+  try {
+    const st = groupState();
+    st[group] = open;
+    localStorage.setItem(GROUPS_KEY, JSON.stringify(st));
+  } catch {}
+}
+
 function setView(v, { push = true } = {}) {
   v = VIEW_ALIASES[v] || v;
   if (!VIEW_IDS.includes(v)) v = 'todos';
   curView = v;
-  document.querySelectorAll('.viewbtn').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
+  // 当前项高亮：导航项是 <a href="#v">，按 href 匹配而不是 data-view
+  document.querySelectorAll('.viewbtn').forEach((b) => b.classList.toggle('active', b.getAttribute('href') === '#' + v));
   document.querySelectorAll('.view').forEach((s) => s.classList.toggle('active', s.dataset.view === v));
+  // 当前视图所属组强制展开：进了 #traffic 却看到组还收着，会让人以为走错页。
+  // 只在切到该视图时展开一次，用户随后手动收起则尊重手动操作。
+  const g = VIEW_GROUP[v];
+  if (g && !document.querySelector(`.navgroup[data-group="${g}"]`)?.classList.contains('open')) setGroup(g, true);
   try { localStorage.setItem('gw-view', v); } catch {}
   if (push && location.hash !== '#' + v) history.replaceState(null, '', '#' + v);
 }
-document.querySelectorAll('.viewbtn').forEach((b) => {
-  b.addEventListener('click', () => setView(b.dataset.view));
+
+// 组头点击：只折叠/展开，不导航
+document.querySelectorAll('[data-group-toggle]').forEach((head) => {
+  head.addEventListener('click', () => {
+    const group = head.dataset.groupToggle;
+    setGroup(group, !document.querySelector(`.navgroup[data-group="${group}"]`)?.classList.contains('open'));
+  });
 });
+
 addEventListener('keydown', (e) => {
-  // 输入控件里不抢按键；仅无修饰键的数字 1-6 切视图
+  // 输入控件里不抢按键；仅无修饰键的数字 1-6 切视图（顺序同左栏从上到下）
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   const n = Number(e.key);
   if (n >= 1 && n <= VIEW_IDS.length) setView(VIEW_IDS[n - 1]);
 });
+
 (function initView() {
-  // 深链优先（#traffic、#latency、#stats-7 等历史形态落到统计页），否则记忆的上次视图
+  // 分组：先按记忆还原，setView 再按当前视图强制展开所属组
+  const st = groupState();
+  applyGroup('workbench', st.workbench !== false);
+  applyGroup('console', st.console === true);
+
+  // /workbench 是旧工作台链接：强制落待办，优先于 gw-view 记忆——旧书签的语义是
+  // 「我要工作台」，落到上次看的统计页就是违约。落地后把地址改写成 /#todos。
+  const forced = location.pathname === '/workbench' ? 'todos' : null;
   const h = location.hash.replace(/^#/, '');
-  if (h.startsWith('stats-')) { setView('traffic', { push: false }); return; }
   let saved = null;
   try { saved = localStorage.getItem('gw-view'); } catch {}
   const norm = (v) => VIEW_ALIASES[v] || v;
-  setView(VIEW_IDS.includes(norm(h)) ? h : (VIEW_IDS.includes(norm(saved)) ? saved : 'todos'), { push: false });
+  if (h.startsWith('stats-')) { setView('traffic', { push: false }); }
+  else {
+    const start = forced
+      || (VIEW_IDS.includes(norm(h)) ? h : null)
+      || (VIEW_IDS.includes(norm(saved)) ? saved : 'todos');
+    setView(norm(start), { push: false });
+  }
+  if (forced) history.replaceState(null, '', '/#todos');
 })();
 // hash 变化 → 切视图：页内导航是真链接 <a href="#v">，靠这个监听生效；
 // 也覆盖「在已打开的页面里粘贴 #traffic 再回车」的场景（不会重载页面）
@@ -803,7 +869,7 @@ function render(h) {
   // 异常 banner：给出对应订阅的修复动作；通道栏总览徽标同步异常数
   const bad = provs.filter((p) => !(p.auth?.ok ?? p.auth?.jwt?.ok));
   const banner = $('providerBanner');
-  setBadge('vbOverview', bad.length ? String(bad.length) : null, bad.length ? 'red' : '');
+  setBadge('vbConsole', bad.length ? String(bad.length) : null, bad.length ? 'red' : '');
   if (bad.length) {
     const items = bad.map((p) => p.auth?.jwt
       ? `<b>${esc(p.name || p.id)}</b>：${esc(p.auth.jwt.error || 'JWT 不可用')} —— 打开 VSCode 的 <b>CANNWork 扩展</b>重新登录即可，无需重启网关`
@@ -2027,12 +2093,17 @@ function renderTodos({ skipDraftKey } = {}) {
   renderRailStats();
 }
 
-// 通道栏遥测（全量口径，不受筛选影响）；编辑中静默刷新时单独调用，不动列表 DOM
+// 待办计数（全量口径，不受筛选影响）：
+//   未完成数 = pending + in_progress → 左栏「待办」徽标；今日完成 → 待办页说明行
+// 编辑中静默刷新时单独调用，不动列表 DOM
 function renderRailStats() {
-  $('railTodo').textContent = String(allTodos.filter((t) => t.status === 'pending').length);
-  $('railDoing').textContent = String(allTodos.filter((t) => t.status === 'in_progress').length);
+  const pending = allTodos.filter((t) => t.status === 'pending').length;
+  const doing = allTodos.filter((t) => t.status === 'in_progress').length;
+  setBadge('vbTodoN', pending + doing ? String(pending + doing) : null, 'amber');
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-  $('railDone').textContent = String(allTodos.filter((t) => t.status === 'done' && (t.completed_at ?? 0) >= todayStart.getTime()).length);
+  const doneToday = allTodos.filter((t) => t.status === 'done' && (t.completed_at ?? 0) >= todayStart.getTime()).length;
+  const el = $('todoTodayDone');
+  if (el) el.textContent = String(doneToday);
   updateClearDone();
 }
 
@@ -2409,7 +2480,7 @@ async function refreshHistory() {
     const j = await r.json();
     const rows = j.reports || [];
     $('rhistCnt').textContent = rows.length ? String(rows.length) : '';
-    $('railReports').textContent = String(rows.length);
+    setBadge('vbReport', rows.length ? String(rows.length) : null, '');
     // 重绘 tbody 前后保留历史表滚动位置（focus 静默刷新不该让阅读位置漂移）
     const sc = document.querySelector('.rhist .scroll');
     const keepScroll = sc ? sc.scrollTop : 0;

@@ -1547,6 +1547,28 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     // 截断必须仍可辨识：显示器/输入源名由用户自填，按钮被省略号截断时要留 title 全文
     check('整机同切按钮带 title 全文（省略号截断后可辨识）',
       /data-mminput[\s\S]{0,240}title=/.test(idxHtml));
+    // -- 左栏两级导航 + 竖排修复 --
+    check('左栏两级：两个组头 + 六个子项', (idxHtml.match(/class="navgroup"/g) || []).length === 2
+      && ['todos', 'report', 'overview', 'traffic', 'test', 'providers'].every((v) => idxHtml.includes(`href="#${v}"`)));
+    const navHrefs = [...idxHtml.matchAll(/<a class="viewbtn" href="#([a-z]+)"/g)].map((m) => m[1]);
+    check('导航链接与视图双向一致（无孤儿）',
+      navHrefs.length === 6 && navHrefs.every((v) => idxHtml.includes(`data-view="${v}"`)), navHrefs.join(','));
+    check('导航是真链接（不用 button 切视图）', !/class="viewbtn"[^>]*data-view/.test(idxHtml));
+    // 禁 break-all：只认「规则里真的用了」，注释里提到这个词（作为禁令说明）不算
+    const cssRulesOnly = themeCssText.replace(/\/\*[\s\S]*?\*\//g, '');
+    check('左栏单行契约在 theme.css（单行 + 省略号 + 禁 break-all）',
+      /\.viewbtn \.vname[^}]*white-space:\s*nowrap[^}]*text-overflow:\s*ellipsis/.test(themeCssText)
+      && !cssRulesOnly.includes('break-all'));
+    // 遥测行契约落在 .statline 上（每行都是 .statline）：nowrap + 省略号
+    check('左栏遥测行同样单行省略',
+      /\.statline \{[^}]*white-space:\s*nowrap/.test(themeCssText)
+      && /\.statline > span \{[^}]*text-overflow:\s*ellipsis/.test(themeCssText));
+    check('左栏无英文小标（.ven 已移除）', !idxHtml.includes('class="ven"'));
+    check('窄屏顶栏：分组与子项均 nowrap，容器可横向滚动',
+      /@media \(max-width: 900px\)[\s\S]*\.views \{[^}]*overflow-x: auto/.test(themeCssText)
+      && /@media \(max-width: 900px\)[\s\S]*\.viewbtn[^}]*white-space: nowrap/.test(themeCssText));
+    check('/workbench 强制落 todos（优先于 gw-view 记忆）', idxHtml.includes("location.pathname === '/workbench'"));
+    check('数字键按左栏顺序映射六个视图', /const n = Number\(e\.key\)[\s\S]{0,200}n <= VIEW_IDS\.length/.test(idxHtml));
     const wb = await fetch(`${GW}/workbench`);
     const wbText = await wb.text();
     check('/workbench → 200 含「工作台」', wb.status === 200 && wbText.includes('工作台'), `got ${wb.status}`);

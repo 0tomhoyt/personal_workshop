@@ -99,8 +99,11 @@ body::after {
   background: linear-gradient(90deg, var(--amber), rgba(var(--amber-rgb), .25) 40%, transparent);
 }
 /* 遥测状态簇，常驻通道栏 */
-.rail-tel { display: flex; flex-direction: column; gap: 7px; font-size: 12px; padding: 2px 4px 0; }
-.statline { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.rail-tel { display: flex; flex-direction: column; gap: 7px; font-size: 12px; padding: 2px 4px 0; min-width: 0; }
+/* 遥测行同样守单行契约：超长整段省略，全文留在 title */
+.statline { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; white-space: nowrap; }
+.statline > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rail-theme { flex: none; margin-left: auto; padding: 3px 9px; font-size: 12px; }
 .statline .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 /* 状态灯：运行中带雷达扩散环 */
@@ -115,32 +118,60 @@ body::after {
 .dot.bad::after { color: var(--red); animation-duration: 1.4s; }
 @keyframes sweep { 0% { transform: scale(.45); opacity: .9; } 75% { transform: scale(1.6); opacity: 0; } 100% { opacity: 0; } }
 
-/* ---- 视图页签（通道栏导航；跨页链接用 <a class="viewbtn">）------------- */
-.views { margin-top: 14px; display: flex; flex-direction: column; gap: 2px; }
+/* ---- 左栏导航：两级分组（工作台 / 管理台）-----------------------------
+   布局契约（改左栏前三思，违反必出中文逐字竖排）：
+   1. 左栏内不放横向并排的多个文字控件；要并列就纵向一行一项；
+   2. 每行单行：min-width:0 + nowrap + overflow:hidden + text-overflow:ellipsis；
+   3. 禁用 word-break: break-all（中文会被逐字折断成竖排）；
+   4. 拥挤不靠缩字号解决，靠省略号。 */
+.views { margin-top: 14px; display: flex; flex-direction: column; gap: 4px; }
+
+/* 组头：工作台 / 管理台，点它只折叠，不导航 */
+.navgroup { min-width: 0; }
+.grouphead {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0;
+  padding: 7px 8px; border: none; border-radius: 7px; background: transparent;
+  color: var(--dim); cursor: pointer; text-align: left;
+  transition: color .15s, background-color .15s;
+}
+.grouphead:hover { color: var(--ink); background: var(--row-hover); }
+.grouphead .caret { flex: none; width: 10px; font-size: 9px; color: var(--faint); }
+.grouphead .gname {
+  flex: 1; min-width: 0;
+  font: 600 14.5px var(--serif); letter-spacing: .08em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* 子项容器：默认收起；展开时左侧一条导轨线表达从属 */
+.groupsub { display: none; }
+.navgroup.open .groupsub {
+  display: flex; flex-direction: column; gap: 2px;
+  margin: 2px 0 6px 9px; padding-left: 12px;
+  border-left: 1px solid var(--line-soft);
+}
+
 .viewbtn {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 10px; border-radius: 7px; border: 1px solid transparent;
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 6px 10px; border-radius: 7px; border: 1px solid transparent;
   background: transparent; color: var(--dim); cursor: pointer; text-align: left;
   font: 500 13px var(--sans); letter-spacing: .02em;
   text-decoration: none;
   transition: color .15s, background-color .15s, border-color .15s;
   position: relative;
 }
-.viewbtn .idx {
-  font: 600 10px var(--mono); color: var(--faint); letter-spacing: .1em;
-  min-width: 16px;
+.viewbtn .vname {
+  flex: 1; min-width: 0;
+  font-family: var(--serif); font-weight: 600; font-size: 13.5px; letter-spacing: .06em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.viewbtn .vname { flex: 1; font-family: var(--serif); font-weight: 600; font-size: 14.5px; letter-spacing: .08em; }
-.viewbtn .ven { font: 500 8.5px var(--mono); color: var(--faint); letter-spacing: .18em; text-transform: uppercase; }
 .viewbtn:hover { color: var(--ink); background: var(--row-hover); }
 .viewbtn.active {
   color: var(--amber-hi); background: var(--amber-dim);
   border-color: rgba(var(--amber-rgb), .35);
 }
-.viewbtn.active .idx { color: var(--amber); }
 /* 活动视图左侧的琥珀游标 */
 .viewbtn.active::before {
-  content: ""; position: absolute; left: -22px; top: 18%; bottom: 18%;
+  content: ""; position: absolute; left: -13px; top: 18%; bottom: 18%;
   width: 3px; border-radius: 99px;
   background: linear-gradient(180deg, var(--amber-hi), var(--amber));
   box-shadow: 0 0 8px rgba(var(--amber-rgb), .55);
@@ -153,13 +184,6 @@ body::after {
 }
 .vbadge.red { color: var(--red); border-color: rgba(var(--red-rgb), .5); background: rgba(var(--red-rgb), .08); }
 .vbadge.amber { color: var(--amber-hi); border-color: rgba(var(--amber-rgb), .5); background: var(--amber-dim); }
-
-/* 通道栏底部：服务控制 + 主题 */
-.rail-foot { margin-top: auto; padding-top: 14px; display: flex; flex-direction: column; gap: 8px; }
-.rail-foot .sub { font: 500 9px var(--mono); color: var(--faint); letter-spacing: .24em; text-transform: uppercase; padding: 0 4px 2px; }
-.rail-controls { display: flex; gap: 7px; }
-.rail-controls button { flex: 1; font-size: 11.5px; padding: 6px 8px; }
-.rail-proto { font: 10.5px/1.6 var(--mono); color: var(--faint); padding: 4px 4px 0; word-break: break-all; }
 
 /* ---- 右侧主区 --------------------------------------------------------- */
 .main { padding: 30px 28px 56px 34px; min-width: 0; }
@@ -273,11 +297,13 @@ code { background: var(--inset); border: 1px solid var(--line-soft); border-radi
     position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line-soft);
     padding: 18px 20px 12px;
   }
-  .views { flex-direction: row; overflow-x: auto; margin-top: 10px; padding-bottom: 4px; }
-  .viewbtn { white-space: nowrap; padding: 6px 12px; }
+  /* 窄屏：分组与子项横排，容器横向滚动，绝不换行 */
+  .views { flex-direction: row; align-items: center; gap: 10px; overflow-x: auto; margin-top: 10px; padding-bottom: 4px; }
+  .navgroup { display: flex; align-items: center; gap: 4px; flex: none; }
+  .groupsub { display: flex !important; flex-direction: row; gap: 2px; margin: 0; padding-left: 0; border-left: none; }
+  .grouphead { width: auto; flex: none; padding: 6px 8px; }
+  .grouphead .caret { display: none; }
+  .viewbtn { white-space: nowrap; padding: 6px 12px; flex: none; }
   .viewbtn.active::before { display: none; }
-  .viewbtn .ven { display: none; }
-  .rail-foot { margin-top: 10px; flex-direction: row; align-items: center; flex-wrap: wrap; }
-  .rail-foot .sub { display: none; }
   .main { padding: 20px 20px 48px; }
 }
