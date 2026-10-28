@@ -266,14 +266,6 @@
   }
   .skip:focus-visible { opacity: 1; pointer-events: auto; }
 
-  /* ---- 通道栏统计：两列网格 + 不拆字 ------------------------------------- */
-  .rail-stats {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px;
-    font-size: 12px; color: var(--dim); padding: 2px 4px 0;
-  }
-  .rail-stats .rs { white-space: nowrap; }
-  .rail-stats .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-
   /* ---- 待办筛选行：搜索/计数一行 + 每组筛选各占一行（标签不与自己的 chip 分家）-- */
   .tfilter { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; font: 11.5px var(--mono); }
   .tfilter .frow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -345,13 +337,6 @@
       <div class="statline"><span class="dot" id="dot"></span><span id="sState">…</span><span class="dim">·</span><button id="themeBtn" class="rail-theme" title="切换主题">☾</button></div>
       <div class="statline dim">运行 <span class="mono" id="sUptime">…</span><span class="dim">·</span>鉴权 <span id="sAuth">…</span></div>
       <div class="statline dim">今日 <span class="mono" id="railTodayReq">–</span><span class="dim">次</span><span class="dim">·</span>上游 <span class="mono" id="railProvN">–</span></div>
-      <!-- 待办遥测（原工作台左栏）：Task 4 重建左栏时并入徽标，本任务先保持行为等价 -->
-      <div class="rail-stats">
-        <div class="rs">待办 <span class="mono" id="railTodo">–</span></div>
-        <div class="rs">进行 <span class="mono" id="railDoing">–</span></div>
-        <div class="rs">今日完成 <span class="mono" id="railDone">–</span></div>
-        <div class="rs">汇报 <span class="mono" id="railReports">–</span></div>
-      </div>
     </div>
     <nav class="views" id="views">
       <div class="navgroup" data-group="workbench">
@@ -735,6 +720,10 @@ function setView(v, { push = true } = {}) {
   if (g && !document.querySelector(`.navgroup[data-group="${g}"]`)?.classList.contains('open')) setGroup(g, true);
   try { localStorage.setItem('gw-view', v); } catch {}
   if (push && location.hash !== '#' + v) history.replaceState(null, '', '#' + v);
+  // 切过去立刻拉一次该视图要的数据：不能等下一个 3s tick，更不能把旧值当新值展示
+  maybeFetchStats();
+  maybeFetchLog();
+  if (v === 'overview') loadMonitors();
 }
 
 // 组头点击：只折叠/展开，不导航
@@ -929,6 +918,44 @@ function pick(id) {
 }
 
 let lastModelsSig = null;
+let statsFetchedAt = 0;
+
+// 日志流：只在「诊断」视图可见时拉（待在待办页没必要每 3 秒拖一次日志）
+async function maybeFetchLog() {
+  if (curView === 'test') await fetchLog();
+}
+async function fetchLog() {
+  const r = await fetch('/admin/log').then(r => r.json()).catch(() => null);
+  if (r && r.lines) {
+    $('log').innerHTML = r.lines.map(l => {
+      l = l.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+      if (/→ [45]\d\d/.test(l) || /ERROR/.test(l)) return `<span style="color:var(--red)">${l}</span>`;
+      if (/→ 200/.test(l)) return l.replace(/→ 200/, '<span style="color:var(--green)">→ 200</span>');
+      return `<span class="dim">${l}</span>`;
+    }).join('\n');
+    $('log').scrollTop = $('log').scrollHeight;
+    // 日志徽标：最近 80 行里的错误行数（超出 ring 窗口的看不到，作下限参考）
+    const errN = r.lines.filter((l) => /→ [45]\d\d|ERROR/.test(l)).length;
+    setBadge('vbLog', errN ? String(errN) : null, errN ? 'red' : '');
+  }
+}
+
+// 流量统计：只在「总览」「统计」视图可见时拉（30 天满量数据下这是最重的一个请求）
+async function maybeFetchStats() {
+  if (curView === 'overview' || curView === 'traffic') await fetchStats();
+}
+async function fetchStats() {
+  const s = await fetch('/admin/stats').then(r => r.json()).catch(() => null);
+  if (!s) return;
+  renderStats(s);
+  statsFetchedAt = Date.now();
+  // 左栏「今日 n 次」左栏遥测：离开统计/总览视图后停在最后一次的值，title 写明刷新时刻，
+  // 不把旧值伪装成实时
+  const el = $('railTodayReq');
+  if (el) el.title = `今日请求数（统计口径）· 上次刷新 ${new Date(statsFetchedAt).toLocaleTimeString('zh-CN', { hour12: false })}`;
+}
+
+// /healthz 常驻 3s：状态灯、运行时长、鉴权、上游数，以及模型目录变化自愈
 async function poll() {
   try {
     const h = await jf('/healthz');
@@ -945,21 +972,8 @@ async function poll() {
     $('dot').className = 'dot bad';
     $('sState').textContent = '无响应'; $('sState').className = 'bad';
   }
-  const r = await fetch('/admin/log').then(r => r.json()).catch(() => null);
-  if (r && r.lines) {
-    $('log').innerHTML = r.lines.map(l => {
-      l = l.replace(/&/g,'&amp;').replace(/</g,'&lt;');
-      if (/→ [45]\d\d/.test(l) || /ERROR/.test(l)) return `<span style="color:var(--red)">${l}</span>`;
-      if (/→ 200/.test(l)) return l.replace(/→ 200/, '<span style="color:var(--green)">→ 200</span>');
-      return `<span class="dim">${l}</span>`;
-    }).join('\n');
-    $('log').scrollTop = $('log').scrollHeight;
-    // 日志徽标：最近 80 行里的错误行数（超出 ring 窗口的看不到，作下限参考）
-    const errN = r.lines.filter((l) => /→ [45]\d\d|ERROR/.test(l)).length;
-    setBadge('vbLog', errN ? String(errN) : null, errN ? 'red' : '');
-  }
-  const s = await fetch('/admin/stats').then(r => r.json()).catch(() => null);
-  if (s) renderStats(s);
+  await maybeFetchLog();
+  await maybeFetchStats();
   // 显示器：仅总览页可见时刷、且最快 6s 一次（I2C 慢，服务端另有 5s 缓存）
   if (curView === 'overview' && Date.now() - monLastFetch > 6000) {
     monLastFetch = Date.now();
@@ -1858,15 +1872,16 @@ applyTheme();
   // 工作台侧首屏：预设区间回填、恢复上次搜索词、待办与历史
   backfillPreset();
   $('todoSearch').value = todoFilters.q || '';
-  // 管理台侧首屏：模型目录、供应商配置、显示器
+  // 一次性预取（种子）：左栏徽标要在任意落地视图都显示真值，所以各拉一次。
+  // 这些是回环请求、各一次、无重复成本——与「每 3 秒常驻拉取」的隐性开销不是一回事；
+  // 任一失败不阻塞渲染，徽标暂显 –，进入对应视图时自然补上。
   loadModels();
   loadProvCfg();
-  loadMonitors();
-  poll();
-  setInterval(poll, 3000);
-  // 待办与汇报并行拉（失败各自提示，互不阻塞）
   refreshTodos();
   refreshHistory();
+  fetchLog();   // 诊断徽标种子
+  poll();
+  setInterval(poll, 3000);
   // 上一次报告任务仍在跑：接着轮询进度
   try {
     const j = await (await fetch('/admin/report/job')).json();

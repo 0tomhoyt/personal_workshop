@@ -1569,6 +1569,16 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       && /@media \(max-width: 900px\)[\s\S]*\.viewbtn[^}]*white-space: nowrap/.test(themeCssText));
     check('/workbench 强制落 todos（优先于 gw-view 记忆）', idxHtml.includes("location.pathname === '/workbench'"));
     check('数字键按左栏顺序映射六个视图', /const n = Number\(e\.key\)[\s\S]{0,200}n <= VIEW_IDS\.length/.test(idxHtml));
+    // -- 按视图轮询 + 启动预取 + 徽标语义 --
+    check('轮询按视图分支：统计与日志不再无条件拉',
+      /if \(curView === 'overview' \|\| curView === 'traffic'\)/.test(idxHtml)
+      && /if \(curView === 'test'\)/.test(idxHtml));
+    check('启动一次性预取五个来源', ['/v1/todos', '/admin/report/list', '/admin/log', '/admin/providers']
+      .every((u) => idxHtml.includes(`'${u}'`)) && idxHtml.includes('loadModels()'));
+    check('旧左栏统计写入已清空（无 railTodo/railDoing/railReports）',
+      !/railTodo|railDoing|railReports/.test(idxHtml));
+    check('切回统计视图立即拉一次（不显示旧值当新值）',
+      /function setView[\s\S]{0,1200}maybeFetchStats\(\)/.test(idxHtml));
     const wb = await fetch(`${GW}/workbench`);
     const wbText = await wb.text();
     check('/workbench → 200 含「工作台」', wb.status === 200 && wbText.includes('工作台'), `got ${wb.status}`);
