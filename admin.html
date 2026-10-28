@@ -196,14 +196,8 @@
       <section class="sec">
         <div class="sechead"><span class="idx">04</span><h2>显示器输入源</h2><span class="en">Displays</span><span class="spacer"></span><span class="note">DDC/CI · 输入源切换</span></div>
         <div class="card">
-          <div class="kv" style="border-bottom:none;margin-bottom:4px">
-            <span class="k" style="flex:1"><b>一键切换</b> <span class="dim">各屏同源 → 整机切到下一个已配置输入源；异源 → 按配置顺序互换</span></span>
-            <span><button id="monToggle" style="font-size:12px">⇄ 一键切换</button></span>
-          </div>
           <div id="monList"><span class="dim">加载中…</span></div>
           <div class="dim" id="monMsg" style="font-size:12px;margin-top:8px;min-height:15px"></div>
-          <div class="kv" style="margin-top:2px;border-bottom:none"><span class="k">系统热键（绑「一键切换」动作）</span><span id="monHkBox"><span class="dim">…</span></span></div>
-          <div class="dim" style="font-size:11px;margin-top:4px">一键切换（与热键同一动作）：<span class="mono">curl -X POST http://127.0.0.1:<span id="monPort">8484</span>/admin/monitors/switch -H 'content-type: application/json' -d '{"mode":"toggle"}'</span>（显式指定仍可用：<span class="mono">"input":VCP值</span> / <span class="mono">"target":"输入源名"</span>，单屏加 <span class="mono">"display":"屏名或UUID"</span>）</div>
         </div>
       </section>
     </section>
@@ -437,7 +431,6 @@ async function loadToken() {
   try {
     const c = await jf('/admin/config');
     gwToken = c.clientToken;
-    if (c.port) $('monPort').textContent = c.port; // 显示器卡的 curl 提示用真实端口
   } catch { gwToken = null; }
 }
 async function apiFetch(url, opt = {}) {
@@ -1086,8 +1079,6 @@ let monLastFetch = 0;
 let monState = null;   // 最近一次 /admin/monitors 响应
 let monNames = {};     // 改名输入框里的草稿值，轮询重渲染时不被冲掉
 let monEditing = null; // 正在改名的条目键（'in:15' / 'disp:UUID'），同一时刻只编辑一个
-let monHkEditing = false; // 热键改绑编辑态（与改名一样：编辑中不重绘打断输入）
-let monHkDraft = '';      // 热键输入框草稿
 
 const monInputKey = (v) => `in:${v}`;
 const monDispKey = (uuid) => `disp:${String(uuid).toUpperCase()}`;
@@ -1113,26 +1104,10 @@ function renderMonitors(d) {
     return;
   }
   const inputs = d.inputs || [];
-  // 左侧栏：一键切换（toggle）置顶，其后每个输入源一个显式整机同切按钮
-  rail.innerHTML = `<button data-mmtoggle="1" ${monBusy ? 'disabled' : ''} title="各屏同源→切到下一个已配置输入源；异源→互换">⇄ 一键切换</button>`
-    + inputs.map((i, idx) =>
+  // 左侧栏：每个输入源一个显式「整机同切」按钮（首个为主按钮）
+  rail.innerHTML = inputs.map((i, idx) =>
       `<button class="${idx === 0 ? 'primary' : ''}" data-mminput="${i.value}" ${monBusy ? 'disabled' : ''}>${esc(i.label)}</button>`
     ).join('');
-
-  // 热键改绑行：当前绑定展示为可编辑输入（逗号/空格分隔多把键，全部绑 toggle 动作）
-  const hk = $('monHkBox');
-  if (hk) {
-    if (monHkEditing) {
-      hk.innerHTML = `<input class="monname" id="monHkKeys" value="${esc(monHkDraft)}" maxlength="80" placeholder="如 f13 或 f13, cmd+opt+d" autocomplete="off" spellcheck="false" style="max-width:220px">`
-        + `<button id="monHkSave" style="padding:2px 8px;font-size:11px;margin-left:6px">保存</button>`
-        + `<button id="monHkCancel" style="padding:2px 8px;font-size:11px;margin-left:4px">取消</button>`
-        + `<span class="dim" style="font-size:11px;margin-left:6px">key 记号：f13 / cmd+opt+w 等，空 = 不绑</span>`;
-    } else {
-      const keys = (d.hotkeys || []).map((h) => h.key);
-      hk.innerHTML = `<span class="mono">${keys.length ? esc(keys.join('、')) : '<span class="dim">未绑</span>'}</span>`
-        + `<button id="monHkEdit" style="padding:2px 8px;font-size:11px;margin-left:6px">改绑</button>`;
-    }
-  }
 
   box.innerHTML = (d.monitors || []).map((m) => {
     const err = m.error ? ` <span class="bad" style="font-size:11px">${esc(m.error)}</span>` : '';
@@ -1182,13 +1157,11 @@ function renderMonitors(d) {
   if (inName) inName.placeholder = `留空 = 输入 ${$('monInPick')?.value ?? 'N'}`;
 }
 
-// 左侧栏：一键切换 + 整机显式切换
+// 左侧栏：整机显式切换
 $('railMonBtns').addEventListener('click', (e) => {
-  if (e.target.closest('button[data-mmtoggle]') && !monBusy) return switchMon({ mode: 'toggle' });
   const b = e.target.closest('button[data-mminput]');
   if (b && !monBusy) switchMon({ input: Number(b.dataset.mminput) });
 });
-$('monToggle').addEventListener('click', () => { if (!monBusy) switchMon({ mode: 'toggle' }); });
 
 // 单屏轮换切换 + 输入源改名下拉（事件委托在容器上）
 $('monList').addEventListener('change', (e) => {
@@ -1248,11 +1221,11 @@ async function saveMonName(sel) {
 async function loadMonitors(refresh = false) {
   try {
     const d = await jf('/admin/monitors' + (refresh ? '?refresh=1' : ''));
-    // 正在改名/改绑热键时不重绘：轮询每 6s 一次，重绘会打断输入焦点与光标位置。
+    // 正在改名时不重绘：轮询每 6s 一次，重绘会打断输入焦点与光标位置。
     // 只更新状态机（monState），点保存后 loadMonitors(true) 再整体刷新。
-    if (monEditing || monHkEditing) { monState = d; return; }
+    if (monEditing) { monState = d; return; }
     renderMonitors(d);
-  } catch { if (!monEditing && !monHkEditing) renderMonitors(null); }
+  } catch { if (!monEditing) renderMonitors(null); }
 }
 
 function setMonMsg(text) {
@@ -1263,56 +1236,20 @@ function setMonMsg(text) {
 async function switchMon(body) {
   if (monBusy) return;
   monBusy = true;
-  const label = body.mode === 'toggle' ? '一键切换中…（先读各屏当前输入，DDC 较慢）'
-    : body.display ? `${body.display} 切换中…` : '切换中…（DDC 较慢，约 2-4 秒）';
+  const label = body.display ? `${body.display} 切换中…` : '切换中…（DDC 较慢，约 2-4 秒）';
   setMonMsg(label);
   if (monState) renderMonitors(monState); // 立刻置灰按钮，避免重复点
   try {
     const r = await fetch('/admin/monitors/switch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => null);
     if (r.ok && j?.ok) {
-      setMonMsg(body.mode === 'toggle'
-        ? `一键切换完成（${j.rule === 'cycle' ? '同源对切' : '异源互换'}：${(j.monitors || []).map((m) => `${m.label} ${m.fromLabel ?? m.from}→${m.toLabel ?? m.to}`).join('、')}）`
-        : `已切换（${j.displays || '全部'} → ${j.inputLabel || body.input}）`);
+      setMonMsg(`已切换（${j.displays || '全部'} → ${j.inputLabel || body.input}）`);
     } else {
       setMonMsg(`失败：${j?.error?.message || 'HTTP ' + r.status}`);
     }
   } catch (e) { setMonMsg(`请求异常：${e}`); }
   monBusy = false;
   setTimeout(() => loadMonitors(true), 4500); // 等过渡态（读回 0）过去再强刷
-}
-
-// 热键改绑：编辑/取消/保存（整体替换 monitors.hotkeys，全部绑 toggle 动作）
-$('monHkBox').addEventListener('click', (e) => {
-  if (e.target.closest('#monHkEdit')) {
-    monHkEditing = true;
-    monHkDraft = (monState?.hotkeys || []).map((h) => h.key).join(', ');
-    return renderMonitors(monState);
-  }
-  if (e.target.closest('#monHkCancel')) { monHkEditing = false; return renderMonitors(monState); }
-  if (e.target.closest('#monHkSave')) return saveMonHotkeys();
-});
-$('monHkBox').addEventListener('input', (e) => {
-  if (e.target.id === 'monHkKeys') monHkDraft = e.target.value;
-});
-$('monHkBox').addEventListener('keydown', (e) => {
-  if (e.target.id === 'monHkKeys' && e.key === 'Enter') saveMonHotkeys();
-});
-
-async function saveMonHotkeys() {
-  const keys = monHkDraft.split(/[,，、\s]+/).map((k) => k.trim().toLowerCase()).filter(Boolean);
-  const hotkeys = [...new Set(keys)].map((key) => ({ action: 'toggle', key }));
-  try {
-    const r = await fetch('/admin/monitors/hotkeys', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ hotkeys }),
-    });
-    const j = await r.json().catch(() => null);
-    if (!r.ok) return setMonMsg(`热键改绑失败：${j?.error?.message || 'HTTP ' + r.status}`);
-    monHkEditing = false;
-    setMonMsg(`热键已改绑：${hotkeys.length ? hotkeys.map((h) => h.key).join('、') : '（未绑）'}（守护按 mtime 热加载，数秒内生效）`);
-    await loadMonitors(true);
-  } catch (e) { setMonMsg(`请求异常：${e}`); }
 }
 
 // ---- 供应商配置管理（/admin/providers，改完热生效） ------------------------

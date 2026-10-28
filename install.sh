@@ -20,12 +20,14 @@ set -euo pipefail
 PORT="${1:-8484}"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LABEL="cn.hicann.cannbot-gateway-proxy"
-HOTKEY_LABEL="cn.hicann.cannbot-monitor-hotkeys"
 LAUNCH_DIR="$HOME/Library/LaunchAgents"
 INSTALLED_PLIST="$LAUNCH_DIR/$LABEL.plist"
-HOTKEY_PLIST="$LAUNCH_DIR/$HOTKEY_LABEL.plist"
 RUNTIME_DIR="$HOME/.local/share/cannbot-gateway-proxy"
 PROVIDERS_JSON="$RUNTIME_DIR/providers.json"
+# 旧版「系统热键切显示器」功能（2026-10-28 已移除）的独立 LaunchAgent 与编译产物：
+# 仅用于清理历史安装遗留（见第 2.5 步），本脚本不再安装它们
+HOTKEY_LABEL="cn.hicann.cannbot-monitor-hotkeys"
+HOTKEY_PLIST="$LAUNCH_DIR/$HOTKEY_LABEL.plist"
 HOTKEY_BIN="$RUNTIME_DIR/monitor-hotkeys"
 
 msg()  { printf '[install] %s\n' "$*"; }
@@ -48,6 +50,15 @@ else
   launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
 fi
 sleep 1
+
+# 2.5) 清理旧版热键守护遗留（功能已移除）：曾安装过热键 LaunchAgent 的机器升级时
+#      停掉并删除，免得残留一个常驻进程反复调用已删除的 toggle 端点；连惰性日志
+#      logs/hotkeys.log 一并清（不再有进程写它）。
+#      文件清理不受演练守卫限制（沙箱 HOME 下删的是演练目录里的文件）。
+if [ "${CGP_SKIP_LAUNCHCTL:-0}" != "1" ]; then
+  launchctl bootout "gui/$(id -u)/$HOTKEY_LABEL" >/dev/null 2>&1 || true
+fi
+rm -f "$HOTKEY_PLIST" "$HOTKEY_BIN" "$RUNTIME_DIR/logs/hotkeys.log"
 
 # 3) 前置检查：端口
 if lsof -i ":$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -98,47 +109,6 @@ if [ ! -f "$PROVIDERS_JSON" ]; then
 else
   chmod 600 "$PROVIDERS_JSON" 2>/dev/null || true
   msg "保留已有 ${PROVIDERS_JSON}（升级不覆盖凭证；改动无需重启，网关热加载）"
-fi
-
-# 5.5) 系统级显示器热键守护（Swift/Carbon，独立 LaunchAgent，与网关分离）：
-#      源在 hotkeys/monitor-hotkeys.swift，现场编译到运行时目录；配置与网关同源
-#      （providers.json 的 monitors.hotkeys），改绑经管理台写盘后守护按 mtime 热加载。
-#      无 swiftc（如未装 Xcode Command Line Tools 的机器）时跳过并提示——网关功能不受影响。
-HOTKEY_INSTALLED=0
-if [ -f "$PROJECT_DIR/hotkeys/monitor-hotkeys.swift" ]; then
-  # 优先用 PATH 里的 swiftc（/usr/bin/swiftc 是 xcrun 垫片，自带 SDK 环境）；
-  # 没有垫片时退回 xcrun -f 的裸二进制，并显式给 SDKROOT（否则报
-  # "unable to load standard library"，2026-10-28 演练实测踩中）。
-  SWIFTC_BIN="$(command -v swiftc || true)"
-  if [ -z "$SWIFTC_BIN" ]; then
-    SWIFTC_BIN="$(xcrun -f swiftc 2>/dev/null || true)"
-    [ -n "$SWIFTC_BIN" ] && export SDKROOT="$(xcrun --show-sdk-path 2>/dev/null || true)"
-  fi
-  if [ -n "$SWIFTC_BIN" ]; then
-    msg "编译热键守护: $SWIFTC_BIN → $HOTKEY_BIN"
-    "$SWIFTC_BIN" -O -o "$HOTKEY_BIN" "$PROJECT_DIR/hotkeys/monitor-hotkeys.swift"
-    chmod 755 "$HOTKEY_BIN"
-    HOTKEY_INSTALLED=1
-  else
-    msg "警告: 未找到 swiftc，跳过系统热键守护（网关不受影响；装 Xcode Command Line Tools 后重跑 ./install.sh 即可补上）"
-  fi
-fi
-if [ "$HOTKEY_INSTALLED" = "1" ]; then
-  sed -e "s|__HOTKEY_BIN__|$HOTKEY_BIN|g" \
-      -e "s|__RUNTIME_DIR__|$RUNTIME_DIR|g" \
-      -e "s|__PORT__|$PORT|g" \
-      "$PROJECT_DIR/hotkeys.plist.template" > "$HOTKEY_PLIST"
-  if [ "${CGP_SKIP_LAUNCHCTL:-0}" = "1" ]; then
-    msg "演练模式：热键守护只写 plist 不 bootstrap（${HOTKEY_PLIST}）"
-  else
-    launchctl bootout "gui/$(id -u)/$HOTKEY_LABEL" >/dev/null 2>&1 || true
-    sleep 1
-    if ! launchctl bootstrap "gui/$(id -u)" "$HOTKEY_PLIST" 2>/dev/null; then
-      sleep 2
-      launchctl bootstrap "gui/$(id -u)" "$HOTKEY_PLIST" || msg "警告: 热键守护 bootstrap 失败（网关不受影响），可稍后手动: launchctl bootstrap gui/$(id -u) $HOTKEY_PLIST"
-    fi
-    msg "系统热键守护已启动（默认 F13=一键切换：同源对切/异源互换，可在管理台改绑；日志 $RUNTIME_DIR/logs/hotkeys.log）"
-  fi
 fi
 
 # 6) 加载并启动（bootout 后服务域偶有短暂未清干净 → bootstrap 报 5 I/O error，

@@ -31,8 +31,8 @@ import { forward, readRequestBody, withUpstreamModel } from './lib/proxy-openai.
 import { handleAnthropicInbound, handleOpenAIToAnthropic } from './lib/proxy-anthropic.mjs';
 import { checkClientAuth } from './lib/gwauth.mjs';
 import { authStatus } from './lib/upstream.mjs';
-import { monitorsStatus, switchMonitors, toggleMonitors } from './lib/monitors.mjs';
-import { renameMonitors, setMonitorsHotkeys } from './lib/monitors-admin.mjs';
+import { monitorsStatus, switchMonitors } from './lib/monitors.mjs';
+import { renameMonitors } from './lib/monitors-admin.mjs';
 import { listTodos, createTodo, updateTodo, deleteTodo } from './lib/todos.mjs';
 import { startReportJob, getReportJob, listReports, getReport, deleteReport } from './lib/report/generate.mjs';
 import { httpError, sendJson, extractModel } from './lib/util.mjs';
@@ -208,13 +208,6 @@ const server = http.createServer(async (req, res) => {
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return sendJson(res, 400, { error: { message: '请求体不是合法 JSON 对象', type: 'bad_request' } });
       }
-      // mode:"toggle" = 一键切换（热键/管理台/工作台按钮同一入口）：读各屏当前输入后
-      // 决定方向——同源对切到下一个已配置输入、异源按配置顺序轮换互换；其余形态
-      // （input 数字 / target 名字 / display 单屏）为显式指定，行为不变。
-      if (payload.mode === 'toggle') return sendJson(res, 200, await toggleMonitors());
-      if (payload.mode != null) {
-        return sendJson(res, 400, { error: { message: `未知 mode "${payload.mode}"（当前支持: toggle）`, type: 'bad_request' } });
-      }
       return sendJson(res, 200, await switchMonitors(payload));
     }
     // 改名：写 providers.json 的 monitors 节（与 providers 写操作同一威胁模型）
@@ -232,24 +225,6 @@ const server = http.createServer(async (req, res) => {
       let payload = null;
       try { payload = JSON.parse(bodyBuf.toString('utf8') || '{}'); } catch {}
       return sendJson(res, 200, renameMonitors(payload));
-    }
-
-    // 热键改绑：整体替换 monitors.hotkeys（写盘后热键守护按 mtime 热加载重注册），
-    // 与 rename 同一威胁模型（POST + 回环 + JSON 三件套）
-    if (url === '/admin/monitors/hotkeys') {
-      if (req.method !== 'POST') {
-        return sendJson(res, 405, { error: { message: '此端点仅接受 POST', type: 'method_not_allowed' } });
-      }
-      if (!isLocalHost(req)) {
-        return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
-      }
-      if (!(req.headers['content-type'] || '').includes('application/json')) {
-        return sendJson(res, 415, { error: { message: '请求体需为 application/json', type: 'unsupported_media_type' } });
-      }
-      const bodyBuf = await readRequestBody(req, 4096);
-      let payload = null;
-      try { payload = JSON.parse(bodyBuf.toString('utf8') || '{}'); } catch {}
-      return sendJson(res, 200, setMonitorsHotkeys(payload));
     }
 
     // 工作台 · 时间段工作总结：生成走「POST + 回环 + JSON」三件套（生成耗时长，

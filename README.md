@@ -270,24 +270,19 @@ status=done 自动盖 completed_at）· `DELETE /v1/todos/:id`。报告 API（�
 `POST /admin/providers/:id/check` 测试。写入前整体校验（含 baseUrl 防指向网关自身），
 原子落盘保持 0600，网关按 mtime 热加载即时生效。
 
-## 显示器输入源切换 + 系统热键
+## 显示器输入源切换
 
 通用功能：网关只认硬件事实（屏 = System UUID、输入 = DDC VCP60 值），**不写死任何方向 /
 主机 / 输入值语义**——名字全部由用户在管理台自填（输入源名、屏名，留空显示编号）。单屏、
 多屏、两台 Mac 共接一台显示器等拓扑都适用。
 
-- **一键切换（toggle）**：`POST /admin/monitors/switch {"mode":"toggle"}`——先读各屏当前
-  输入再定向：各屏同源 → 整机切到 `monitors.inputs` 列表里的下一个（循环；单屏即此规则）；
-  异源 → 按配置 list 顺序轮换互换（两屏即「互换」）。管理台按钮 / 工作台侧栏按钮 /
-  系统热键走的是同一后端动作。显式指定仍可用：`{"input":VCP值}`、`{"target":"输入源名"}`，
-  加 `"display":"屏名或UUID"` 单切一台。
-- **系统热键**：默认 **F13 = 一键切换**（可在管理台改绑，如 `cmd+opt+d`，可多把）。热键由
-  独立 LaunchAgent `cn.hicann.cannbot-monitor-hotkeys` 常驻（Swift/Carbon，`install.sh` 现场
-  编译，无 swiftc 时自动跳过；与网关服务分离，互不影响启停）。配置在 providers.json 的
-  `monitors.hotkeys`（`[{"action":"toggle","key":"f13"}]`——绑动作不绑输入源值），改绑后
-  守护数秒内热加载，无需重启。日志：运行时目录 `logs/hotkeys.log`。
+- 切换 API：`POST /admin/monitors/switch`（仅回环）——`{"input":VCP值}` 整机同切、
+  `{"target":"输入源名"}` 按名字切，加 `"display":"屏名或UUID"` 单切一台。管理台左栏按
+  输入源生成「整机同切」按钮，状态卡每屏有「下一输入源」轮换按钮。
 - 显示器配置（`monitors.inputs` / `monitors.list`）在 providers.json 的 `monitors` 节，管理台
   「显示器输入源」卡可改名（热生效）；`monitors.inputs` 换成任何机器自己的 VCP 值都照常工作。
+  （旧版的系统热键 / 一键切换 toggle 功能已于 2026-10-28 移除；曾装过热键 LaunchAgent 的
+  机器重跑 `./install.sh` 或 `./uninstall.sh` 会自动清掉遗留。）
 
 ## 刷新凭证（通常无事可做）
 

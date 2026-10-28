@@ -1416,20 +1416,13 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('GET 状态：未命名时屏显示 UUID 前 8 位', st.monitors.every((m) => m.id === m.uuid.slice(0, 8).toUpperCase() && m.label === m.id), JSON.stringify(st.monitors.map((m) => [m.id, m.label])));
     check('GET 状态：inputs 按配置顺序回传且未命名', st.inputs?.length === 2 && st.inputs[0].value === 15 && st.inputs[1].value === 21 && st.inputs.every((i) => i.label === `输入 ${i.value}`), JSON.stringify(st.inputs));
 
-    // 系统级热键（monitors.hotkeys）：绑「动作」不绑输入源值（action=toggle=一键切换）。
-    // 记号规则：小写、加号组合（f13 / cmd+opt+w），大写/未知记号/未知 action 静默跳过；
-    // 未写 hotkeys 节 → 播种默认 F13=toggle；显式空数组 = 不绑。
-    check('GET 状态：hotkeys 透出（配置未写 → 默认 f13=toggle 播种）', Array.isArray(st.hotkeys) && st.hotkeys.length === 1 && st.hotkeys[0].action === 'toggle' && st.hotkeys[0].key === 'f13', JSON.stringify(st.hotkeys));
+    // 系统热键功能已移除（2026-10-28）：状态不再透出 hotkeys；旧配置里残留的 hotkeys
+    // 节读取时直接忽略（不崩、不影响 inputs），管理台下次写盘顺手清掉。
+    check('GET 状态：不再透出 hotkeys（系统热键功能已移除）', st.hotkeys === undefined, JSON.stringify(st.hotkeys));
     {
       const cfgMod = await import(path.join(ROOT, 'lib/config.mjs') + '?hk1');
-      const norm = cfgMod.normalizeMonitors;
-      const parsed = norm({ inputs: [15, 21], hotkeys: [
-        { action: 'toggle', key: 'f13' }, { action: 'toggle', key: 'BAD KEY!' }, { action: 'zoom', key: 'f14' },
-        { action: 'toggle', key: 'f13' }, { action: 'toggle', key: 'cmd+opt+w' }, 'garbage',
-      ] });
-      check('hotkeys 解析：合法条目保留，非法 key/未知 action/同 key 重复静默跳过', parsed.hotkeys.length === 2 && parsed.hotkeys[0].action === 'toggle' && parsed.hotkeys[0].key === 'f13' && parsed.hotkeys[1].key === 'cmd+opt+w', JSON.stringify(parsed.hotkeys));
-      check('hotkeys 解析：显式空数组 = 不绑热键，缺省才播种默认', norm({ inputs: [15, 21], hotkeys: [] }).hotkeys.length === 0 && norm({ inputs: [15, 21] }).hotkeys.length === 1);
-      check('hotkeys 解析：不携带 input 字段（动作模型，运行时读屏定向）', parsed.hotkeys.every((h) => h.input === undefined));
+      const parsed = cfgMod.normalizeMonitors({ inputs: [15, 21], hotkeys: [{ action: 'toggle', key: 'f13' }] });
+      check('旧配置残留 hotkeys 节：归一化直接忽略，不影响 inputs 解析', parsed.hotkeys === undefined && parsed.inputs.length === 2, JSON.stringify(parsed));
     }
 
     const st2 = await (await fetch(`${GW}/admin/monitors`)).json();
@@ -1537,69 +1530,9 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const rn415 = await fetch(`${GW}/admin/monitors/rename`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' });
     check('rename 非 JSON 内容类型 → 415', rn415.status === 415);
 
-    // 一键切换（toggle）：读两屏当前输入再定向——同源对切 / 异源互换。
-    // 此刻两屏都在 99（上一段 undeclared input:99 把两屏都写了；99 不在 inputs 里）。
-    const tgUnconf = await post('/admin/monitors/switch', { mode: 'toggle' });
-    const tgUnconfJ = await tgUnconf.json();
-    check('toggle：当前值不在已配置 inputs → 整机切到列表第一项（cycle）', tgUnconf.status === 200 && tgUnconfJ.rule === 'cycle'
-      && tgUnconfJ.monitors.every((m) => m.from === 99 && m.to === 15), JSON.stringify(tgUnconfJ).slice(0, 200));
-    const tgCycle = await post('/admin/monitors/switch', { mode: 'toggle' });
-    const tgCycleJ = await tgCycle.json();
-    check('toggle：同源 15 → 对切到下一个已配置输入 21（列表尾循环语义此处不触发）', tgCycle.status === 200 && tgCycleJ.rule === 'cycle'
-      && tgCycleJ.monitors.every((m) => m.from === 15 && m.to === 21), JSON.stringify(tgCycleJ).slice(0, 200));
-    const tgWrap = await post('/admin/monitors/switch', { mode: 'toggle' });
-    const tgWrapJ = await tgWrap.json();
-    check('toggle：同源 21（列表尾）→ 循环回第一项 15', tgWrap.status === 200 && tgWrapJ.monitors.every((m) => m.from === 21 && m.to === 15), JSON.stringify(tgWrapJ.monitors));
-    // 异源：单切一块屏制造差异 → toggle 应互换（两屏即两两互换）
-    await post('/admin/monitors/switch', { input: 21, display: FIRST });
-    await sleep(100);
-    const tgSwap = await post('/admin/monitors/switch', { mode: 'toggle' });
-    const tgSwapJ = await tgSwap.json();
-    const tgMon = (u) => tgSwapJ.monitors.find((m) => m.id === u.slice(0, 8).toUpperCase());
-    check('toggle：异源 → 按配置顺序互换（第一块 21→15、第二块 15→21）', tgSwap.status === 200 && tgSwapJ.rule === 'rotate'
-      && tgMon(MON_UUIDS[0]).from === 21 && tgMon(MON_UUIDS[0]).to === 15
-      && tgMon(MON_UUIDS[1]).from === 15 && tgMon(MON_UUIDS[1]).to === 21, JSON.stringify(tgSwapJ.monitors));
-    const tgSwapState = await (await fetch(`${GW}/admin/monitors?refresh=1`)).json();
-    check('toggle 互换后状态读回：两屏输入对调',
-      tgSwapState.monitors.find((m) => m.uuid === MON_UUIDS[0])?.input === 15
-      && tgSwapState.monitors.find((m) => m.uuid === MON_UUIDS[1])?.input === 21,
-      JSON.stringify(tgSwapState.monitors.map((m) => [m.id, m.input])));
-    const tgBadMode = await post('/admin/monitors/switch', { mode: 'zoom' });
-    check('switch：未知 mode → 400', tgBadMode.status === 400);
-    await post('/admin/monitors/switch', { input: 15 }); // 复位，两屏同 15
-
-    // 热键改绑：POST /admin/monitors/hotkeys 整体替换 monitors.hotkeys（与 rename 同威胁模型）
-    const hkPost = (body) => post('/admin/monitors/hotkeys', body).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
-    const hkBadAction = await hkPost({ hotkeys: [{ action: 'zoom', key: 'f13' }] });
-    check('hotkeys 写：未知 action → 400', hkBadAction.status === 400, JSON.stringify(hkBadAction.body).slice(0, 120));
-    const hkBadKey = await hkPost({ hotkeys: [{ action: 'toggle', key: 'F13!' }] });
-    check('hotkeys 写：非法 key 记号 → 400', hkBadKey.status === 400, JSON.stringify(hkBadKey.body).slice(0, 120));
-    const hkClash = await hkPost({ hotkeys: [{ action: 'toggle', key: 'f13' }, { action: 'toggle', key: 'f13' }] });
-    check('hotkeys 写：同一 key 重复 → 400', hkClash.status === 400, JSON.stringify(hkClash.body).slice(0, 120));
-    const hkNotArr = await hkPost({ hotkeys: 'f13' });
-    check('hotkeys 写：hotkeys 非数组 → 400', hkNotArr.status === 400);
-    const hkEmpty = await hkPost({ hotkeys: [] });
-    check('hotkeys 写：显式空数组 = 清空全部热键（合法）', hkEmpty.status === 200 && hkEmpty.body.hotkeys.length === 0, JSON.stringify(hkEmpty.body).slice(0, 120));
-    const hkSet = await hkPost({ hotkeys: [{ action: 'toggle', key: 'f15' }, { action: 'toggle', key: 'cmd+opt+m' }] });
-    check('hotkeys 写：合法改绑 200 且返回新表', hkSet.status === 200 && hkSet.body.ok === true && hkSet.body.hotkeys.length === 2, JSON.stringify(hkSet.body).slice(0, 200));
-    check('hotkeys 写：落盘到 providers.json 且保留已有改名', (() => {
-      const c = JSON.parse(fs.readFileSync(path.join(tmp, 'providers.json'), 'utf8'));
-      return Array.isArray(c.monitors.hotkeys) && c.monitors.hotkeys.length === 2 && c.monitors.hotkeys[0].key === 'f15'
-        && c.monitors.hotkeys.every((h) => h.action === 'toggle')
-        && c.monitors.inputs.find((i) => Number(i.value) === 21)?.name === '';
-    })(), 'providers.json monitors.hotkeys 不符');
-    const hkSt = await (await fetch(`${GW}/admin/monitors?refresh=1`)).json();
-    check('hotkeys 写：GET 状态读回新热键（写后热加载）', hkSt.hotkeys?.length === 2 && hkSt.hotkeys[1].key === 'cmd+opt+m', JSON.stringify(hkSt.hotkeys));
-    const hkHost = await new Promise((resolve, reject) => {
-      const rq = http.request({ host: '127.0.0.1', port: GW_PORT, path: '/admin/monitors/hotkeys', method: 'POST',
-        headers: { host: 'evil.example', 'content-type': 'application/json' } }, resolve);
-      rq.on('error', reject); rq.end('{}');
-    });
-    check('hotkeys 写：非回环 Host → 403', hkHost.statusCode === 403);
-    const hk415 = await fetch(`${GW}/admin/monitors/hotkeys`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' });
-    check('hotkeys 写：非 JSON 内容类型 → 415', hk415.status === 415);
-    // 收尾：恢复默认绑定（F13=toggle），供后续（无 monitors 节实例等）不受影响
-    await post('/admin/monitors/hotkeys', { hotkeys: [{ action: 'toggle', key: 'f13' }] });
+    // mode:"toggle" 一键切换专用路径已随热键功能移除：请求体缺 input/target → 400
+    const tgGone = await post('/admin/monitors/switch', { mode: 'toggle' });
+    check('switch：mode:"toggle" 专用路径已移除 → 400（缺 input/target）', tgGone.status === 400);
 
     // 默认配置（providers.json 没有 monitors 节）：状态查询走内置默认能跑，改名也必须能落盘
     // ——曾经改名读的是文件里的空节，默认配置下点改名直接 404「可用: 无」。
@@ -1637,36 +1570,6 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       gw3.kill();
     }
 
-    // 通用性：单屏场景（如两台 Mac 共接一台显示器、或本机只接一块屏）——
-    // toggle 退化为「这块屏在已配置 inputs 间循环」，规则不假设屏数=2。
-    {
-      const cfgOne = path.join(tmp, 'providers-one-monitor.json');
-      const rawCfg = JSON.parse(fs.readFileSync(path.join(tmp, 'providers.json'), 'utf8'));
-      rawCfg.monitors = { inputs: [{ value: 15, name: '' }, { value: 21, name: '' }], list: [rawCfg.monitors.list[0]] };
-      fs.writeFileSync(cfgOne, JSON.stringify(rawCfg, null, 2));
-      const stateOne = path.join(tmp, 'mon-state-one.json');
-      fs.writeFileSync(stateOne, JSON.stringify({}));
-      const gw4 = spawnNode([path.join(ROOT, 'server.mjs')], {
-        CANNBOT_PROXY_PORT: '6294',
-        CANNBOT_CONFIG_FILE: cfgOne,
-        CANNBOT_LOG_FILE: path.join(tmp, 'proxy4.log'),
-        CANNBOT_STATS_FILE: path.join(tmp, 'stats4.json'),
-        CANNBOT_M1DDC: path.join(ROOT, 'test/mock-m1ddc.mjs'),
-        MOCK_M1DDC_STATE: stateOne,
-      }, 'gateway-one-monitor');
-      await sleep(1500);
-      const tg1 = await (await fetch('http://127.0.0.1:6294/admin/monitors/switch', {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"mode":"toggle"}',
-      })).json();
-      check('单屏 toggle：同源 15 → 循环切到下一个已配置输入 21', tg1.ok === true && tg1.rule === 'cycle'
-        && tg1.monitors.length === 1 && tg1.monitors[0].from === 15 && tg1.monitors[0].to === 21, JSON.stringify(tg1).slice(0, 200));
-      const tg1b = await (await fetch('http://127.0.0.1:6294/admin/monitors/switch', {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"mode":"toggle"}',
-      })).json();
-      check('单屏 toggle：再按一次 → 循环回 15（可用作第二台主机的信号入口）', tg1b.monitors[0].from === 21 && tg1b.monitors[0].to === 15, JSON.stringify(tg1b.monitors));
-      gw4.kill();
-    }
-
     // m1ddc 缺失降级：第二实例指向不存在的路径，主业务不受影响
     const gw2 = spawnNode([path.join(ROOT, 'server.mjs')], {
       CANNBOT_PROXY_PORT: '6292',
@@ -1684,29 +1587,18 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     gw2.kill();
   }
 
-  console.log('— 系统热键守护（Swift/Carbon 源 + install/uninstall 集成） —');
+  console.log('— 热键/一键切换功能移除（源、脚本与页面无残留） —');
   {
-    const swiftSrc = fs.readFileSync(path.join(ROOT, 'hotkeys/monitor-hotkeys.swift'), 'utf8');
-    check('热键守护源存在且用 Carbon RegisterEventHotKey（系统级、无第三方依赖）', swiftSrc.includes('RegisterEventHotKey') && swiftSrc.includes('UnregisterEventHotKey'));
-    check('热键守护：读 monitors.hotkeys、mtime 变更热重载（不重启）', swiftSrc.includes('hotkeys') && swiftSrc.includes('modificationDate'));
-    check('热键守护：按下 → POST /admin/monitors/switch {"mode":"toggle"}，失败只打日志不崩', swiftSrc.includes('/admin/monitors/switch') && swiftSrc.includes('["mode"') && !swiftSrc.includes('fatalError'));
-    check('热键守护：绑动作不绑输入源值（默认 f13=toggle，无 input:15/21 写死）', swiftSrc.includes('"toggle"') && !/"input"/.test(swiftSrc));
-    check('热键守护：key 解析支持修饰键组合（cmd/ctrl/opt/shift + f13…）', ['cmd', 'opt', 'shift', 'kVK_F13', 'kVK_ANSI_'].every((s) => swiftSrc.includes(s)));
-    const hotPlistT = fs.readFileSync(path.join(ROOT, 'hotkeys.plist.template'), 'utf8');
-    check('热键 LaunchAgent 模板：与网关 plist 分离的独立 label', hotPlistT.includes('cn.hicann.cannbot-monitor-hotkeys') && !hotPlistT.includes('__NODE_BIN__'));
+    check('源目录已无热键守护源与热键 LaunchAgent 模板', !fs.existsSync(path.join(ROOT, 'hotkeys')) && !fs.existsSync(path.join(ROOT, 'hotkeys.plist.template')));
     const inst = fs.readFileSync(path.join(ROOT, 'install.sh'), 'utf8');
-    check('install.sh：编译热键守护 + 生成热键 plist + bootstrap', inst.includes('monitor-hotkeys.swift') && inst.includes('hotkeys.plist.template') && inst.includes('cannbot-monitor-hotkeys') && inst.includes('swiftc'));
-    check('install.sh：无 swiftc 时降级跳过不阻断网关安装', /swiftc/.test(inst) && /跳过|警告/.test(inst));
+    check('install.sh：不再编译/安装热键守护（无 swiftc / hotkeys 模板 / 守护 bootstrap）', !inst.includes('swiftc') && !inst.includes('hotkeys.plist.template') && !inst.includes('monitor-hotkeys.swift'));
     const uninst = fs.readFileSync(path.join(ROOT, 'uninstall.sh'), 'utf8');
-    check('uninstall.sh：bootout + 清理热键 plist 与二进制', uninst.includes('cannbot-monitor-hotkeys') && uninst.includes('monitor-hotkeys'));
-
-    // 一键切换 UI：管理台与工作台走同一 toggle 后端，无 Win/Mac 语义文案
+    check('install.sh / uninstall.sh：保留旧版热键 LaunchAgent 的遗留清理路径（曾装过的机器能清掉）', inst.includes('cannbot-monitor-hotkeys') && inst.includes('HOTKEY_PLIST') && uninst.includes('cannbot-monitor-hotkeys') && uninst.includes('HOTKEY_PLIST'));
     const admText = fs.readFileSync(path.join(ROOT, 'admin.html'), 'utf8');
-    check('管理台：一键切换按钮（mode:toggle）+ 热键改绑 UI + toggle 版 curl 示例',
-      admText.includes('monToggle') && admText.includes("mode: 'toggle'") && admText.includes('monHkSave') && admText.includes('/admin/monitors/hotkeys') && admText.includes('{"mode":"toggle"}'));
-    check('管理台：不再出现「input:15 热键示例」这类暗示固定输入的 curl 文案', !admText.includes("-d '{\"input\":15}'"));
+    check('管理台：一键切换按钮 / 热键改绑 UI / toggle 调用全部移除', !admText.includes('monToggle') && !admText.includes('monHk') && !admText.includes('/admin/monitors/hotkeys') && !admText.includes("mode: 'toggle'") && !admText.includes('{"mode":"toggle"}'));
+    check('管理台：手动切换面保留（左栏整机同切 + 每屏下一输入源轮换 + 输入源/屏改名）', admText.includes('data-mminput') && admText.includes('data-mcycle') && admText.includes('monInEdit') && admText.includes('data-mnamesave'));
     const wbText2 = fs.readFileSync(path.join(ROOT, 'workbench.html'), 'utf8');
-    check('工作台：侧栏一键切换（mode:toggle）+ 各屏当前输入展示', wbText2.includes('monToggle') && wbText2.includes("mode: 'toggle'") && wbText2.includes('loadMonitorsOnce'));
+    check('工作台：Displays 区（随一键切换功能加入）整体移除', !wbText2.includes('monBox') && !wbText2.includes('monToggle') && !wbText2.includes('loadMonitorsOnce'));
   }
 
   console.log('— 统计落盘（进程内 recordStats + flushStats：tmp+rename+0600） —');
