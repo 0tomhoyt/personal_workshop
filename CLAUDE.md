@@ -69,8 +69,10 @@ lib/log.mjs           日志（内存环形缓冲 1000 行 + 落盘 + 5MB 轮转
 lib/util.mjs          httpError / sendJson / readBodyLimited（上游响应体有界读：content-length
                       预检 + 无/非法长度边读边检）/ token 权重（CJK 1:1 其余 4:1）/ randHex
 lib/todos.mjs         工作台待办数据层（todos.json 写穿原子落盘 0600、坏文件自愈空列表、
-                      字段码位校验、todosInWindow 供报告素材）。子项 checklist：todo.items=
-                      [{id,title,done,done_at}]，每次子项变更后 deriveFromItems 派生父状态
+                      字段码位校验、todosInWindow 供报告素材：新增/更新/完成三列表，
+                      updated 只收「窗口前就存在、窗口内被推进、未在本窗新建或完成」）。
+                      子项 checklist：todo.items=[{id,title,done,done_at}]，每次子项变更后
+                      deriveFromItems 派生父状态
                       （非空且全 done→父 done 盖 completed_at 不重盖；有未完成且父 done→回
                       in_progress 清章；空清单不派生；显式 PATCH status 永远生效）。note 即
                       「详情」：agent 来源（source≠user）硬上限 300 码位、用户 2000；子项
@@ -94,7 +96,9 @@ lib/report/generate.mjs 报告生成状态机：单任务串行（409）、colle
                       模型兜底链（workbench 节 → 默认上游目录第一个）、requestUpstream 协议
                       分支、reports.json 原子存档（上限 200）；两级总结失败或空响应自动重试一次
                       （CANNBOT_REPORT_RETRY_DELAY_MS 可调间隔）；「无记录」固定快径只在会话
-                      与待办**双双为空**时走（有待办变动即调模型），materials.todos 记两列表计数
+                      与待办**双双为空**时走（有待办变动即调模型），materials.todos 记
+                      新增/更新/完成三列表计数（updated = 窗口前就存在、窗口内被推进、
+                      但没在本窗新建也没在本窗完成；与另两类互斥）
 lib/report-prompts.mjs 两级总结 prompt + 压缩/脱敏阈值**全部集中在此**——调汇报质量只改这里
 index.html            单页外壳：左栏两级分组导航（工作台 / 管理台）+ 六个视图
                       （待办 / 汇报 / 总览 / 统计 / 诊断 / 配置）全部逻辑内联在一段脚本里。
@@ -185,8 +189,9 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
 （2 行钳制 +「子项 k/j」徽标），展开区勾子项/加删子项/编辑详情（agent 长文默认折叠，输入态
 不重建列表 DOM））；汇报（预设区间 seg + 自定义 datetime-local；生成 → 2s 轮询 job 进度
 （琥珀扫掠条）→ Markdown 渲染 + 复制 + 下载 .md + 历史表格；成稿元数据行含「待办 新增 n /
-完成 m」）；总览（订阅上游卡含凭证体检与协议串、模型目录 chips、今日速览、显示器输入源——
-整机同切按钮在卡顶 `#monWholeRow`，每屏一个「⇄ 下一输入源」轮换单切，m1ddc 缺失降级提示）；
+更新 m / 完成 k」）；总览（订阅上游卡含凭证体检与协议串、模型目录 chips、今日速览、
+显示器输入源——整机同切按钮在卡顶 `#monWholeRow`，每屏一个「⇄ 下一输入源」轮换单切，
+m1ddc 缺失降级提示）；
 统计（趋势图 + 分供应商汇总 + 模型表 + 单价表 + 性能表，区间与指标 seg）；诊断（测试台 +
 全模型对比 + 日志流）；配置（供应商增删改经 `/admin/providers`，token 脱敏、保存即热生效、
 `测试` 按钮经 GET /v1/models 验证端点与凭证；末尾「服务控制」小节含重启/停止）。

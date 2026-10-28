@@ -1181,6 +1181,19 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     // 子项联动：建带清单的待办并勾 1/2 —— 报告待办行应带（1/2）进度
     const tc = (await (await post('/v1/todos', { title: 'collect 测试 C（清单）', items: [{ title: '甲' }, { title: '乙' }] })).json());
     await fetch(`${GW}/v1/todos/${tc.todo.id}/items/${tc.todo.items[0].id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: true }) });
+    // 「仅更新」联动：先建后改时间戳把 created_at 推到窗口之前（只动数据文件、不经 HTTP，
+    // 模拟「窗口前建、窗口内推进」的存量待办）——updated 列表应只收它，不进 created/completed
+    const tu = (await (await post('/v1/todos', { title: 'collect 测试 D（仅更新）' })).json()).todo;
+    // 「本窗完成且有前情」的对照：本窗创建并完成 → 归 created + completed，不进 updated
+    const tdone = (await (await post('/v1/todos', { title: 'collect 测试 E（本窗新建并完成）' })).json()).todo;
+    await fetch(`${GW}/v1/todos/${tdone.id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'done' }) });
+    {
+      const tfile = path.join(tmp, 'todos.json');
+      const raw = JSON.parse(fs.readFileSync(tfile, 'utf8'));
+      const row = raw.todos.find((t) => t.id === tu.id);
+      row.created_at = WIN.startMs - 86_400_000; // 窗口前一天创建
+      fs.writeFileSync(tfile, JSON.stringify(raw, null, 2));
+    }
 
     // usage 联动：进程内 stats 读独立 fixture 文件（今天的桶，数值完全可控）
     const p2 = (n) => String(n).padStart(2, '0');
@@ -1211,6 +1224,28 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('collect: 超长真人输入截到 500 字（码位）', realProj?.summaryText.includes('压'.repeat(500)) && !realProj.summaryText.includes('压'.repeat(501)));
     check('collect: emoji 码位截断不劈代理对（剥合法对后无孤立代理）', !/[\uD800-\uDFFF]/.test(realProj?.summaryText?.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '') ?? '\uD800'));
     check('collect: todos 联动（窗口内新增/完成）', m.todos.created.some((t) => t.title === 'collect 测试 A') && m.todos.created.some((t) => t.title === 'collect 测试 B') && m.todos.completed.some((t) => t.title === 'collect 测试 A'), JSON.stringify({ c: m.todos.created.length, d: m.todos.completed.length }));
+    // updated 互斥口径（lib/todos.mjs todosInWindow）：仅更新 / 本窗新建 / 本窗完成 各归其类，
+    // 新建或完成的条目不再重复进 updated（新建+完成可同时出现在 created 与 completed）
+    {
+      const names = (list) => list.map((t) => t.title);
+      check('collect: 窗口内「仅更新」进 updated（created_at 在窗前的存量待办）',
+        names(m.todos.updated).includes('collect 测试 D（仅更新）')
+        && !names(m.todos.created).includes('collect 测试 D（仅更新）')
+        && !names(m.todos.completed).includes('collect 测试 D（仅更新）'),
+        JSON.stringify({ u: names(m.todos.updated), c: names(m.todos.created) }));
+      check('collect: updated 与 created/completed 无交集（同一 id 不重复归类）',
+        m.todos.created.every((t) => !m.todos.updated.some((u) => u.id === t.id))
+        && m.todos.completed.every((t) => !m.todos.updated.some((u) => u.id === t.id)),
+        JSON.stringify(m.todos.updated.map((t) => t.title)));
+      check('collect: 本窗新建的待办只归 created、不进 updated',
+        names(m.todos.created).includes('collect 测试 B') && !names(m.todos.updated).includes('collect 测试 B'),
+        JSON.stringify(names(m.todos.updated)));
+      check('collect: 本窗「新建并完成」归 created + completed、不进 updated',
+        names(m.todos.created).includes('collect 测试 E（本窗新建并完成）')
+        && names(m.todos.completed).includes('collect 测试 E（本窗新建并完成）')
+        && !names(m.todos.updated).includes('collect 测试 E（本窗新建并完成）'),
+        JSON.stringify({ c: names(m.todos.created), d: names(m.todos.completed), u: names(m.todos.updated) }));
+    }
     check('collect: usage 聚合（请求数/ tokens/费用/分订阅）', m.usage.totalRequests === 10 && m.usage.totalTokens === 3000 && Math.abs(m.usage.totalCost - 0.5) < 1e-9 && m.usage.byProvider['mock-oai']?.requests === 10, JSON.stringify(m.usage));
     const old = await collectMaterials({ startMs: 0, endMs: 1000 });
     check('collect: 窗口早于统计保留期 → outOfRange', old.usage.outOfRange === true && old.usage.totalRequests === 0, JSON.stringify(old.usage));
@@ -1236,6 +1271,23 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       const allDone = { title: '已完成单', urgency: 'normal', items: [{ done: true }, { done: true }] };
       const out4 = PROMPTS.userFinal({ rangeText: 'x', projects: [], todos: { created: [], completed: [allDone] }, usage: {}, sourcesFailed: [] });
       check('userFinal：完成行不缀子项进度（必为 j/j）', out4.includes('已完成单') && !out4.includes('已完成单（2/2）'), '');
+      // 「更新」行：与新增/完成同纪律（标题截断、每列表上限、带子项进度、note 不进 prompt）
+      const updItem = { title: '推进中的单', urgency: 'urgent', note: '详情不应进 prompt', items: [{ done: true }, { done: false }] };
+      const out5 = PROMPTS.userFinal({ rangeText: 'x', projects: [], todos: { created: [], updated: [updItem], completed: [] }, usage: {}, sourcesFailed: [] });
+      check('userFinal：更新行（标题/紧急/子项进度齐全）', out5.includes('更新（1）：推进中的单（紧急）（1/2）'), out5.slice(out5.indexOf('待办进展'), out5.indexOf('待办进展') + 80));
+      check('userFinal：更新行不带 note/详情', !out5.includes('详情不应进 prompt'));
+      const manyUpd = Array.from({ length: 35 }, (_, i) => ({ title: `更新的单${i}`, urgency: 'normal' }));
+      const out6 = PROMPTS.userFinal({ rangeText: 'x', projects: [], todos: { created: [], updated: manyUpd, completed: [] }, usage: {}, sourcesFailed: [] });
+      check('userFinal：更新行每列表最多 30 条、超出加「等 N 条」', out6.includes('更新（35）') && out6.includes('等 5 条') && !out6.includes('更新的单34'), out6.slice(out6.indexOf('更新（'), out6.indexOf('更新（') + 80));
+      const longUpd = { title: '标'.repeat(60), urgency: 'normal' };
+      const out7 = PROMPTS.userFinal({ rangeText: 'x', projects: [], todos: { created: [], updated: [longUpd], completed: [] }, usage: {}, sourcesFailed: [] });
+      check(`userFinal：更新行标题同样截 ${LIMITS.todoTitleChars} 码位`, out7.includes('标'.repeat(LIMITS.todoTitleChars)) && !out7.includes('标'.repeat(LIMITS.todoTitleChars + 1)));
+      // 三级列表齐全时顺序固定：完成 → 更新 → 新增
+      const out8 = PROMPTS.userFinal({ rangeText: 'x', projects: [], todos: { created: [{ title: '甲新' }], updated: [{ title: '乙更' }], completed: [{ title: '丙完' }] }, usage: {}, sourcesFailed: [] });
+      check('userFinal：三列表顺序 完成 → 更新 → 新增', out8.indexOf('完成（1）') < out8.indexOf('更新（1）') && out8.indexOf('更新（1）') < out8.indexOf('新增（1）'), out8.slice(out8.indexOf('待办进展'), out8.indexOf('待办进展') + 80));
+      // 旧形态（无 updated 键）不报错、不出「更新」行
+      const out9 = PROMPTS.userFinal({ rangeText: 'x', projects: [], todos: { created: [{ title: '旧形态' }], completed: [] }, usage: {}, sourcesFailed: [] });
+      check('userFinal：todos 缺 updated 键（旧形态）不炸、不输出更新行', out9.includes('新增（1）') && !out9.includes('更新（'));
     }
 
     const cfgPath = path.join(tmp, 'providers.json');
@@ -1267,6 +1319,13 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('待办联动进 prompt（报告含 collect 测试 A）', rep.report.includes('collect 测试 A'), String(rep.report).slice(0, 200));
     check('待办子项进度进 prompt（报告含（1/2））', rep.report.includes('（1/2）'), String(rep.report).slice(0, 300));
     check('报告素材计数 materials.todos（新增 ≥3 / 完成 ≥1）', (rep.materials?.todos?.created ?? 0) >= 3 && (rep.materials?.todos?.completed ?? 0) >= 1, JSON.stringify(rep.materials?.todos));
+    // materials.todos 三键齐全：updated 是本次新增的第三类计数（口径：非本窗新建/完成、
+    // 仅本窗推进过的存量待办；prompt 行与计数在下方「仅更新窗口」独立实例里断言——
+    // 本实例的待办都是本窗新建的，按互斥口径不进 updated）
+    check('报告素材计数含 updated 键（新增/更新/完成三键齐全、本窗新建的不进 updated）',
+      typeof rep.materials?.todos?.updated === 'number' && rep.materials.todos.updated === 0
+      && typeof rep.materials.todos.created === 'number' && typeof rep.materials.todos.completed === 'number',
+      JSON.stringify(rep.materials?.todos));
 
     // 空素材窗口：不调模型直接成稿（model=none、不再 failed）。
     // 主网关 zcode/opencode 指向 no-such.db（采集必失败）→ 空窗走「采集失败」口径，
@@ -1391,8 +1450,54 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       const tRep = tJob.reportId ? await (await fetch(`${GW6}/admin/report/${tJob.reportId}`)).json() : {};
       check('仅待办窗口：done 且走了模型（model ≠ none）', tJob.state === 'done' && tRep.model === 'mock-pro', JSON.stringify({ s: tJob.state, m: tRep.model, e: tJob.error }));
       check('仅待办窗口：报告含待办标题与「数据源状态」附注', (tRep.report || '').includes('仅待办窗口的单子') && (tRep.report || '').includes('数据源状态'), String(tRep.report).slice(0, 200));
-      check('仅待办窗口：materials.todos 计数（新增 1）', tRep.materials?.todos?.created === 1, JSON.stringify(tRep.materials?.todos));
+      check('仅待办窗口：materials.todos 计数（新增 1 / 更新 0）', tRep.materials?.todos?.created === 1 && tRep.materials?.todos?.updated === 0, JSON.stringify(tRep.materials?.todos));
       gwTodoOnly.kill();
+    }
+
+    // 仅「更新」窗口：窗口内既不新建也不完成，只有一条存量待办被推进 → 仍属「有待办
+    // 变动」，同样不走「无记录 / 采集失败」固定快径，且 updated 计数与 prompt 行都要有
+    {
+      const updTodosFile = path.join(tmp, 'todos-updated-only.json');
+      fs.writeFileSync(updTodosFile, JSON.stringify({
+        version: 1,
+        todos: [
+          { id: 'updA', title: '存量单（窗口内被推进）', status: 'in_progress', urgency: 'normal', source: 'user',
+            created_at: WIN.startMs - 86_400_000, updated_at: WIN.startMs + 60_000, completed_at: null },
+          { id: 'updB', title: '存量单（窗口内没动过）', status: 'pending', urgency: 'normal', source: 'user',
+            created_at: WIN.startMs - 86_400_000, updated_at: WIN.startMs - 86_400_000 + 1000, completed_at: null },
+        ],
+      }, null, 2));
+      const gwUpd = spawnNode([path.join(ROOT, 'server.mjs')], {
+        CANNBOT_PROXY_PORT: '6297',
+        CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
+        CANNBOT_LOG_FILE: path.join(tmp, 'proxy7.log'),
+        CANNBOT_STATS_FILE: path.join(tmp, 'stats7.json'),
+        CANNBOT_TODOS_FILE: updTodosFile,
+        CANNBOT_REPORTS_FILE: path.join(tmp, 'reports7.json'),
+        CANNBOT_CC_DIR: path.join(tmp, 'no-such-cc'),
+        CANNBOT_ZCODE_DB: path.join(tmp, 'no-such.db'),
+        CANNBOT_OPENCODE_DB: path.join(tmp, 'no-such.db'),
+        CANNBOT_CURSOR_DIR: path.join(tmp, 'no-such-cursor'),
+        CANNBOT_REPORT_RETRY_DELAY_MS: '0',
+      }, 'gateway-todos-updated');
+      await sleep(1500);
+      const GW7 = 'http://127.0.0.1:6297';
+      await fetch(`${GW7}/admin/report/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(WIN) });
+      let uJob = { state: 'timeout' };
+      for (let i = 0; i < 40; i++) {
+        uJob = await (await fetch(`${GW7}/admin/report/job`)).json();
+        if (uJob.state !== 'running') break;
+        await sleep(500);
+      }
+      const uRep = uJob.reportId ? await (await fetch(`${GW7}/admin/report/${uJob.reportId}`)).json() : {};
+      check('仅更新窗口：done 且走了模型（updated 也算待办变动）', uJob.state === 'done' && uRep.model === 'mock-pro', JSON.stringify({ s: uJob.state, m: uRep.model, e: uJob.error }));
+      check('仅更新窗口：materials.todos（新增 0 / 更新 1 / 完成 0）',
+        uRep.materials?.todos?.created === 0 && uRep.materials?.todos?.updated === 1 && uRep.materials?.todos?.completed === 0,
+        JSON.stringify(uRep.materials?.todos));
+      check('仅更新窗口：prompt 有「更新（1）」行且不含未变动的那条',
+        (uRep.report || '').includes('更新（1）：存量单（窗口内被推进）') && !(uRep.report || '').includes('存量单（窗口内没动过）'),
+        String(uRep.report).slice(0, 260));
+      gwUpd.kill();
     }
 
     // 窗口校验（不启动 job）

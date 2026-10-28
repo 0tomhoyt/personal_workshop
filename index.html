@@ -2430,7 +2430,11 @@ async function showReport(id) {
   const m = rep.materials || {};
   const srcTxt = Object.entries(m.sources || {}).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`).join(' · ') || '无会话';
   const failed = (m.sourcesFailed || []).length ? ` · ⚠ ${m.sourcesFailed.length} 个源不可用` : '';
-  const todoCnt = m.todos && (m.todos.created || m.todos.completed) ? ` · 待办 新增 ${m.todos.created} / 完成 ${m.todos.completed}` : '';
+  // 待办三类计数（新增/更新/完成；updated 与新增/完成互斥，口径见 lib/todos.mjs
+  // todosInWindow）：全 0 或缺失不占位
+  const td = m.todos || {};
+  const todoCnt = (td.created || td.updated || td.completed)
+    ? ` · 待办 新增 ${td.created ?? 0} / 更新 ${td.updated ?? 0} / 完成 ${td.completed ?? 0}` : '';
   $('rMaterials').textContent = `${m.projects ?? 0} 项目 / ${m.sessions ?? 0} 会话（${srcTxt}${failed}）${todoCnt}`;
   $('rbody').innerHTML = mdToHtml(rep.report || '');
   $('rout').style.display = 'block';
