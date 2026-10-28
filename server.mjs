@@ -33,7 +33,7 @@ import { checkClientAuth } from './lib/gwauth.mjs';
 import { authStatus } from './lib/upstream.mjs';
 import { monitorsStatus, switchMonitors } from './lib/monitors.mjs';
 import { renameMonitors } from './lib/monitors-admin.mjs';
-import { listTodos, createTodo, updateTodo, deleteTodo } from './lib/todos.mjs';
+import { listTodos, createTodo, updateTodo, deleteTodo, createTodoItem, updateTodoItem, deleteTodoItem } from './lib/todos.mjs';
 import { startReportJob, getReportJob, listReports, getReport, deleteReport } from './lib/report/generate.mjs';
 import { httpError, sendJson, extractModel } from './lib/util.mjs';
 
@@ -329,13 +329,49 @@ const server = http.createServer(async (req, res) => {
     // 待办事项（个人工作台）：人（工作台网页）与各 agent（Bearer token）共用的任务中枢。
     // 与 /v1/chat/completions 同一威胁模型：Bearer 鉴权即可——跨站表单带不了
     // Authorization 头，不必另强制 JSON 内容类型。必须放在 /v1/* catch-all 之前。
+    // 子项（checklist）：POST /:id/items 加一条、PATCH·PUT /:id/items/:itemId 勾选/改名、
+    // DELETE 删一条；写响应带整只父待办（子项勾选会派生父状态，前端刷新即所见）。
     if (url === '/v1/todos' || url.startsWith('/v1/todos/')) {
       checkClientAuth(req);
       const sub = url.slice('/v1/todos'.length).replace(/^\//, '');
+      const parts = sub ? sub.split('/') : [];
       let id = null;
-      if (sub) {
-        const first = sub.split('/')[0];
-        try { id = decodeURIComponent(first); } catch { id = first; }
+      if (parts[0]) {
+        try { id = decodeURIComponent(parts[0]); } catch { id = parts[0]; }
+      }
+      if (id && parts[1] === 'items') {
+        let itemId = null;
+        if (parts[2]) { try { itemId = decodeURIComponent(parts[2]); } catch { itemId = parts[2]; } }
+        const readItemsBody = async () => {
+          const bodyBuf = await readRequestBody(req, 64 * 1024);
+          try {
+            const payload = JSON.parse(bodyBuf.toString('utf8') || '{}');
+            if (payload && typeof payload === 'object' && !Array.isArray(payload)) return payload;
+          } catch {}
+          return null;
+        };
+        if (parts.length === 2 && req.method === 'POST') {
+          const payload = await readItemsBody();
+          if (!payload) return sendJson(res, 400, { error: { message: '请求体不是合法 JSON 对象', type: 'bad_request' } });
+          return sendJson(res, 201, { ok: true, todo: createTodoItem(id, payload) });
+        }
+        if (itemId && parts.length === 3 && (req.method === 'PUT' || req.method === 'PATCH')) {
+          const payload = await readItemsBody();
+          if (!payload) return sendJson(res, 400, { error: { message: '请求体不是合法 JSON 对象', type: 'bad_request' } });
+          return sendJson(res, 200, { ok: true, todo: updateTodoItem(id, itemId, payload) });
+        }
+        if (itemId && parts.length === 3 && req.method === 'DELETE') {
+          deleteTodoItem(id, itemId);
+          res.writeHead(204);
+          return res.end();
+        }
+        if (parts.length > 3 || (parts.length === 3 && !itemId)) {
+          return sendJson(res, 404, { error: { message: `未知的待办子项端点 ${url}`, type: 'not_found' } });
+        }
+        return sendJson(res, 405, { error: { message: '此端点仅支持 POST/PATCH/PUT/DELETE', type: 'method_not_allowed' } });
+      }
+      if (id && parts[1]) {
+        return sendJson(res, 404, { error: { message: `未知的待办子资源 ${url}；可用: /v1/todos/:id、/v1/todos/:id/items(/:itemId)`, type: 'not_found' } });
       }
       if (req.method === 'GET' && !id) {
         // query string 在入口已被剥掉，过滤参数从 req.url 原文取
@@ -405,7 +441,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     return sendJson(res, 404, {
-      error: { message: `未知路径 ${url}；可用: / (管理台), /workbench (工作台), /v1/chat/completions, /v1/messages, /v1/models, /v1/todos, /admin/report/*, /healthz`, type: 'not_found' },
+      error: { message: `未知路径 ${url}；可用: / (管理台), /workbench (工作台), /v1/chat/completions, /v1/messages, /v1/models, /v1/todos(子项 /:id/items), /admin/report/*, /healthz`, type: 'not_found' },
     });
   } catch (e) {
     const status = e.status ?? 500;

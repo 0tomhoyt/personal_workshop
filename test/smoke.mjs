@@ -696,6 +696,111 @@ try {
     gwTodo2.kill();
   }
 
+  console.log('— 待办子项 checklist（/v1/todos/:id/items + 自动完成派生 + agent 短写上限） —');
+  {
+    // 建带清单的待办（agent 来源；note 恰 300 码位边界值）
+    const cA = await post('/v1/todos', {
+      title: 'SME 推进', source: 'agent:zcode', project: 'unigemm', note: '短'.repeat(300),
+      items: [{ title: '内核适配' }, { title: '跑通 benchmark' }, { title: '归档结果' }],
+    });
+    const jA = (await cA.json()).todo;
+    check('POST 带 items（agent note 恰 300）→ 201；子项有 id / done=false / done_at=null',
+      cA.status === 201 && Array.isArray(jA?.items) && jA.items.length === 3
+      && jA.items.every((it) => typeof it.id === 'string' && it.done === false && it.done_at === null),
+      JSON.stringify(jA?.items));
+    check('未全完成不派生：父仍 pending 且 completed_at null', jA?.status === 'pending' && jA?.completed_at === null);
+
+    const note301 = await post('/v1/todos', { title: 'x', source: 'agent:claude-code', note: '长'.repeat(301) });
+    const note301J = await note301.json();
+    check('agent note 301 码位 → 400 且文案点明 300 上限', note301.status === 400 && (note301J.error?.message || '').includes('300'), JSON.stringify(note301J.error));
+    const notePatch = await fetch(`${GW}/v1/todos/${jA.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ note: '长'.repeat(301) }) });
+    check('agent 条目 PATCH note 301 → 400（分级上限对 PATCH 同样生效）', notePatch.status === 400);
+    const userLong = await post('/v1/todos', { title: '用户长详情', note: '详'.repeat(2000) });
+    check('用户 note 2000 码位 → 201（用户上限不收）', userLong.status === 201);
+
+    const plain = (await (await post('/v1/todos', { title: '无清单条目' })).json()).todo;
+    check('无 items 入参：返回不含 items 键（旧模型零迁移）', plain.items === undefined, JSON.stringify(plain));
+
+    // 自动完成派生：逐个勾完 → 父自动 done
+    const [i1, i2, i3] = jA.items;
+    const t1 = await fetch(`${GW}/v1/todos/${jA.id}/items/${i1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: true }) });
+    const t1J = await t1.json();
+    check('PATCH 子项 done → 200 且响应带整只父待办', t1.status === 200 && t1J.ok === true && t1J.todo?.items?.length === 3, JSON.stringify(t1J).slice(0, 140));
+    check('勾 1/3：父仍 pending', t1J.todo?.status === 'pending');
+    check('勾 1/3：目标子项 done_at 盖章、其余子项原样', t1J.todo?.items?.find((x) => x.id === i1.id)?.done_at != null
+      && t1J.todo.items.filter((x) => x.id !== i1.id).every((x) => x.done === false && x.done_at === null), JSON.stringify(t1J.todo?.items));
+    check('单子项 PATCH：父 title/note 不被触碰（并发不整组覆盖）', t1J.todo?.title === 'SME 推进' && t1J.todo?.note === '短'.repeat(300));
+    const t2 = await (await fetch(`${GW}/v1/todos/${jA.id}/items/${i2.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: true }) })).json();
+    check('勾 2/3：父仍 pending', t2.todo?.status === 'pending');
+    const t3 = await (await fetch(`${GW}/v1/todos/${jA.id}/items/${i3.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: true }) })).json();
+    check('勾 3/3（全完成）→ 父自动 done 且 completed_at 盖章', t3.todo?.status === 'done' && typeof t3.todo?.completed_at === 'number', JSON.stringify([t3.todo?.status, t3.todo?.completed_at]));
+    const stamp1 = t3.todo.completed_at;
+
+    // completed_at 不重盖：全 done 后整组原样替换（保留 id，内容不变）
+    const again = await fetch(`${GW}/v1/todos/${jA.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ items: t3.todo.items }) });
+    const againJ = await again.json();
+    check('全 done 后整组原样替换：completed_at 不重盖', again.status === 200 && againJ.todo?.completed_at === stamp1, JSON.stringify([againJ.todo?.completed_at, stamp1]));
+
+    // 取消一个 → 父回 in_progress、清章；再勾回 → 重盖新值
+    const un = await (await fetch(`${GW}/v1/todos/${jA.id}/items/${i2.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: false }) })).json();
+    check('取消一个子项 → 父回 in_progress 且 completed_at 清空', un.todo?.status === 'in_progress' && un.todo?.completed_at === null, JSON.stringify(un.todo && [un.todo.status, un.todo.completed_at]));
+    check('取消后该子项 done_at 置 null', un.todo?.items?.find((x) => x.id === i2.id)?.done_at === null);
+    const re = await (await fetch(`${GW}/v1/todos/${jA.id}/items/${i2.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: true }) })).json();
+    check('再勾回 → 父再次自动 done，completed_at 重盖', re.todo?.status === 'done' && typeof re.todo?.completed_at === 'number' && re.todo.completed_at >= stamp1);
+
+    // done 父加未勾子项 → 派生回 in_progress；删掉 → 剩余全 done 回 done
+    const add = await fetch(`${GW}/v1/todos/${jA.id}/items`, { method: 'POST', headers: authHeaders, body: JSON.stringify({ title: '补充：补文档' }) });
+    const addJ = await add.json();
+    const newItem = addJ.todo?.items?.find((x) => x.title === '补充：补文档');
+    check('POST 加子项 → 201 且返回父待办', add.status === 201 && addJ.ok === true && Boolean(newItem), JSON.stringify(addJ).slice(0, 140));
+    check('done 父加未勾子项 → 派生回 in_progress', addJ.todo?.status === 'in_progress');
+    const delIt = await fetch(`${GW}/v1/todos/${jA.id}/items/${newItem.id}`, { method: 'DELETE', headers: authHeaders });
+    const afterDel = await (await fetch(`${GW}/v1/todos`, { headers: { authorization: `Bearer ${TOKEN}` } })).json();
+    const jAAfter = afterDel.todos.find((x) => x.id === jA.id);
+    check('DELETE 子项 → 204；剩余全 done → 父回 done', delIt.status === 204 && jAAfter?.status === 'done', JSON.stringify(jAAfter && [jAAfter.status, jAAfter.items?.length]));
+
+    // 整组替换：保留既有 id + 新增一条（网页批量编辑 / agent 一次建单的路径）
+    const replaced = await fetch(`${GW}/v1/todos/${jA.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({
+      items: [...jAAfter.items.map((it) => ({ id: it.id, title: it.title, done: it.done })), { title: '整组替换新增' }],
+    }) });
+    const repJ = await replaced.json();
+    check('PATCH items 整组替换：既有 id 保留、新增派新 id', replaced.status === 200
+      && repJ.todo?.items?.some((it) => it.id === i1.id) && repJ.todo.items.some((it) => it.title === '整组替换新增')
+      && repJ.todo.items.length === 4 && new Set(repJ.todo.items.map((it) => it.id)).size === 4,
+      JSON.stringify(repJ.todo?.items?.map((it) => [it.id, it.title, it.done])));
+
+    // 显式 status 优先 + 空清单不派生
+    const manual = await (await fetch(`${GW}/v1/todos/${jA.id}`, { method: 'PUT', headers: authHeaders, body: JSON.stringify({ status: 'in_progress' }) })).json();
+    check('子项未全完成时显式 PUT status：按显式请求执行', manual.todo?.status === 'in_progress' && manual.todo?.completed_at === null);
+    const cleared = await (await fetch(`${GW}/v1/todos/${jA.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ items: [] }) })).json();
+    check('PATCH items:[] → 清单清空、父状态不动（空清单不派生）', cleared.todo?.items?.length === 0 && cleared.todo?.status === 'in_progress');
+
+    // 创建即全 done：派生在创建时同样生效
+    const born = await post('/v1/todos', { title: '生而完成', items: [{ title: 'a', done: true }, { title: 'b', done: true }] });
+    const bornJ = (await born.json()).todo;
+    check('POST items 全 done → 创建即派生 done + completed_at', born.status === 201 && bornJ?.status === 'done' && typeof bornJ?.completed_at === 'number');
+
+    // 旧条目（无 items 字段的存量数据）PATCH 正常、不派生
+    const oldPatch = await fetch(`${GW}/v1/todos/${plain.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ title: '无清单条目（改名）' }) });
+    const oldJ = await oldPatch.json();
+    check('旧条目 PATCH title 正常且不派生（items 仍缺省）', oldPatch.status === 200 && oldJ.todo?.title === '无清单条目（改名）' && oldJ.todo?.items === undefined && oldJ.todo?.status === 'pending');
+
+    // 校验矩阵
+    check('items 非数组 → 400', (await post('/v1/todos', { title: 'x', items: 'nope' })).status === 400);
+    check('子项缺 title → 400', (await post('/v1/todos', { title: 'x', items: [{}] })).status === 400);
+    check('子项 title 201 码位 → 400', (await post('/v1/todos', { title: 'x', items: [{ title: '子'.repeat(201) }] })).status === 400);
+    check('子项 done 非布尔 → 400', (await post('/v1/todos', { title: 'x', items: [{ title: 'ok', done: 'yes' }] })).status === 400);
+    check('子项超 50 条 → 400', (await post('/v1/todos', { title: 'x', items: Array.from({ length: 51 }, (_, i) => ({ title: `子项${i}` })) })).status === 400);
+    check('子项恰 50 条 → 201', (await post('/v1/todos', { title: 'x', items: Array.from({ length: 50 }, (_, i) => ({ title: `子项${i}` })) })).status === 201);
+    check('加子项缺 title → 400', (await fetch(`${GW}/v1/todos/${plain.id}/items`, { method: 'POST', headers: authHeaders, body: JSON.stringify({}) })).status === 400);
+    check('改子项 done 非布尔 → 400', (await fetch(`${GW}/v1/todos/${bornJ.id}/items/${bornJ.items[0].id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: 1 }) })).status === 400);
+    check('未知子项 id → 404', (await fetch(`${GW}/v1/todos/${plain.id}/items/deadbeef`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: true }) })).status === 404);
+    check('DELETE 未知子项 → 404', (await fetch(`${GW}/v1/todos/${plain.id}/items/deadbeef`, { method: 'DELETE', headers: authHeaders })).status === 404);
+    check('子项端点未知父 id → 404', (await fetch(`${GW}/v1/todos/no-such/items`, { method: 'POST', headers: authHeaders, body: JSON.stringify({ title: 'x' }) })).status === 404);
+    check('未知子资源 /v1/todos/:id/notes → 404（不再误当父 id）', (await fetch(`${GW}/v1/todos/${plain.id}/notes`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ title: 'x' }) })).status === 404);
+    check('GET /v1/todos/:id/items → 405（清单随父 GET 返回，无独立 GET）', (await fetch(`${GW}/v1/todos/${plain.id}/items`, { headers: { authorization: `Bearer ${TOKEN}` } })).status === 405);
+  }
+
   console.log('— 配置 workbench 节（报告模型设置，热加载） —');
   {
     const c = await (await fetch(`${GW}/admin/config`)).json();
