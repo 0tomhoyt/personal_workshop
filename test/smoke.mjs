@@ -1569,19 +1569,25 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('左栏六个视图项（不再靠跳页切换）',
       ['todos', 'report', 'overview', 'traffic', 'test', 'providers']
         .every((v) => idxHtml.includes(`data-view="${v}"`)));
-    // -- 左栏瘦身：塞不下的功能搬进主区（竖排的另一个来源） --
-    check('左栏不再有横向按钮组与协议串',
-      !idxHtml.includes('id="railMonBtns"') && !idxHtml.includes('id="monRailMsg"') && !idxHtml.includes('class="rail-proto"'));
-    check('整机同切搬到总览页', idxHtml.includes('id="monWholeRow"'));
+    // -- 左栏瘦身：协议串与提示行移出（竖排的来源）；切屏按钮留在左栏但改纵向 --
+    check('左栏不再有协议串与提示行',
+      !idxHtml.includes('id="monRailMsg"') && !idxHtml.includes('class="rail-proto"'));
+    // 切屏在左栏常驻（使用频率高，不能藏在「管理台→总览」两步之后），
+    // 但排布必须是纵向一项一行——横向并排会把中文挤成逐字竖排
+    check('整机同切常驻左栏底部（#railMons 在 .rail-foot 内）',
+      /<aside class="rail">[\s\S]*?id="railMons"[\s\S]*?<\/aside>/.test(idxHtml)
+      && !idxHtml.includes('id="monWholeRow"'));
+    check('左栏切屏按钮纵向一项一行（.rail-mons 为纵向 flex，非横向）',
+      /\.rail-mons \{[^}]*flex-direction:\s*column/.test(themeCssText));
+    check('左栏切屏按钮单行省略（名字可自填，截断要留 title）',
+      /\.railm \.lb \{[^}]*white-space:\s*nowrap[^}]*text-overflow:\s*ellipsis/.test(themeCssText)
+      && /data-mminput[\s\S]{0,240}title=/.test(idxHtml));
     // 必须落在 providers 视图内部：从 <section class="view" data-view="providers"> 到下一个
     // view/main 边界之间（导航栏里的 data-view="providers" 是按钮，不能算数）
     const provViewHtml = /<section class="view"[^>]*data-view="providers">([\s\S]*?)(?=<section class="view"|<\/main>)/.exec(idxHtml)?.[1] ?? '';
     check('重启/停止搬到配置页', provViewHtml.includes('id="btnRestart"') && provViewHtml.includes('id="btnStop"'),
       provViewHtml.length ? `providers 视图 ${provViewHtml.length} 字符` : '未找到 providers 视图');
     check('skip link 已移除（汇报为独立视图）', !idxHtml.includes('class="skip"'));
-    // 截断必须仍可辨识：显示器/输入源名由用户自填，按钮被省略号截断时要留 title 全文
-    check('整机同切按钮带 title 全文（省略号截断后可辨识）',
-      /data-mminput[\s\S]{0,240}title=/.test(idxHtml));
     // -- 左栏两级导航 + 竖排修复 --
     check('左栏两级：两个组头 + 六个子项', (idxHtml.match(/class="navgroup"/g) || []).length === 2
       && ['todos', 'report', 'overview', 'traffic', 'test', 'providers'].every((v) => idxHtml.includes(`href="#${v}"`)));

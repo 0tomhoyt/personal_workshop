@@ -357,6 +357,13 @@
       </div>
     </nav>
 
+    <!-- 显示器整机同切：常驻左栏底部（使用频率高，不能藏在「管理台→总览」两步之后）。
+         纵向一项一行——横向并排会把每个按钮挤到约 37px 内容宽，中文逐字折断成竖排。 -->
+    <div class="rail-foot" id="railFoot" hidden>
+      <div class="sub">Displays</div>
+      <div class="rail-mons" id="railMons"></div>
+    </div>
+
   </aside>
 
   <!-- 右主区：六个视图 -->
@@ -397,8 +404,7 @@
       <section class="sec">
         <div class="sechead"><span class="idx">04</span><h2>显示器输入源</h2><span class="en">Displays</span><span class="spacer"></span><span class="note">DDC/CI · 输入源切换</span></div>
         <div class="card">
-          <!-- 整机同切：所有屏一起切到指定输入源；单屏轮换在下方每行右侧 -->
-          <div class="actions" id="monWholeRow" style="margin-bottom:10px"></div>
+          <!-- 整机同切按钮常驻左栏底部（使用频率高）；这里只管每屏状态、单屏轮换与改名 -->
           <div id="monList"><span class="dim">加载中…</span></div>
           <div class="dim" id="monMsg" style="font-size:12px;margin-top:8px;min-height:15px"></div>
         </div>
@@ -978,8 +984,10 @@ async function poll() {
   }
   await maybeFetchLog();
   await maybeFetchStats();
-  // 显示器：仅总览页可见时刷、且最快 6s 一次（I2C 慢，服务端另有 5s 缓存）
-  if (curView === 'overview' && Date.now() - monLastFetch > 6000) {
+  // 显示器：左栏底部常驻切屏按钮，当前输入源的勾选状态在**任何视图**都要新鲜，
+  // 所以不再按视图门控。I2C 慢 + 服务端另有 5s 缓存 → 10s 一次足够；
+  // 总览页另有更快的 6s 刷新（见 loadMonitors 的调用点）。
+  if (Date.now() - monLastFetch > (curView === 'overview' ? 6000 : 10000)) {
     monLastFetch = Date.now();
     loadMonitors();
   }
@@ -1492,24 +1500,39 @@ function monBadge(m) {
 
 function renderMonitors(d) {
   const box = $('monList');
-  const wholeRow = $('monWholeRow');
+  const railMons = $('railMons');
+  const railFoot = $('railFoot');
+  // 左栏切屏区：m1ddc 不可用/状态取不到时整块收起，不占地方也不给假按钮
+  const hideRail = () => {
+    if (railFoot) railFoot.hidden = true;
+    if (railMons) { railMons.innerHTML = ''; railMons.classList.remove('is-busy'); }
+  };
   if (!d) {
     box.innerHTML = '<span class="dim">状态获取失败（服务无响应）</span>';
-    wholeRow.innerHTML = '';
+    hideRail();
     return;
   }
   monState = d;
   if (!d.available) {
     box.innerHTML = `<span class="warn">m1ddc 不可用</span> — <span class="dim">${esc(d.reason || '')}</span>`;
-    wholeRow.innerHTML = '';
+    hideRail();
     return;
   }
   const inputs = d.inputs || [];
-  // 整机同切：每个输入源一个按钮（首个为主按钮）。宽度充足，不设 flex:1；
-  // 名字由用户自填可能很长，title 留全文，视觉上靠主区宽度自然换行
-  wholeRow.innerHTML = inputs.map((i, idx) =>
-      `<button class="${idx === 0 ? 'primary' : ''}" data-mminput="${i.value}"${monBusy ? ' disabled' : ''} title="所有屏一起切到「${esc(i.label)}」">${esc(i.label)}</button>`
-    ).join('');
+  // 左栏整机同切：纵向一项一行（横向并排会把中文挤成竖排）。每行显示输入源名字，
+  // 当前所在输入源打勾；名字由用户自填可能很长，单行省略 + title 留全文。
+  const curInput = (d.monitors || []).find((m) => m.ok && m.input)?.input;
+  if (railFoot) railFoot.hidden = !inputs.length;
+  if (railMons) {
+    railMons.classList.toggle('is-busy', monBusy);
+    railMons.innerHTML = inputs.map((i) => {
+      const on = curInput === i.value;
+      return `<button class="railm${on ? ' on' : ''}" data-mminput="${i.value}"${monBusy ? ' disabled' : ''}`
+        + ` title="所有屏一起切到「${esc(i.label)}」${on ? '（当前）' : ''}">`
+        + `<span class="ck">${on ? '✓' : ''}</span><span class="lb">${esc(i.label)}</span></button>`;
+    }).join('');
+  }
+
 
   box.innerHTML = (d.monitors || []).map((m) => {
     const err = m.error ? ` <span class="bad" style="font-size:11px">${esc(m.error)}</span>` : '';
@@ -1559,8 +1582,8 @@ function renderMonitors(d) {
   if (inName) inName.placeholder = `留空 = 输入 ${$('monInPick')?.value ?? 'N'}`;
 }
 
-// 总览页：整机显式切换
-$('monWholeRow').addEventListener('click', (e) => {
+// 左栏底部：整机显式切换（任一视图都可用）
+$('railMons').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-mminput]');
   if (b && !monBusy) switchMon({ input: Number(b.dataset.mminput) });
 });
@@ -1883,7 +1906,9 @@ applyTheme();
   loadProvCfg();
   refreshTodos();
   refreshHistory();
-  fetchLog();   // 诊断徽标种子
+  fetchLog();        // 诊断徽标种子
+  monLastFetch = Date.now();
+  loadMonitors();    // 左栏切屏按钮常驻，任何落地视图都要有
   poll();
   setInterval(poll, 3000);
   // 上一次报告任务仍在跑：接着轮询进度

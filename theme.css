@@ -106,6 +106,35 @@ body::after {
 .rail-theme { flex: none; margin-left: auto; padding: 3px 9px; font-size: 12px; }
 .statline .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
+/* ---- 左栏底部：显示器整机同切（常驻，使用频率高）----------------------
+   纵向一项一行——这是契约的核心：横向并排会把每个按钮挤到约 37px 内容宽，
+   中文的 min-content 是 1 个字，于是被逐字折断成竖排。 */
+.rail-foot {
+  margin-top: auto; padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+}
+.rail-foot .sub {
+  font: 500 9px var(--mono); color: var(--faint);
+  letter-spacing: .24em; text-transform: uppercase; padding: 0 4px 2px;
+}
+.rail-mons { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.railm {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0;
+  padding: 6px 9px; border: 1px solid transparent; border-radius: 7px;
+  background: transparent; color: var(--dim); cursor: pointer; text-align: left;
+  font: 500 12.5px var(--sans);
+  transition: color .15s, background-color .15s, border-color .15s;
+}
+.railm:hover { color: var(--ink); background: var(--row-hover); border-color: var(--line); }
+.railm .ck { flex: none; width: 10px; font-size: 10px; color: var(--amber); }
+/* 当前所在输入源：琥珀文字 + 淡底，与左栏「当前视图」同一套语言 */
+.railm.on { color: var(--amber-hi); background: var(--amber-dim); border-color: rgba(var(--amber-rgb), .35); }
+.railm .lb { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.railm:disabled { opacity: .45; cursor: default; }
+/* 切屏进行中：整块略微降透明度，重复点不再响应 */
+.rail-mons.is-busy { opacity: .6; }
+
 /* 状态灯：运行中带雷达扩散环 */
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); position: relative; flex: none; }
 .dot.ok { background: var(--green); box-shadow: 0 0 9px rgba(var(--green-rgb), .7); }
@@ -305,5 +334,14 @@ code { background: var(--inset); border: 1px solid var(--line-soft); border-radi
   .grouphead .caret { display: none; }
   .viewbtn { white-space: nowrap; padding: 6px 12px; flex: none; }
   .viewbtn.active::before { display: none; }
+  /* 左栏收成顶栏后，切屏区跟着横排：与导航同一行语言，按钮自适应宽度而非整宽。
+     纵向契约只针对「左栏」这一窄列，顶栏宽度充足，横排不会挤成竖排。 */
+  .rail-foot {
+    margin-top: 8px; padding-top: 8px; flex-direction: row; align-items: center; gap: 8px;
+    border-top: none; overflow-x: auto;
+  }
+  .rail-foot .sub { flex: none; padding: 0; }
+  .rail-mons { flex-direction: row; gap: 4px; flex: none; }
+  .railm { width: auto; flex: none; white-space: nowrap; padding: 6px 12px; }
   .main { padding: 20px 20px 48px; }
 }
