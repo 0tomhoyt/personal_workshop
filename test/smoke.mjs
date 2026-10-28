@@ -1579,6 +1579,16 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       !/railTodo|railDoing|railReports/.test(idxHtml));
     check('切回统计视图立即拉一次（不显示旧值当新值）',
       /function setView[\s\S]{0,1200}maybeFetchStats\(\)/.test(idxHtml));
+    // -- 主区小节编号：每个视图内部从 01 起连续（不再与旧视图编号联动）--
+    // 松的「1–9」写法会被现有串号蒙混过关，必须逐视图校验
+    const viewSection = (v) => (new RegExp(`data-view="${v}"[\\s\\S]*?(?=data-view="|</main>)`).exec(idxHtml)?.[0] || '');
+    check('每个视图内小节编号从 01 开始连续',
+      ['todos', 'report', 'overview', 'traffic', 'test', 'providers'].every((v) => {
+        const nums = [...viewSection(v).matchAll(/<span class="idx">(\d+)<\/span>/g)].map((m) => m[1]);
+        return nums.length > 0 && nums.every((n, i) => n === String(i + 1).padStart(2, '0'));
+      }),
+      ['todos', 'report', 'overview', 'traffic', 'test', 'providers']
+        .map((v) => v + ':' + [...viewSection(v).matchAll(/<span class="idx">(\d+)<\/span>/g)].map((m) => m[1]).join('/')).join(' '));
     const wb = await fetch(`${GW}/workbench`);
     const wbText = await wb.text();
     check('/workbench → 200 含「工作台」', wb.status === 200 && wbText.includes('工作台'), `got ${wb.status}`);
