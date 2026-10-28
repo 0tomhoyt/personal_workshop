@@ -1679,23 +1679,25 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       !idxHtml.includes('id="monRailMsg"') && !idxHtml.includes('class="rail-proto"'));
     // 切屏在左栏常驻（使用频率高，不能藏在「管理台→总览」两步之后），
     // 但排布必须是纵向一项一行——横向并排会把中文挤成逐字竖排
-    check('整机同切常驻左栏底部（#railMons 在 .rail-foot 内）',
-      /<aside class="rail">[\s\S]*?id="railMons"[\s\S]*?<\/aside>/.test(idxHtml)
-      && !idxHtml.includes('id="monWholeRow"'));
+    check('切屏按钮常驻左栏底部（#railMons 在 .rail-foot 内）',
+      /<aside class="rail">[\s\S]*?id="railMons"[\s\S]*?<\/aside>/.test(idxHtml));
     check('左栏切屏按钮纵向一项一行（.rail-mons 为纵向 flex，非横向）',
       /\.rail-mons \{[^}]*flex-direction:\s*column/.test(themeCssText));
     check('左栏切屏按钮单行省略（名字可自填，截断要留 title）',
       /\.railm \.lb \{[^}]*white-space:\s*nowrap[^}]*text-overflow:\s*ellipsis/.test(themeCssText)
-      && /data-mminput[\s\S]{0,240}title=/.test(idxHtml));
-    // 屏之间输入源不同时不能谎报「全机同源」：按钮标 k/total 且用 partial 样式区分
-    check('多屏分歧时如实标 k/total（partial 态）',
-      idxHtml.includes('partial') && /const partial = n > 0 && n < totalKnown/.test(idxHtml)
-      && /<span class="frac">\$\{frac\}<\/span>/.test(idxHtml));
-    check('分歧态有独立样式（虚线边框，不与「全在」混同）',
-      /\.railm\.partial \{[^}]*border-style:\s*dashed/.test(themeCssText));
-    // 分母取配置里的屏总数：读失败的屏仍存在，只按读成功的算会谎报「唯一一块屏」
-    check('分母取屏总数而非读取成功数（读失败不谎报单屏）',
-      /const totalKnown = all\.length/.test(idxHtml) && /failedCount/.test(idxHtml));
+      && /data-mdisp[\s\S]{0,240}title=/.test(idxHtml));
+    // 一台屏一个按钮：点一下轮换到它的下一个输入源（不再按输入源列出整机同切）
+    check('左栏一台屏一个按钮（按 monitors 渲染，带 data-mdisp/data-mnext）',
+      /railMons\.innerHTML = all\.map\(\(m\)/.test(idxHtml)
+      && idxHtml.includes('data-mdisp=') && idxHtml.includes('data-mnext=')
+      && !idxHtml.includes('data-mminput'));
+    check('点按钮切到该屏下一个输入源（循环取模，非固定值）',
+      /const next = inputs\.length \? inputs\[\(curIdx \+ 1\) % inputs\.length\] : null/.test(idxHtml)
+      && /switchMon\(\{ input: next, display: b\.dataset\.mdisp \}\)/.test(idxHtml));
+    // 读失败的屏没有可信的当前输入源：不给「切下一个」，改为重试读取
+    check('读失败时不盲切（data-mnext 空串 = 重试读取）',
+      /data-mnext="\$\{!retry \? next\.value : ''\}"/.test(idxHtml)
+      && /b\.dataset\.mnext === ''/.test(idxHtml));
     // 必须落在 providers 视图内部：从 <section class="view" data-view="providers"> 到下一个
     // view/main 边界之间（导航栏里的 data-view="providers" 是按钮，不能算数）
     const provViewHtml = /<section class="view"[^>]*data-view="providers">([\s\S]*?)(?=<section class="view"|<\/main>)/.exec(idxHtml)?.[1] ?? '';
@@ -1719,6 +1721,25 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       /\.statline \{[^}]*white-space:\s*nowrap/.test(themeCssText)
       && /\.statline > span \{[^}]*text-overflow:\s*ellipsis/.test(themeCssText));
     check('左栏无英文小标（.ven 已移除）', !idxHtml.includes('class="ven"'));
+    // -- 主题按钮：二态（亮 ⇄ 暗），每次点击必然变色 --
+    // 曾是 auto→light→dark 三态循环，系统本身浅色时 auto 与显式 light 渲染相同，
+    // 于是「亮→暗」要点两下（第一下视觉空转）。现在目标取当前实际配色的反面。
+    check('主题按钮二态：取当前实际配色的反面（每次点击必然变色）',
+      /themeMode = isDarkNow\(\) \? 'light' : 'dark'/.test(idxHtml)
+      && !/themeMode === 'auto' \? 'light' : themeMode === 'light' \? 'dark' : 'auto'/.test(idxHtml));
+    check('主题：auto 仅作首访默认（仍跟随系统变化）',
+      /const isDarkNow = \(\) => themeMode === 'auto' \? sysDark\(\)/.test(idxHtml)
+      && /if \(themeMode === 'auto'\) applyTheme\(\)/.test(idxHtml));
+    // -- 趋势图悬停读数：柱子带 data-i，气泡/参考线由 .plot 上委托驱动 --
+    check('趋势图柱子可定位（data-i，不再只靠原生 title）',
+      /class="bar\$\{b\.isNow[\s\S]{0,120}data-i="\$\{i\}"/.test(idxHtml));
+    check('趋势图悬停气泡 + 参考线（指针事件委托在 .plot）',
+      idxHtml.includes('id="chartTip"') && idxHtml.includes('id="chartCol"')
+      && /addEventListener\('pointermove'[\s\S]{0,300}showChartTip\(bar\)/.test(idxHtml)
+      && /\.charttip \{[^}]*pointer-events: none/.test(idxHtml));
+    check('趋势图悬停显示具体量（按当前指标格式化）',
+      /for \(const b of bars\) b\.tipVal = met\.fmt\(b\.v\)/.test(idxHtml)
+      && idxHtml.includes('d.tipVal'));
     check('窄屏顶栏：分组与子项均 nowrap，容器可横向滚动',
       /@media \(max-width: 900px\)[\s\S]*\.views \{[^}]*overflow-x: auto/.test(themeCssText)
       && /@media \(max-width: 900px\)[\s\S]*\.viewbtn[^}]*white-space: nowrap/.test(themeCssText));
@@ -2019,7 +2040,22 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('install.sh / uninstall.sh：保留旧版热键 LaunchAgent 的遗留清理路径（曾装过的机器能清掉）', inst.includes('cannbot-monitor-hotkeys') && inst.includes('HOTKEY_PLIST') && uninst.includes('cannbot-monitor-hotkeys') && uninst.includes('HOTKEY_PLIST'));
     const admText = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
     check('页面：一键切换按钮 / 热键改绑 UI / toggle 调用全部移除', !admText.includes('monToggle') && !admText.includes('monHk') && !admText.includes('/admin/monitors/hotkeys') && !admText.includes("mode: 'toggle'") && !admText.includes('{"mode":"toggle"}'));
-    check('页面：手动切换面保留（左栏整机同切 + 每屏下一输入源轮换 + 输入源/屏改名）', admText.includes('data-mminput') && admText.includes('data-mcycle') && admText.includes('monInEdit') && admText.includes('data-mnamesave'));
+    check('页面：手动切换面保留（左栏每屏一键轮换 + 总览每屏轮换 + 输入源/屏改名）', admText.includes('data-mdisp') && admText.includes('data-mcycle') && admText.includes('monInEdit') && admText.includes('data-mnamesave'));
+
+    // -- 给 agent 用的待办 skill：内容必须与实际 API 一致（字段、上限、端点） --
+    const skillPath = path.join(ROOT, 'skills/workbench-todos/SKILL.md');
+    check('agent 待办 skill 存在（skills/workbench-todos/SKILL.md）', fs.existsSync(skillPath), skillPath);
+    if (fs.existsSync(skillPath)) {
+      const sk = fs.readFileSync(skillPath, 'utf8');
+      check('skill 有 name/description 前置元数据', /^---\nname: workbench-todos\ndescription: .+\n---/.test(sk));
+      check('skill 的端点与字段与实现一致',
+        sk.includes('/v1/todos') && sk.includes('/items') && sk.includes('/admin/config')
+        && sk.includes('in_progress') && sk.includes('someday'));
+      check('skill 写明 agent 来源的 note 300 字上限（与 lib/todos.mjs 一致）',
+        sk.includes('300') && /AGENT_NOTE_LIMIT|300 字上限|≤300/.test(sk));
+      // agent 侧最大的坑：把 token 写死进仓库/脚本
+      check('skill 明确禁止写死 token（现取）', /不要往仓库、脚本、记忆里写死/.test(sk));
+    }
 
     // -- 文档与代码同步：单页事实、两级导航、左栏契约 --
     const claudeMd = fs.readFileSync(path.join(ROOT, 'CLAUDE.md'), 'utf8');

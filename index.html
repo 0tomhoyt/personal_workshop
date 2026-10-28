@@ -52,16 +52,38 @@
     height: 78px; min-width: 38px; font: 10px var(--mono); color: var(--faint); line-height: 1;
     font-variant-numeric: tabular-nums;
   }
-  .plot { position: relative; flex: 1; height: 78px; border-bottom: 1px solid var(--line); }
+  .plot { --plot-h: 78px; position: relative; flex: 1; height: var(--plot-h); border-bottom: 1px solid var(--line); }
   .plot .gl { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--line-soft); pointer-events: none; }
   .chart { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 2px; }
   .chart .bar {
-    flex: 1; border-radius: 3px 3px 0 0; min-height: 3px;
+    position: relative; flex: 1; border-radius: 3px 3px 0 0; min-height: 3px;
     background: linear-gradient(180deg, var(--amber-hi), var(--amber) 65%, rgba(var(--amber-rgb), .55));
     box-shadow: 0 0 10px rgba(var(--amber-rgb), .12);
+    transition: filter .12s, box-shadow .12s;
   }
   .chart .bar.zero { background: var(--line-soft); box-shadow: none; opacity: 1; min-height: 2px; }
   .chart .bar.now { outline: 1.5px solid var(--ink); outline-offset: -1px; }
+  /* 悬停：整条提亮并按悬停列画一条贯穿的定位线，鼠标在哪根就指哪根 */
+  .chart .bar:hover { filter: brightness(1.22); box-shadow: 0 0 0 1px rgba(var(--amber-rgb), .55), 0 0 14px rgba(var(--amber-rgb), .3); }
+  .chart .bar.hot { filter: brightness(1.22); box-shadow: 0 0 0 1px rgba(var(--amber-rgb), .55), 0 0 14px rgba(var(--amber-rgb), .3); }
+  /* 零值柱只有 2px 高，悬停目标太窄：用透明伪元素把命中区撑到整列高度。
+     横向各外扩 1px，盖住柱间 2px 缝隙——否则指针在两根之间会让气泡反复闪灭 */
+  .chart .bar::after {
+    content: ""; position: absolute; left: -1px; right: -1px; bottom: 0; height: var(--plot-h, 78px);
+  }
+  /* 悬停读数气泡：即时出现（原生 title 要停一秒），跟随指针并夹在绘图区内 */
+  .charttip {
+    position: absolute; z-index: 3; pointer-events: none;
+    transform: translate(-50%, -100%); white-space: nowrap;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid rgba(var(--amber-rgb), .5); border-radius: 6px;
+    padding: 4px 9px; font: 11px/1.5 var(--mono); font-variant-numeric: tabular-nums;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .3);
+  }
+  .charttip b { color: var(--amber-hi); font-weight: 700; }
+  .charttip .t { color: var(--dim); }
+  /* 悬停列参考线 */
+  .chartcol { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(var(--amber-rgb), .45); pointer-events: none; }
   .xaxis { display: flex; margin-left: 46px; margin-top: 5px; font: 10px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
   .xaxis span { flex: 1; text-align: center; line-height: 1; }
   .xaxis span.now { color: var(--amber-hi); font-weight: 700; }
@@ -442,10 +464,12 @@
           <div class="chartwrap">
             <div class="chartrow">
               <div class="yaxis"><span id="yMax">–</span><span id="yMid"></span><span>0</span></div>
-              <div class="plot">
+              <div class="plot" id="plot">
                 <div class="gl" style="top:0"></div>
                 <div class="gl" style="top:50%"></div>
                 <div class="chart" id="chart"></div>
+                <div class="chartcol" id="chartCol" hidden></div>
+                <div class="charttip" id="chartTip" hidden></div>
               </div>
             </div>
             <div class="xaxis" id="xaxis"></div>
@@ -1157,6 +1181,8 @@ function niceCeil(v) {
 
 // 趋势图指标：请求数 / Tokens(入+出) / 等效费用
 let chartMetric = 'req';
+let chartBars = []; // 当前这张图的柱子数据（drawStats 时写入，悬停读数用）
+let chartHot = -1;  // 当前悬停列下标，-1 表示未悬停
 const METRIC = {
   req: { label: '请求', of: (b) => b?.req || 0, fmt: (v) => `${v} 次` },
   tok: { label: 'Tokens', of: (b) => (b?.tin || 0) + (b?.tout || 0), fmt: (v) => `${fmtTok(v)} tok` },
@@ -1242,22 +1268,30 @@ function drawStats() {
   } else {
     const hours = Array.isArray(s.hours) && s.hours.length === 24
       ? s.hours : Array.from({ length: 24 }, () => ({ req: 0, tin: 0, tout: 0, cost: 0 }));
-    bars = hours.map((h, i) => ({ v: met.of(h), label: String(i), tip: `${i}:00`, isNow: i === nowH }));
+    // 小时格给出区间语义（「9:00–10:00」），否则读者会把它当成某个瞬间的采样
+    bars = hours.map((h, i) => ({ v: met.of(h), label: String(i), tip: `${i}:00–${(i + 1) % 24}:00`, isNow: i === nowH }));
     xlabels = bars.map((b, i) => ({ text: i % 3 === 0 ? b.label : '', now: b.isNow }));
     ymaxSrc = bars.map((b) => b.v);
     caption = `今日按小时 · ${met.label}`;
   }
+  // 悬停读数要「具体量」：按当前指标格式化，与 Y 轴同一个函数口径
+  for (const b of bars) b.tipVal = met.fmt(b.v);
 
   const ymax = niceCeil(Math.max(1, ...ymaxSrc));
   const fmtY = (v) => chartMetric === 'cost' ? (v >= 1 ? '$' + v : '$' + v.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')) : fmtTok(v);
   $('yMax').textContent = fmtY(ymax);
   $('yMid').textContent = fmtY(ymax / 2);
   $('chartCaption').textContent = caption;
-  $('chart').innerHTML = bars.map((b) => {
+  $('chart').innerHTML = bars.map((b, i) => {
     const ht = Math.min(100, Math.max(Math.round(b.v / ymax * 100), b.v ? 4 : 0));
     return `<div class="bar${b.isNow ? ' now' : ''}${b.v ? '' : ' zero'}" style="height:${ht}%" ` +
-      `title="${b.tip} — ${met.label} ${met.fmt(b.v)}"></div>`;
+      `data-i="${i}"></div>`;
   }).join('');
+  // 柱子是 re-render 出来的，hover 监听挂容器上（委托），不必每次重建 DOM 后重挂。
+  // 但重绘意味着数据换了（轮询/切指标/切区间），旧气泡的数字已是上一份数据 → 先收起，
+  // 指针若仍停在图上，下一次 pointermove 会按新数据重新弹出。
+  chartBars = bars;
+  hideChartTip();
   $('xaxis').innerHTML = xlabels.map((x) =>
     `<span class="${x.now ? 'now' : ''}">${x.text}</span>`).join('');
 
@@ -1427,6 +1461,72 @@ document.querySelectorAll('#metricSeg button').forEach((b) => {
   };
 });
 
+// ---- 趋势图悬停读数 -------------------------------------------------------
+// 柱子只有 78px 高、每根宽约 10px，靠原生 title 要停一秒才弹，且弹出位置随机。
+// 这里自己画气泡：贴着指针即时显示「哪一格 · 具体量」，同时在悬停列画一条参考线。
+// 柱子每次 drawStats 都重建，所以监听挂在 .plot 上做委托，不随重渲染丢失。
+function hideChartTip() {
+  chartHot = -1;
+  const tip = $('chartTip'), col = $('chartCol');
+  if (tip) tip.hidden = true;
+  if (col) col.hidden = true;
+  document.querySelectorAll('#chart .bar.hot').forEach((b) => b.classList.remove('hot'));
+}
+
+function showChartTip(bar) {
+  const i = Number(bar.dataset.i);
+  const d = chartBars[i];
+  const tip = $('chartTip'), col = $('chartCol'), plot = $('plot');
+  if (!d || !tip || !col || !plot) return;
+  // 不能只按 chartHot 判「已经高亮了」：轮询/切指标都重建柱子，新柱子没有 hot 类，
+  // 而 chartHot 仍是旧下标 → 跳过添加，高亮就丢了。所以每次都对齐（幂等，代价可忽略）
+  if (!bar.classList.contains('hot')) {
+    document.querySelectorAll('#chart .bar.hot').forEach((b) => { if (b !== bar) b.classList.remove('hot'); });
+    bar.classList.add('hot');
+  }
+  chartHot = i;
+  // 柱子中心 = 列的横向位置（.chart 与 .plot 同宽同 padding，flex 均分布）
+  const pw = plot.clientWidth;
+  const bw = bar.offsetWidth;
+  const cx = bar.offsetLeft + bw / 2;
+  col.hidden = false;
+  col.style.left = (cx - 0.5) + 'px';
+  tip.hidden = false;
+  tip.innerHTML = `<span class="t">${esc(d.tip)}</span> <b>${esc(d.tipVal)}</b>`;
+  // 气泡夹在绘图区内：贴边时改用左右对齐，避免溢出被裁
+  const tw = tip.offsetWidth;
+  const half = tw / 2;
+  const x = Math.min(Math.max(cx, half + 2), Math.max(half + 2, pw - half - 2));
+  tip.style.left = x + 'px';
+  // 纵向贴住该柱顶端，但至少留出气泡自身高度，避免超出绘图区上沿
+  const barTop = plot.clientHeight - bar.offsetHeight;
+  tip.style.top = Math.max(tip.offsetHeight, barTop - 6) + 'px';
+}
+
+$('plot').addEventListener('pointermove', (e) => {
+  const bar = e.target.closest('#chart .bar');
+  if (bar) showChartTip(bar);
+  else hideChartTip();
+});
+$('plot').addEventListener('pointerleave', hideChartTip);
+$('plot').addEventListener('pointercancel', hideChartTip);
+// 键盘可达：柱子本身不是焦点元素，但 Tab 到图之后可用方向键逐格读
+$('chart').setAttribute('tabindex', '0');
+$('chart').addEventListener('blur', hideChartTip);
+// 键盘：Tab 到图后用 ← → 逐格读，气泡复用同一套定位（无障碍与鼠标等价）
+$('chart').addEventListener('keydown', (e) => {
+  if (!chartBars.length) return;
+  const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+  const fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+  if (!back && !fwd) return;
+  e.preventDefault();
+  const n = chartBars.length;
+  const cur = chartHot < 0 ? (back ? n : -1) : chartHot;
+  const next = back ? (cur - 1 + n) % n : (cur + 1) % n;
+  const bar = document.querySelectorAll('#chart .bar')[next];
+  if (bar) showChartTip(bar);
+});
+
 function renderStats(s) {
   lastStats = s;
   // stats 顶层 protocols（服务端从 providers.json 全量构建，含停用 provider）比 /healthz
@@ -1528,45 +1628,30 @@ function renderMonitors(d) {
     return;
   }
   const inputs = d.inputs || [];
-  // 左栏整机同切：纵向一项一行（横向并排会把中文挤成竖排）。每行显示输入源名字，
-  // 当前所在输入源打勾；名字由用户自填可能很长，单行省略 + title 留全文。
-  // 每台屏当前在哪个输入源：按输入值计数。屏之间可能不一致（一台 win、一台 mac），
-  // 这时按钮要如实说「1/2」，不能让用户以为全机都在某一边。
-  // 分母取「配置里的屏总数」而不是「读成功的屏数」：某块屏读失败时它仍存在，
-  // 若只按读成功的算，会出现「唯一一块屏在 win」这种谎报（用户明明配了两块）
+  // 左栏快速切屏：**一台屏一个按钮**，点一下把这台屏切到它的下一个输入源（循环）。
+  // 三路输入时就是「点一下→1，再点→2，再点→3，再点回 1」，与总览页每屏那个
+  // 「⇄ 下一输入源」是同一语义，只是搬到了手边。纵向一项一行（左栏布局契约：
+  // 横向并排会把中文挤成逐字竖排）。
   const all = d.monitors || [];
-  const known = all.filter((m) => m.ok && m.input);
-  const perInput = new Map();
-  for (const m of known) perInput.set(m.input, (perInput.get(m.input) || 0) + 1);
-  const totalKnown = all.length;
-  const failedCount = all.length - known.length;
-  // 多数派：平票时取输入源列表里的先后顺序，保证每次渲染结果稳定（不随 monitors 顺序抖动）
-  let leading = null;
-  for (const i of inputs) {
-    const n = perInput.get(i.value) || 0;
-    if (n && (!leading || n > leading.n)) leading = { value: i.value, n };
-  }
-  if (railFoot) railFoot.hidden = !inputs.length;
+  if (railFoot) railFoot.hidden = !all.length;
   if (railMons) {
     railMons.classList.toggle('is-busy', monBusy);
-    railMons.innerHTML = inputs.map((i) => {
-      const n = perInput.get(i.value) || 0;
-      const on = n > 0 && leading && i.value === leading.value;
-      // 部分屏在此输入：打勾但标 k/total，title 说明分歧
-      const partial = n > 0 && n < totalKnown;
-      const frac = partial ? ` ${n}/${totalKnown}` : '';
-      const failNote = failedCount ? `（另 ${failedCount} 台读取失败，状态未知）` : '';
-      const title = n === 0
-        ? `所有屏一起切到「${i.label}」`
-        : partial
-          ? `${n}/${totalKnown} 台屏在「${i.label}」，其余在别的输入源${failNote}；点击全部切到这里`
-          : totalKnown === 1
-            ? `唯一一块屏在「${i.label}」；点击保持不变`
-            : `${n} 台屏都在「${i.label}」${failNote}；点击保持不变`;
-      return `<button class="railm${on ? ' on' : ''}${partial ? ' partial' : ''}" data-mminput="${i.value}"${monBusy ? ' disabled' : ''}`
-        + ` title="${esc(title)}">`
-        + `<span class="ck">${n ? '✓' : ''}</span><span class="lb">${esc(i.label)}</span>`
-        + `<span class="frac">${frac}</span></button>`;
+    railMons.innerHTML = all.map((m) => {
+      const curIdx = inputs.findIndex((i) => i.value === m.input);
+      const next = inputs.length ? inputs[(curIdx + 1) % inputs.length] : null;
+      // 读失败 / 无输入源可轮换 → 不给「切下一个」，按钮改为重试读取（仍可点击，
+      // 若置 disabled 浏览器不派发 click，就没有重试入口了）
+      const retry = !m.ok || !next;
+      const curLabel = !m.ok ? '读失败' : (m.input ? (m.inputLabel || `输入 ${m.input}`) : '切换中');
+      const title = !m.ok
+        ? `${m.label}：状态读取失败${m.error ? `（${m.error}）` : ''}；点击重试读取`
+        : !next
+          ? `${m.label}：当前在「${curLabel}」（无其他输入源可轮换）`
+          : `${m.label}：当前在「${curLabel}」；点击切到「${next.label}」`;
+      return `<button class="railm${m.ok && m.input ? ' on' : ''}" data-mdisp="${esc(m.uuid)}"`
+        + ` data-mnext="${!retry ? next.value : ''}"${monBusy ? ' disabled' : ''} title="${esc(title)}">`
+        + `<span class="lb">${esc(m.label)}</span>`
+        + `<span class="inp">${esc(curLabel)}</span></button>`;
     }).join('');
   }
 
@@ -1619,10 +1704,16 @@ function renderMonitors(d) {
   if (inName) inName.placeholder = `留空 = 输入 ${$('monInPick')?.value ?? 'N'}`;
 }
 
-// 左栏底部：整机显式切换（任一视图都可用）
+// 左栏底部：每屏一个按钮，点一下轮到它的下一个输入源（任一视图都可用）
 $('railMons').addEventListener('click', (e) => {
-  const b = e.target.closest('button[data-mminput]');
-  if (b && !monBusy) switchMon({ input: Number(b.dataset.mminput) });
+  const b = e.target.closest('button[data-mdisp]');
+  if (!b || monBusy) return;
+  // 读失败的屏没有可信的当前输入源，不给它「切到下一个」（可能切错），改为重试读取。
+  // 注意 data-mnext 用空串标记「无可轮换」——Number('') 是 0（有限值），不能靠 isFinite 排除
+  if (b.dataset.mnext === '') { loadMonitors(true); return; }
+  const next = Number(b.dataset.mnext);
+  if (!Number.isFinite(next)) return;
+  switchMon({ input: next, display: b.dataset.mdisp });
 });
 
 // 单屏轮换切换 + 输入源改名下拉（事件委托在容器上）
@@ -1912,19 +2003,27 @@ $('provTbl').addEventListener('click', async (ev) => {
   }
 });
 
-// ---- 主题切换：跟随系统 → 浅色 → 深色，循环并记忆（首屏已在 head 内联预置） ----
+// ---- 主题切换：亮 ⇄ 暗 二态（首屏已在 head 内联预置）----------------------
+// 曾是「跟随系统 → 浅色 → 深色」三态循环，但那会有点不出变化的一步：系统本身是浅色时
+// auto 与显式 light 渲染结果完全一致，于是「亮 → 暗」要点两下才对（第一下只是把 auto
+// 换成 light，画面没动）。现在点击的语义就是「切到另一个」——目标取当前**实际**配色
+// 的反面，因此每一次点击必然有可见变化。auto 只作为首次访问的默认值（跟随系统），
+// 用户一旦点过就留下了明确偏好。
 const THEME_KEY = 'gw-theme';
 let themeMode = (() => { try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch { return 'auto'; } })();
+const sysDark = () => matchMedia('(prefers-color-scheme: dark)').matches;
+const isDarkNow = () => themeMode === 'auto' ? sysDark() : themeMode === 'dark';
 function applyTheme() {
-  const sysDark = matchMedia('(prefers-color-scheme: dark)').matches;
-  const dark = themeMode === 'auto' ? sysDark : themeMode === 'dark';
+  const dark = isDarkNow();
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   $('themeBtn').textContent = dark ? '☾' : '☀';
-  $('themeBtn').title = `主题：${themeMode === 'auto' ? '跟随系统' : themeMode === 'dark' ? '深色' : '浅色'}（点击切换）`;
+  $('themeBtn').title = themeMode === 'auto'
+    ? `当前跟随系统（${dark ? '深色' : '浅色'}）；点击切到${dark ? '浅色' : '深色'}`
+    : `当前${dark ? '深色' : '浅色'}；点击切到${dark ? '浅色' : '深色'}`;
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themeMode === 'auto') applyTheme(); });
 $('themeBtn').onclick = () => {
-  themeMode = themeMode === 'auto' ? 'light' : themeMode === 'light' ? 'dark' : 'auto';
+  themeMode = isDarkNow() ? 'light' : 'dark'; // 取当前实际配色的反面：每次点击都必然变色
   try { localStorage.setItem(THEME_KEY, themeMode); } catch {}
   applyTheme();
 };
