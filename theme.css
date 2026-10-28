@@ -131,6 +131,10 @@ body::after {
 /* 当前所在输入源：琥珀文字 + 淡底，与左栏「当前视图」同一套语言 */
 .railm.on { color: var(--amber-hi); background: var(--amber-dim); border-color: rgba(var(--amber-rgb), .35); }
 .railm .lb { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 部分屏在此输入（一台 win 一台 mac）：保留勾选但用虚线边框 + 分数说明，不与「全在」混同 */
+.railm.partial { border-style: dashed; border-color: rgba(var(--amber-rgb), .5); }
+.railm .frac { flex: none; font: 600 10.5px var(--mono); color: var(--amber); font-variant-numeric: tabular-nums; }
+.railm:not(.on) .frac { color: var(--faint); }
 .railm:disabled { opacity: .45; cursor: default; }
 /* 切屏进行中：整块略微降透明度，重复点不再响应 */
 .rail-mons.is-busy { opacity: .6; }

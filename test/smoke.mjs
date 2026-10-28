@@ -1582,6 +1582,15 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('左栏切屏按钮单行省略（名字可自填，截断要留 title）',
       /\.railm \.lb \{[^}]*white-space:\s*nowrap[^}]*text-overflow:\s*ellipsis/.test(themeCssText)
       && /data-mminput[\s\S]{0,240}title=/.test(idxHtml));
+    // 屏之间输入源不同时不能谎报「全机同源」：按钮标 k/total 且用 partial 样式区分
+    check('多屏分歧时如实标 k/total（partial 态）',
+      idxHtml.includes('partial') && /const partial = n > 0 && n < totalKnown/.test(idxHtml)
+      && /<span class="frac">\$\{frac\}<\/span>/.test(idxHtml));
+    check('分歧态有独立样式（虚线边框，不与「全在」混同）',
+      /\.railm\.partial \{[^}]*border-style:\s*dashed/.test(themeCssText));
+    // 分母取配置里的屏总数：读失败的屏仍存在，只按读成功的算会谎报「唯一一块屏」
+    check('分母取屏总数而非读取成功数（读失败不谎报单屏）',
+      /const totalKnown = all\.length/.test(idxHtml) && /failedCount/.test(idxHtml));
     // 必须落在 providers 视图内部：从 <section class="view" data-view="providers"> 到下一个
     // view/main 边界之间（导航栏里的 data-view="providers" 是按钮，不能算数）
     const provViewHtml = /<section class="view"[^>]*data-view="providers">([\s\S]*?)(?=<section class="view"|<\/main>)/.exec(idxHtml)?.[1] ?? '';
@@ -1609,6 +1618,16 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       /@media \(max-width: 900px\)[\s\S]*\.views \{[^}]*overflow-x: auto/.test(themeCssText)
       && /@media \(max-width: 900px\)[\s\S]*\.viewbtn[^}]*white-space: nowrap/.test(themeCssText));
     check('/workbench 强制落 todos（优先于 gw-view 记忆）', idxHtml.includes("location.pathname === '/workbench'"));
+    // hash → 视图必须冷启动与页内 hashchange 同一口径：此前 hashchange 只认 VIEW_ALIASES，
+    // 页内粘贴 #stats-7 不切视图（新开标签却能用），冷/热两条路径行为不一致
+    check('hash → 视图归一为单一函数（冷启动与 hashchange 共用 viewForHash）',
+      /function viewForHash\(h\) \{[\s\S]{0,200}'traffic'/.test(idxHtml)
+      && /hashchange[\s\S]{0,300}viewForHash\(h\)/.test(idxHtml)
+      && /hashView = viewForHash\(h\)/.test(idxHtml));
+    check('#stats-7/#stats-30 区间在页内 hash 变化时同样生效（applyStatsHash 由 hashchange 调用）',
+      /function applyStatsHash\(\) \{[\s\S]{0,300}#stats-\(7\|30\)/.test(idxHtml)
+      && /hashchange[\s\S]{0,500}applyStatsHash\(\)/.test(idxHtml)
+      && /^applyStatsHash\(\);/m.test(idxHtml));
     check('数字键按左栏顺序映射六个视图', /const n = Number\(e\.key\)[\s\S]{0,200}n <= VIEW_IDS\.length/.test(idxHtml));
     // -- 按视图轮询 + 启动预取 + 徽标语义 --
     check('轮询按视图分支：统计与日志不再无条件拉',

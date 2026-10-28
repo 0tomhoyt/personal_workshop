@@ -763,24 +763,31 @@ addEventListener('keydown', (e) => {
   let saved = null;
   try { saved = localStorage.getItem('gw-view'); } catch {}
   const norm = (v) => VIEW_ALIASES[v] || v;
-  const hashView = VIEW_IDS.includes(norm(h)) ? norm(h) : null;
-  if (h.startsWith('stats-')) {
-    setView('traffic', { push: false });
-  } else {
-    const start = hashView
-      || (onWorkbench ? 'todos' : null)
-      || (VIEW_IDS.includes(norm(saved)) ? norm(saved) : 'todos');
-    setView(start, { push: false });
-  }
+  const hashView = viewForHash(h);
+  const start = hashView
+    || (onWorkbench ? 'todos' : null)
+    || (VIEW_IDS.includes(norm(saved)) ? norm(saved) : 'todos');
+  setView(start, { push: false });
   // 从 /workbench 进来：把地址归一到 /#<当前视图>，刷新与再收藏都一致
   if (onWorkbench) history.replaceState(null, '', '/#' + curView);
 })();
+// hash → 视图。真链接 #todos…、旧别名（latency/log/stats/workbench）、
+// 旧区间形态 #stats-7/#stats-30（落统计；区间由 applyStatsHash 另设）都在这里归一，
+// 冷启动与页内 hash 变化走同一条判断，不会出现「新开标签能用、页内粘贴不认」。
+function viewForHash(h) {
+  if (/^stats-/.test(h)) return 'traffic';
+  const v = VIEW_ALIASES[h] || h;
+  return VIEW_IDS.includes(v) ? v : null;
+}
 // hash 变化 → 切视图：页内导航是真链接 <a href="#v">，靠这个监听生效；
-// 也覆盖「在已打开的页面里粘贴 #traffic 再回车」的场景（不会重载页面）
+// 也覆盖「在已打开的页面里粘贴 #traffic / #stats-7 再回车」的场景（不会重载页面）
 addEventListener('hashchange', () => {
   const h = location.hash.replace(/^#/, '');
-  const v = VIEW_ALIASES[h] || h;
-  if (VIEW_IDS.includes(v) && v !== curView) setView(v, { push: false });
+  const v = viewForHash(h);
+  if (v && v !== curView) setView(v, { push: false });
+  // 已经停在统计页时粘贴 #stats-30 也要换区间（视图没变，视图分支不会触发）
+  applyStatsHash();
+  // 页内从 #stats-7 跳到 #report 之类的反向场景：视图变了但区间控件保持上次选择，无副作用
 });
 
 // 模型 chip 点击：事件委托按索引取回模型 id，避免把上游目录的模型名拼进内联 onclick（防注入）；
@@ -1521,15 +1528,43 @@ function renderMonitors(d) {
   const inputs = d.inputs || [];
   // 左栏整机同切：纵向一项一行（横向并排会把中文挤成竖排）。每行显示输入源名字，
   // 当前所在输入源打勾；名字由用户自填可能很长，单行省略 + title 留全文。
-  const curInput = (d.monitors || []).find((m) => m.ok && m.input)?.input;
+  // 每台屏当前在哪个输入源：按输入值计数。屏之间可能不一致（一台 win、一台 mac），
+  // 这时按钮要如实说「1/2」，不能让用户以为全机都在某一边。
+  // 分母取「配置里的屏总数」而不是「读成功的屏数」：某块屏读失败时它仍存在，
+  // 若只按读成功的算，会出现「唯一一块屏在 win」这种谎报（用户明明配了两块）
+  const all = d.monitors || [];
+  const known = all.filter((m) => m.ok && m.input);
+  const perInput = new Map();
+  for (const m of known) perInput.set(m.input, (perInput.get(m.input) || 0) + 1);
+  const totalKnown = all.length;
+  const failedCount = all.length - known.length;
+  // 多数派：平票时取输入源列表里的先后顺序，保证每次渲染结果稳定（不随 monitors 顺序抖动）
+  let leading = null;
+  for (const i of inputs) {
+    const n = perInput.get(i.value) || 0;
+    if (n && (!leading || n > leading.n)) leading = { value: i.value, n };
+  }
   if (railFoot) railFoot.hidden = !inputs.length;
   if (railMons) {
     railMons.classList.toggle('is-busy', monBusy);
     railMons.innerHTML = inputs.map((i) => {
-      const on = curInput === i.value;
-      return `<button class="railm${on ? ' on' : ''}" data-mminput="${i.value}"${monBusy ? ' disabled' : ''}`
-        + ` title="所有屏一起切到「${esc(i.label)}」${on ? '（当前）' : ''}">`
-        + `<span class="ck">${on ? '✓' : ''}</span><span class="lb">${esc(i.label)}</span></button>`;
+      const n = perInput.get(i.value) || 0;
+      const on = n > 0 && leading && i.value === leading.value;
+      // 部分屏在此输入：打勾但标 k/total，title 说明分歧
+      const partial = n > 0 && n < totalKnown;
+      const frac = partial ? ` ${n}/${totalKnown}` : '';
+      const failNote = failedCount ? `（另 ${failedCount} 台读取失败，状态未知）` : '';
+      const title = n === 0
+        ? `所有屏一起切到「${i.label}」`
+        : partial
+          ? `${n}/${totalKnown} 台屏在「${i.label}」，其余在别的输入源${failNote}；点击全部切到这里`
+          : totalKnown === 1
+            ? `唯一一块屏在「${i.label}」；点击保持不变`
+            : `${n} 台屏都在「${i.label}」${failNote}；点击保持不变`;
+      return `<button class="railm${on ? ' on' : ''}${partial ? ' partial' : ''}" data-mminput="${i.value}"${monBusy ? ' disabled' : ''}`
+        + ` title="${esc(title)}">`
+        + `<span class="ck">${n ? '✓' : ''}</span><span class="lb">${esc(i.label)}</span>`
+        + `<span class="frac">${frac}</span></button>`;
     }).join('');
   }
 
@@ -1921,12 +1956,19 @@ applyTheme();
 window.addEventListener('focus', () => {
   if (!document.hidden) { refreshTodos(); refreshHistory(); }
 });
-// 深链：#stats-7、#stats-30 兼容旧形态，落到流量页对应区间
-const statHash = location.hash.match(/^#stats-(7|30)$/);
-if (statHash) {
-  statRange = statHash[1];
-  document.querySelectorAll('#rangeSeg button').forEach((b) => b.classList.toggle('active', b.dataset.range === statRange));
+// 深链：#stats-7、#stats-30 兼容旧形态，落到统计页对应区间。冷启动与页内
+// hashchange 都调这一个函数（视图归一见 viewForHash，两者口径必须一致）
+function applyStatsHash() {
+  const m = location.hash.match(/^#stats-(7|30)$/);
+  if (!m) return;
+  statRange = m[1];
+  document.querySelectorAll('#rangeSeg button').forEach((b) => {
+    const on = b.dataset.range === statRange;
+    b.classList.toggle('active', on);
+  });
+  drawStats();
 }
+applyStatsHash();
 
 /* ===================================================================
    以下为工作台（待办 + 汇报）逻辑：与管理台共用同一段脚本与同一份 DOM 外壳。
