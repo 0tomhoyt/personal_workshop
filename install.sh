@@ -7,7 +7,7 @@
 # 目录设计（重要）:
 #   本文件夹（桌面）= 项目源，server.mjs / lib/ 在这里维护；
 #   ~/.local/share/cannbot-gateway-proxy/ = 运行时安装目录，
-#   install.sh 会把 server.mjs + lib/ + admin.html + workbench.* 拷贝过去供 launchd 运行——
+#   install.sh 会把 server.mjs + lib/ + index.html + theme.css 拷贝过去供 launchd 运行——
 #   因为 macOS 对桌面等目录有 TCC 保护，launchd 后台进程无权直接读取。
 #   因此改动代码后需重跑 ./install.sh 才生效。
 #
@@ -65,13 +65,15 @@ if lsof -i ":$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   die "端口 $PORT 仍被非本服务进程占用（可传参换端口: ./install.sh 8485；lsof -i :$PORT 查占用者）"
 fi
 
-# 4) 拷贝运行时副本（server.mjs + lib/ + admin.html + 工作台页面/样式）+ 由模板生成本机 plist
+# 4) 拷贝运行时副本（server.mjs + lib/ + index.html + theme.css）+ 由模板生成本机 plist
+
 mkdir -p "$RUNTIME_DIR/logs" "$RUNTIME_DIR/lib" "$LAUNCH_DIR"
 echo "$PORT" > "$RUNTIME_DIR/port"   # 记录实际端口，供 uninstall.sh/status.sh 读取
 cp "$PROJECT_DIR/server.mjs" "$RUNTIME_DIR/server.mjs"
-[ -f "$PROJECT_DIR/admin.html" ] && cp "$PROJECT_DIR/admin.html" "$RUNTIME_DIR/admin.html"
-[ -f "$PROJECT_DIR/workbench.html" ] && cp "$PROJECT_DIR/workbench.html" "$RUNTIME_DIR/workbench.html"
-[ -f "$PROJECT_DIR/workbench.css" ] && cp "$PROJECT_DIR/workbench.css" "$RUNTIME_DIR/workbench.css"
+[ -f "$PROJECT_DIR/index.html" ] && cp "$PROJECT_DIR/index.html" "$RUNTIME_DIR/index.html"
+[ -f "$PROJECT_DIR/theme.css" ] && cp "$PROJECT_DIR/theme.css" "$RUNTIME_DIR/theme.css"
+# 改名/合并前的旧副本：升级后残留在运行时目录里会让人误以为还有效，一律清掉
+rm -f "$RUNTIME_DIR/admin.html" "$RUNTIME_DIR/workbench.html" "$RUNTIME_DIR/workbench.css"
 if [ -d "$PROJECT_DIR/lib" ]; then
   rm -rf "$RUNTIME_DIR/lib"   # 先清空再拷：源里已删除的模块不在运行时目录残留（lib/ 全量由源派生，可整体重建）
   mkdir -p "$RUNTIME_DIR/lib"

@@ -4,7 +4,7 @@
 本机所有 Agent（zcode CLI、Claude Code、opencode、任意 OpenAI/Anthropic 客户端）统一从这里调用。
 网关按请求里的**模型名**路由到对应订阅，自动注入该订阅的凭证——业务配置里不需要保存任何上游密钥。
 
-**个人工作台**（`http://127.0.0.1:8484/workbench`）：跨 agent 的待办事项（人与 agent 经
+**个人工作台**（同一页的左栏第一组，`http://127.0.0.1:8484/#todos`）：跨 agent 的待办事项（人与 agent 经
 `/v1/todos` 共用）+ 时间段 AI 工作总结（读本机各 agent 的会话记录，两级总结成给上级的汇报）。
 
 ```
@@ -17,7 +17,7 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
    ├─ 协议处理       同协议原样直通（字节级）；跨协议双向翻译
    ├─ 凭证注入       per-provider：CANNWork JWT+VK 链 / 静态 token
    ├─ 统计与管理台   流量、TTFT/TPOT/ITL/E2E、provider 维度
-   └─ 个人工作台     /workbench：待办 /v1/todos（人与 agent 共用）
+   └─ 个人工作台     左栏第一组：待办 /v1/todos（人与 agent 共用）
         │            + AI 时间段总结 /admin/report/*（读 Claude Code /
         │              zcode / opencode / Cursor 本地会话 → 两级总结汇报）
         ├─→ cannbot  https://cannbot.hicann.cn/…        (openai 协议)
@@ -41,15 +41,15 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
 |---|---|
 | `server.mjs` | 入口：HTTP 服务 + 路由分发 + healthz/admin 端点（Node ≥18 零依赖） |
 | `lib/` | 服务端模块：config（providers.json）/ models（模型目录与路由）/ upstream（统一上游请求）/ auth/（cannwork、static 凭证链）/ translate/（Anthropic↔OpenAI 双向翻译）/ proxy-openai、proxy-anthropic（两条入站管道）/ stats / log / gwauth / util / todos（工作台待办）/ report（总结管线：四源适配器 + 素材收集 + 生成状态机）/ report-prompts（总结 prompt 与阈值，调质量改这里） |
-| `admin.html` | 网页管理台（`http://127.0.0.1:8484/`，provider 健康卡 + 供应商增删改 + 统计 + 测试） |
-| `workbench.html` / `workbench.css` | 个人工作台页（`/workbench`：待办 + AI 工作总结）与两页共享的主题样式 |
+| `index.html` | 单页应用（`http://127.0.0.1:8484/`）：左栏两级导航，六个视图——待办 / 汇报 / 总览 / 统计 / 诊断 / 配置 |
+| `theme.css` | 共享主题：令牌 / 骨架 / 左栏布局契约 / 通用组件（`/theme.css` 提供） |
 | `providers.template.json` | providers.json 模板（install.sh 首次安装时生成到运行时目录） |
 | `test/mock-upstream.mjs` `test/smoke.mjs` | 端到端冒烟测试：mock 双协议上游 + 三百余项断言（`node test/smoke.mjs`） |
 | `install.sh` / `uninstall.sh` / `status.sh` / `plist.template` | launchd 部署与状态 |
 | `cannbot-creds.sh` | cannbot 订阅凭证诊断（可选；`--sync-zcode` 重写 zcode 指向网关并写入 token） |
 | `打开管理界面.command` | **双击即可**：自动确保网关已启动并打开管理台 |
 
-**两个目录的关系**：本文件夹是项目源（source of truth）；`install.sh` 会把 `server.mjs + lib/ + admin.html`
+**两个目录的关系**：本文件夹是项目源（source of truth）；`install.sh` 会把 `server.mjs + lib/ + index.html`
 拷贝到运行时目录 `~/.local/share/cannbot-gateway-proxy/`（providers.json、日志、VK 缓存、stats.json 也
 都在那里），launchd 实际运行的是该副本——macOS 对桌面目录有 TCC 保护，launchd 读不到桌面。
 **改动代码后需重跑 `./install.sh` 才生效**；改 `providers.json` 不用（网关按 mtime 热加载）。
@@ -208,7 +208,7 @@ API Key  : ANTHROPIC_AUTH_TOKEN = 网关 token
 
 ## 个人工作台（待办 + AI 工作总结）
 
-浏览器打开 `http://127.0.0.1:8484/workbench`（管理台左栏「工作台」进入）：
+浏览器打开 `http://127.0.0.1:8484/`（首屏就是待办，左栏第一组「工作台」）：
 
 - **待办事项**：标题 + 紧急程度（紧急/普通/不急）+ 可选项目标签 + **子项清单（checklist）+
   可编辑详情（note）**；进行中 → 待办 → 已完成（折叠）分组；紧急排前。点标题可就地编辑

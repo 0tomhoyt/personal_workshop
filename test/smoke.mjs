@@ -893,8 +893,8 @@ try {
     check('uninstall.sh 含 CGP_SKIP_LAUNCHCTL 演练守卫', (un.match(/CGP_SKIP_LAUNCHCTL/g) ?? []).length >= 2,
       'bootout 与文案都需守卫');
     // r8 对比度：tgroup-label 用 --dim（暗 5.5 / 亮 4.69，WCAG AA）；亮色 --dim 加深到 #736d5e
-    const wbh = fs.readFileSync(path.join(ROOT, 'workbench.html'), 'utf8');
-    const wbc = fs.readFileSync(path.join(ROOT, 'workbench.css'), 'utf8');
+    const wbh = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    const wbc = fs.readFileSync(path.join(ROOT, 'theme.css'), 'utf8');
     check('tgroup-label 颜色为 --dim（不用 2.67:1 的 --faint）',
       /tgroup-label[\s\S]{0,200}color:\s*var\(--dim\)/.test(wbh),
       '分组标签需达 WCAG AA');
@@ -910,10 +910,9 @@ try {
       'cut(…,0) 会返回 1 个码位的「…」伪消息');
     // ux-r9 键盘可达性：大量待办下行内按钮全在 Tab 序里，报告区纯键盘不可达——
     // 主区首部极简 skip link（仅 :focus-visible 显现），目标 section tabindex=-1 让焦点真落地
-    check('workbench 含「跳到报告区」skip link（focus-visible 才显现 + 落点 tabindex=-1）',
-      wbh.includes('class="skip" href="#sec-report"') && /\.skip:focus-visible/.test(wbh)
-        && /id="sec-report" tabindex="-1"/.test(wbh),
-      '键盘用户需能跳过待办行按钮直达报告区');
+    // 原「跳到报告区」skip link 的前提消失了：汇报已是独立视图，左栏一键可达，
+    // 不再有「大量待办行内按钮把报告区挤出 Tab 序」的问题，故移除。
+    check('skip link 已移除（汇报为独立视图，左栏直达取代）', !wbh.includes('class="skip"'));
   }
 
   console.log('— 报告源：zcode（db.sqlite 适配器，fixture） —');
@@ -1552,23 +1551,95 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     }
   }
 
-  console.log('— 工作台静态资源（/workbench、/workbench.css、admin 外链改造） —');
+  console.log('— 工作台静态资源（/workbench、/theme.css、页面外链改造） —');
   {
+    const themeCss = await fetch(`${GW}/theme.css`);
+    const themeCssText = await themeCss.text();
+    check('/theme.css → 200 且 text/css', themeCss.status === 200 && (themeCss.headers.get('content-type') || '').includes('text/css'));
+    const idxHtml = await (await fetch(`${GW}/`)).text();
+    check('index.html 引用 /theme.css', idxHtml.includes('<link rel="stylesheet" href="/theme.css">'), '未找到 link 标签');
     const css = await fetch(`${GW}/workbench.css`);
     const cssText = await css.text();
-    check('/workbench.css → 200 且 text/css', css.status === 200 && (css.headers.get('content-type') || '').includes('text/css'));
+    check('/workbench.css → 200 且 text/css（旧页面缓存兼容）', css.status === 200 && (css.headers.get('content-type') || '').includes('text/css'));
     check('workbench.css 含主题令牌与骨架', cssText.includes('--bg') && cssText.includes('.frame') && cssText.includes('.viewbtn'), cssText.slice(0, 80));
-    const adminHtml = await (await fetch(`${GW}/`)).text();
-    check('admin.html 外链共享样式', adminHtml.includes('<link rel="stylesheet" href="/workbench.css">'), '未找到 link 标签');
-    check('admin.html 通用样式已移出（body 底纹不再内嵌）', !adminHtml.includes('body::before'), 'body::before 仍内嵌');
-    check('admin.html 视图专属样式保留（趋势图/性能表）', adminHtml.includes('.chartwrap') && adminHtml.includes('.tbl.perf'));
-    check('admin.html rail 含工作台链接', adminHtml.includes('href="/workbench"'));
+    check('index.html 外链共享样式', idxHtml.includes('<link rel="stylesheet" href="/theme.css">'), '未找到 link 标签');
+    check('index.html 通用样式已移出（body 底纹不再内嵌）', !idxHtml.includes('body::before'), 'body::before 仍内嵌');
+    check('index.html 视图专属样式保留（趋势图/性能表）', idxHtml.includes('.chartwrap') && idxHtml.includes('.tbl.perf'));
+    // 合并后左栏不再是「跳页到工作台」，而是六个同页视图（Task 4 再分组）
+    check('左栏六个视图项（不再靠跳页切换）',
+      ['todos', 'report', 'overview', 'traffic', 'test', 'providers']
+        .every((v) => idxHtml.includes(`data-view="${v}"`)));
+    // -- 左栏瘦身：塞不下的功能搬进主区（竖排的另一个来源） --
+    check('左栏不再有横向按钮组与协议串',
+      !idxHtml.includes('id="railMonBtns"') && !idxHtml.includes('id="monRailMsg"') && !idxHtml.includes('class="rail-proto"'));
+    check('整机同切搬到总览页', idxHtml.includes('id="monWholeRow"'));
+    // 必须落在 providers 视图内部：从 <section class="view" data-view="providers"> 到下一个
+    // view/main 边界之间（导航栏里的 data-view="providers" 是按钮，不能算数）
+    const provViewHtml = /<section class="view"[^>]*data-view="providers">([\s\S]*?)(?=<section class="view"|<\/main>)/.exec(idxHtml)?.[1] ?? '';
+    check('重启/停止搬到配置页', provViewHtml.includes('id="btnRestart"') && provViewHtml.includes('id="btnStop"'),
+      provViewHtml.length ? `providers 视图 ${provViewHtml.length} 字符` : '未找到 providers 视图');
+    check('skip link 已移除（汇报为独立视图）', !idxHtml.includes('class="skip"'));
+    // 截断必须仍可辨识：显示器/输入源名由用户自填，按钮被省略号截断时要留 title 全文
+    check('整机同切按钮带 title 全文（省略号截断后可辨识）',
+      /data-mminput[\s\S]{0,240}title=/.test(idxHtml));
+    // -- 左栏两级导航 + 竖排修复 --
+    check('左栏两级：两个组头 + 六个子项', (idxHtml.match(/class="navgroup"/g) || []).length === 2
+      && ['todos', 'report', 'overview', 'traffic', 'test', 'providers'].every((v) => idxHtml.includes(`href="#${v}"`)));
+    const navHrefs = [...idxHtml.matchAll(/<a class="viewbtn" href="#([a-z]+)"/g)].map((m) => m[1]);
+    check('导航链接与视图双向一致（无孤儿）',
+      navHrefs.length === 6 && navHrefs.every((v) => idxHtml.includes(`data-view="${v}"`)), navHrefs.join(','));
+    check('导航是真链接（不用 button 切视图）', !/class="viewbtn"[^>]*data-view/.test(idxHtml));
+    // 禁 break-all：只认「规则里真的用了」，注释里提到这个词（作为禁令说明）不算
+    const cssRulesOnly = themeCssText.replace(/\/\*[\s\S]*?\*\//g, '');
+    check('左栏单行契约在 theme.css（单行 + 省略号 + 禁 break-all）',
+      /\.viewbtn \.vname[^}]*white-space:\s*nowrap[^}]*text-overflow:\s*ellipsis/.test(themeCssText)
+      && !cssRulesOnly.includes('break-all'));
+    // 遥测行契约落在 .statline 上（每行都是 .statline）：nowrap + 省略号
+    check('左栏遥测行同样单行省略',
+      /\.statline \{[^}]*white-space:\s*nowrap/.test(themeCssText)
+      && /\.statline > span \{[^}]*text-overflow:\s*ellipsis/.test(themeCssText));
+    check('左栏无英文小标（.ven 已移除）', !idxHtml.includes('class="ven"'));
+    check('窄屏顶栏：分组与子项均 nowrap，容器可横向滚动',
+      /@media \(max-width: 900px\)[\s\S]*\.views \{[^}]*overflow-x: auto/.test(themeCssText)
+      && /@media \(max-width: 900px\)[\s\S]*\.viewbtn[^}]*white-space: nowrap/.test(themeCssText));
+    check('/workbench 强制落 todos（优先于 gw-view 记忆）', idxHtml.includes("location.pathname === '/workbench'"));
+    check('数字键按左栏顺序映射六个视图', /const n = Number\(e\.key\)[\s\S]{0,200}n <= VIEW_IDS\.length/.test(idxHtml));
+    // -- 按视图轮询 + 启动预取 + 徽标语义 --
+    check('轮询按视图分支：统计与日志不再无条件拉',
+      /if \(curView === 'overview' \|\| curView === 'traffic'\)/.test(idxHtml)
+      && /if \(curView === 'test'\)/.test(idxHtml));
+    check('启动一次性预取五个来源', ['/v1/todos', '/admin/report/list', '/admin/log', '/admin/providers']
+      .every((u) => idxHtml.includes(`'${u}'`)) && idxHtml.includes('loadModels()'));
+    check('旧左栏统计写入已清空（无 railTodo/railDoing/railReports）',
+      !/railTodo|railDoing|railReports/.test(idxHtml));
+    check('切回统计视图立即拉一次（不显示旧值当新值）',
+      /function setView[\s\S]{0,1200}maybeFetchStats\(\)/.test(idxHtml));
+    // -- 主区小节编号：每个视图内部从 01 起连续（不再与旧视图编号联动）--
+    // 松的「1–9」写法会被现有串号蒙混过关，必须逐视图校验
+    const viewSection = (v) => (new RegExp(`data-view="${v}"[\\s\\S]*?(?=data-view="|</main>)`).exec(idxHtml)?.[0] || '');
+    check('每个视图内小节编号从 01 开始连续',
+      ['todos', 'report', 'overview', 'traffic', 'test', 'providers'].every((v) => {
+        const nums = [...viewSection(v).matchAll(/<span class="idx">(\d+)<\/span>/g)].map((m) => m[1]);
+        return nums.length > 0 && nums.every((n, i) => n === String(i + 1).padStart(2, '0'));
+      }),
+      ['todos', 'report', 'overview', 'traffic', 'test', 'providers']
+        .map((v) => v + ':' + [...viewSection(v).matchAll(/<span class="idx">(\d+)<\/span>/g)].map((m) => m[1]).join('/')).join(' '));
     const wb = await fetch(`${GW}/workbench`);
     const wbText = await wb.text();
     check('/workbench → 200 含「工作台」', wb.status === 200 && wbText.includes('工作台'), `got ${wb.status}`);
+    // -- 合并为单页：六个视图、严格模式、标识符归并 --
+    check('/workbench 与 / 返回同一份字节', wbText === idxHtml);
+    check('单页含六个视图', ['todos', 'report', 'overview', 'traffic', 'test', 'providers']
+      .every((v) => idxHtml.includes(`data-view="${v}"`)), '缺视图');
+    // 取最后一个 <script>：首个是 9 行首屏主题脚本（防闪色必须 inline），主逻辑在后面
+    const scripts = [...idxHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+    check('主脚本以严格模式开头', /^\s*'use strict';/.test((scripts.at(-1) ?? '').trim()), scripts.at(-1)?.slice(0, 40));
+    check('标识符已归并：无裸 editingId', !/\beditingId\b/.test(idxHtml) && idxHtml.includes('provEditingId') && idxHtml.includes('todoEditingId'));
+    check('esc() 转义 & < > " 四类（取工作台版）',
+      /esc\s*=\s*\(s\)\s*=>[\s\S]{0,200}&gt;/.test(idxHtml) && /&quot;/.test(idxHtml));
     check('工作台页含待办/报告两区', wbText.includes('待办') && wbText.includes('报告'), '缺功能区字样');
     check('工作台页含 token 获取逻辑（/admin/config）', wbText.includes('/admin/config'), '缺 loadToken 逻辑');
-    check('工作台页引用共享样式', wbText.includes('/workbench.css'));
+    check('工作台页引用共享样式', wbText.includes('/theme.css'));
     // 下载 .md 按钮：存在 + 文件名函数（跨日/无效区间），源码抽取后在 Node 内直跑
     check('工作台页含「下载 .md」按钮', wbText.includes('id="dlBtn"') && wbText.includes('下载 .md') && wbText.includes('downloadReport'));
     const fnMatch = wbText.match(/function reportFileName\(range\) \{[\s\S]*?\n\}/);
@@ -1592,7 +1663,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       wbText.includes("e.key !== '/'") && wbText.includes('e.isComposing') && wbText.includes('isContentEditable')
         && wbText.includes('e.ctrlKey || e.metaKey || e.altKey') && wbText.includes('preventDefault'));
     check('/ 快捷键：搜索框随空列表收起时不 preventDefault 白吞按键', wbText.includes('offsetParent'));
-    check('两页均有内联 favicon（消除 /favicon.ico 404）', wbText.includes('<link rel="icon"') && adminHtml.includes('<link rel="icon"'));
+    check('两页均有内联 favicon（消除 /favicon.ico 404）', wbText.includes('<link rel="icon"') && idxHtml.includes('<link rel="icon"'));
     check('搜索框 Esc：有内容走同一清空+持久化路径、无内容失焦', wbText.includes('todoSearch\').addEventListener(\'keydown\'') && wbText.includes('e.target.blur()'));
     check('清理已完成：全部已完成项在编辑态时的空清理提示', wbText.includes('已跳过——退出编辑后再清理'));
     // feature-4：按此时间段重新生成（复用 generateReport 路径，坏区间禁用）
@@ -1811,11 +1882,31 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('install.sh：不再编译/安装热键守护（无 swiftc / hotkeys 模板 / 守护 bootstrap）', !inst.includes('swiftc') && !inst.includes('hotkeys.plist.template') && !inst.includes('monitor-hotkeys.swift'));
     const uninst = fs.readFileSync(path.join(ROOT, 'uninstall.sh'), 'utf8');
     check('install.sh / uninstall.sh：保留旧版热键 LaunchAgent 的遗留清理路径（曾装过的机器能清掉）', inst.includes('cannbot-monitor-hotkeys') && inst.includes('HOTKEY_PLIST') && uninst.includes('cannbot-monitor-hotkeys') && uninst.includes('HOTKEY_PLIST'));
-    const admText = fs.readFileSync(path.join(ROOT, 'admin.html'), 'utf8');
-    check('管理台：一键切换按钮 / 热键改绑 UI / toggle 调用全部移除', !admText.includes('monToggle') && !admText.includes('monHk') && !admText.includes('/admin/monitors/hotkeys') && !admText.includes("mode: 'toggle'") && !admText.includes('{"mode":"toggle"}'));
-    check('管理台：手动切换面保留（左栏整机同切 + 每屏下一输入源轮换 + 输入源/屏改名）', admText.includes('data-mminput') && admText.includes('data-mcycle') && admText.includes('monInEdit') && admText.includes('data-mnamesave'));
-    const wbText2 = fs.readFileSync(path.join(ROOT, 'workbench.html'), 'utf8');
-    check('工作台：Displays 区（随一键切换功能加入）整体移除', !wbText2.includes('monBox') && !wbText2.includes('monToggle') && !wbText2.includes('loadMonitorsOnce'));
+    const admText = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    check('页面：一键切换按钮 / 热键改绑 UI / toggle 调用全部移除', !admText.includes('monToggle') && !admText.includes('monHk') && !admText.includes('/admin/monitors/hotkeys') && !admText.includes("mode: 'toggle'") && !admText.includes('{"mode":"toggle"}'));
+    check('页面：手动切换面保留（左栏整机同切 + 每屏下一输入源轮换 + 输入源/屏改名）', admText.includes('data-mminput') && admText.includes('data-mcycle') && admText.includes('monInEdit') && admText.includes('data-mnamesave'));
+
+    // -- 文档与代码同步：单页事实、两级导航、左栏契约 --
+    const claudeMd = fs.readFileSync(path.join(ROOT, 'CLAUDE.md'), 'utf8');
+    const readmeMd = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    check('文档已同步单页事实',
+      !claudeMd.includes('workbench.html') && !readmeMd.includes('workbench.html')
+      && claudeMd.includes('index.html') && readmeMd.includes('index.html'));
+    check('CLAUDE.md 记录两级导航与左栏布局契约',
+      /两级|两个分组/.test(claudeMd) && claudeMd.includes('省略号') && claudeMd.includes('break-all'));
+    check('文档不把 /workbench 说成独立页面',
+      !/工作台页（workbench|独立页面/.test(readmeMd), 'README 仍把工作台当独立页');
+    check('文档记录按视图轮询', claudeMd.includes('按视图') || claudeMd.includes('可见时才拉'));
+
+    // -- 合并后的事件委托隔离（独立审查发现：供应商「删除」会连带触发待办删除）--
+    // 这里用 admText（本作用域已读的 index.html），与上面 HTTP 小节里的 idxHtml 同一个文件
+    check('全局 data-act 委托排除供应商表（#provTbl 有自己的监听）',
+      /closest\('button\[data-act\]'\)[\s\S]{0,400}closest\('#provTbl'\)/.test(admText));
+    check('无悬空徽标引用（vbTraffic 已随左栏改版删除）', !admText.includes('vbTraffic'));
+    // /workbench 自带有效 hash 时以 hash 意图为准（/workbench#report 应落到汇报）
+    check('/workbench 带 hash 时尊重 hash（hashView 优先于强制 todos）',
+      /const hashView[\s\S]{0,200}hashView[\s\S]{0,120}\|\|/.test(admText));
+    check('显示器相关代码只在总览视图（工作台视图不含）', !admText.includes('monBox') && !admText.includes('loadMonitorsOnce'));
   }
 
   console.log('— 统计落盘（进程内 recordStats + flushStats：tmp+rename+0600） —');
