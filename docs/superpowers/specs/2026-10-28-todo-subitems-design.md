@@ -75,8 +75,8 @@ DELETE /v1/todos/:id/items/:itemId   # 删子项 → 204
 - **素材**：`collectMaterials` 已并 `todosInWindow`；新增把两列表计数进报告
   `materials.todos = {created, completed}`（展示用）。
 - **prompt**（lib/report-prompts.mjs）：
-  - 「完成（N）」/「新增（N）」行保留；新增行带子项进度 `标题（k/j）`（k=已完成数），
-    完成行不缀（必为 j/j）；
+  - 「完成（N）」/「新增（N）」行保留；行带子项进度 `标题（k/j）`（k=已完成数），
+    仅当尚有未完成子项时缀（手动完成的待办可能子项没勾完，此时完成行同样缀、如实呈现）；
   - 单标题截 40 码位（LIMITS.todoTitleChars）、每列表最多 30 条（todosPerList），
     超出加「等 N 条」——短列表，不灌长文；
   - note/详情**不进** prompt（可读性红线）。
@@ -90,6 +90,8 @@ DELETE /v1/todos/:id/items/:itemId   # 删子项 → 204
 1. 取消完成 → 父回 **in_progress**（用户给的选项二选一，理由见 §三）。
 2. agent note 硬上限 **300 码位**（用户说「更严」，2000→300 一刀切到与素材
    userMsgChars 500 同量级以下；过长 400 拒绝而非静默截断——agent 能改文案重试）。
+   上限按 **source 申报值**执行：共享 Bearer token 无法强校验调用方，agent 谎报
+   `source:"user"` 可绕过——这是自觉约定 + 硬限兜底，不是权限边界（README 同口径）。
 3. 子项标题上限 **200**、条数上限 **50**、子项 id randHex(4)。
 4. 详情复用既有 `note` 字段（不新增 `details` 键，旧数据/旧调用方零迁移）。
 5. UI 折叠形态：**收起行只显父标题（CSS 2 行钳制）+「子项 k/j」徽标**，note 在

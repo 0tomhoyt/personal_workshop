@@ -245,7 +245,8 @@ providers.json 的 gateway.clientToken，或先 GET http://127.0.0.1:8484/admin/
 - 完成：curl -s -X PUT http://127.0.0.1:8484/v1/todos/<id> -H "Authorization: Bearer <token>" \
     -H 'content-type: application/json' -d '{"status":"done"}'
 
-加待办时始终带上 "source":"agent:<你的名字>"。
+加待办时始终带上 "source":"agent:<你的名字>"（note 分级上限按 source 申报值执行，
+谎报 "user" 可绕过 300 限——这是自觉约定，不是权限边界）。
 写作纪律（可读性优先）：标题一行可扫（如「适配 unigemm SME 内核」，不要贴长文/堆链接）；
 note（详情）≤ 300 码位（超了网关直接 400），长上下文自己另存别处，只留一句话索引；
 子项每条 ≤ 200 码位、每条待办最多 50 条。子项全部勾完时父待办会自动完成，不用再手动 PUT status。

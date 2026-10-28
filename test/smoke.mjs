@@ -1575,6 +1575,17 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('收起行含子项进度徽标（子项 k/j）', wbText.includes('子项 ${'));
     check('成稿元数据行展示待办计数（待办 新增 n / 完成 m）', wbText.includes('待办 新增 ${'));
     check('详情编辑带 agent 分级上限提示（≤300）', wbText.includes('300'));
+    // 评审修复：输入态守卫只护「被动刷新」，动作型刷新必须强制重渲染（回车加子项
+    // 立刻出现且输入框清空、保存后表单关闭），未保存输入靠重渲染前快照还原
+    check('动作型刷新强制重渲染（toggleItem×2/addItem/delItem/saveNote/saveTodoEdit/cycleTodo/清理）',
+      (wbText.match(/force: true/g) ?? []).length >= 7 && wbText.includes('skipDraftKey'),
+      `force: true ×${(wbText.match(/force: true/g) ?? []).length}`);
+    check('重渲染快照还原未保存输入（编辑表单/详情/加子项框的值与焦点选区）',
+      wbText.includes('form[data-noteform] textarea') && wbText.includes('selectionStart') && wbText.includes('skipDraftKey'));
+    check('子项勾选走 click 委托（另一条编辑中的重渲染不吞勾选；键盘空格同样触发 click；不再用 change）',
+      /document\.addEventListener\('click'[\s\S]*?type=["']checkbox["']\]\[data-itemid\]/.test(wbText) && !wbText.includes("document.addEventListener('change'"));
+    const togSrc = wbText.match(/async function toggleItem[\s\S]*?\n\}/)?.[0] ?? '';
+    check('子项勾选失败回同步（并发删除 404 后界面不与服务器背离）', togSrc.includes('force: true') && togSrc.includes('!r.ok'), togSrc.slice(0, 160));
   }
 
   console.log('— 显示器输入源切换（/admin/monitors，mock m1ddc） —');

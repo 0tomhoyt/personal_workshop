@@ -406,20 +406,22 @@ function setOnline(ok) {
   $('onlineText').textContent = ok ? '网关在线' : '网关离线';
 }
 
-async function refreshTodos() {
+async function refreshTodos({ force = false, skipDraftKey } = {}) {
   try {
     const r = await apiFetch('/v1/todos');
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
     allTodos = j.todos || [];
     setOnline(true);
-    // 正在就地编辑 / 编辑详情 / 在展开区输入（加子项框）时只更新数据与 rail 计数，
-    // 不重建列表 DOM——否则 focus 刷新会把未保存的输入整块重渲染掉（「打字丢失」）；
-    // checkbox 不算（点选后要立刻重渲染出派生的父状态）
+    // 被动刷新（focus 拉取）在输入态只更新数据与 rail 计数，不重建列表 DOM——否则会把
+    // 编辑表单/详情/加子项框里未保存的输入整块重渲染掉（「打字丢失」，IME 组合期重建
+    // 还会劈字）。动作型刷新（force：勾子项/加删子项/保存/切状态）必须重渲染——界面
+    // 要立刻反映结果；用户未保存的输入由 renderTodos 重建前的快照还原兜底。
+    // checkbox 不算输入态（点选后要立刻重渲染出派生的父状态）
     const ae = document.activeElement;
     const typing = ae && (ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && ae.type !== 'checkbox')) && $('todoList').contains(ae);
-    if (editingId || noteEditId || typing) renderRailStats();
-    else renderTodos();
+    if (!force && (editingId || noteEditId || typing)) renderRailStats();
+    else renderTodos({ skipDraftKey });
   } catch (e) {
     setOnline(false);
     // 编辑中不清列表（未保存输入不能丢）；在线灯变离线即已给出状态
@@ -428,7 +430,16 @@ async function refreshTodos() {
   }
 }
 
-function renderTodos() {
+function renderTodos({ skipDraftKey } = {}) {
+  // 重建前快照所有未保存输入（标题编辑表单 / 详情 textarea / 加子项框），重建后按
+  // 表单键还原值与焦点选区——动作型强制重渲染（勾子项、切状态等）不再丢正在打的字；
+  // skipDraftKey 命中的表单不还原（刚提交成功，输入框应清空）
+  const draft = [];
+  $('todoList').querySelectorAll('form[data-editform] input[type="text"], form[data-noteform] textarea, form[data-itemform] input[type="text"]').forEach((el) => {
+    const f = el.closest('form');
+    const key = f.dataset.editform || f.dataset.noteform || f.dataset.itemform;
+    if (key !== skipDraftKey) draft.push({ key, name: el.name, value: el.value, focused: el === document.activeElement, s: el.selectionStart, e: el.selectionEnd });
+  });
   // 筛选选项从现有数据动态生成；已失效的筛选值自动清除
   const projects = [...new Set(allTodos.map((t) => t.project).filter(Boolean))].sort();
   const sources = [...new Set(allTodos.map((t) => t.source).filter(Boolean))].sort();
@@ -549,6 +560,14 @@ function renderTodos() {
   // 零待办且无任何生效筛选时收起搜索框（chips 本就为空，空占位显得多余）
   $('todoSearch').style.display = (allTodos.length === 0 && !filtered) ? 'none' : '';
 
+  // 还原未保存输入（对应表单已不在新 DOM 的自然落空——如保存成功后视图已切换）
+  for (const d of draft) {
+    const el = document.querySelector(`form[data-editform="${d.key}"] [name="${d.name}"], form[data-noteform="${d.key}"] [name="${d.name}"], form[data-itemform="${d.key}"] [name="${d.name}"]`);
+    if (!el) continue;
+    el.value = d.value;
+    if (d.focused) { el.focus(); try { el.setSelectionRange(d.s, d.e); } catch {} }
+  }
+
   renderRailStats();
 }
 
@@ -598,14 +617,14 @@ async function clearDoneTodos() {
     if (skipEdit.length) parts.push(`跳过编辑中的 ${skipEdit.length} 条`);
     showErr(parts.join('；'));
   }
-  await refreshTodos(); // 全部删完只刷新一次
+  await refreshTodos({ force: true }); // 全部删完只刷新一次
 }
 
 async function saveTodoEdit(id, patch) {
   const r = await apiFetch(`/v1/todos/${encodeURIComponent(id)}`, {
     method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch),
   });
-  if (r.ok) { editingId = null; refreshTodos(); }
+  if (r.ok) { editingId = null; refreshTodos({ force: true }); }
   else showErr((await r.json().catch(() => ({}))).error?.message || `保存失败（HTTP ${r.status}）`);
 }
 
@@ -629,7 +648,7 @@ async function cycleTodo(id, next) {
   const r = await apiFetch(`/v1/todos/${encodeURIComponent(id)}`, {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: next }),
   });
-  if (r.ok) refreshTodos(); else showErr(`状态更新失败（HTTP ${r.status}）`);
+  if (r.ok) refreshTodos({ force: true }); else showErr(`状态更新失败（HTTP ${r.status}）`);
 }
 
 async function delTodo(id) {
@@ -637,32 +656,40 @@ async function delTodo(id) {
   if (r.status === 204) refreshTodos(); else showErr(`删除失败（HTTP ${r.status}）`);
 }
 
-// ── 子项与详情（单操作端点：服务端派生父状态后整只父待办返回，刷新即所见） ──
+// ── 子项与详情（单操作端点：服务端派生父状态后整只父待办返回） ──
+// 动作型刷新一律 force：输入态守卫只护「被动刷新」（focus 拉取），动作完成后界面必须
+// 立刻反映结果——否则回车加子项不出现、输入框不清空，再按回车就重复建
 async function toggleItem(todoId, itemId, done) {
   const r = await apiFetch(`/v1/todos/${encodeURIComponent(todoId)}/items/${encodeURIComponent(itemId)}`, {
     method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ done }),
   });
-  if (r.ok) refreshTodos(); else showErr(`子项更新失败（HTTP ${r.status}）`);
+  if (!r.ok) {
+    // 失败（如子项已被并发删除 → 404）：checkbox 视觉态已被用户点下，强制重渲染回同步服务器事实
+    showErr(`子项更新失败（HTTP ${r.status}）`);
+    refreshTodos({ force: true });
+    return;
+  }
+  refreshTodos({ force: true });
 }
 
 async function addItem(todoId, title) {
   const r = await apiFetch(`/v1/todos/${encodeURIComponent(todoId)}/items`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }),
   });
-  if (r.status === 201) refreshTodos();
+  if (r.status === 201) refreshTodos({ force: true, skipDraftKey: todoId });
   else showErr((await r.json().catch(() => ({}))).error?.message || `子项添加失败（HTTP ${r.status}）`);
 }
 
 async function delItem(todoId, itemId) {
   const r = await apiFetch(`/v1/todos/${encodeURIComponent(todoId)}/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' });
-  if (r.status === 204) refreshTodos(); else showErr(`子项删除失败（HTTP ${r.status}）`);
+  if (r.status === 204) refreshTodos({ force: true }); else showErr(`子项删除失败（HTTP ${r.status}）`);
 }
 
 async function saveNote(todoId, note) {
   const r = await apiFetch(`/v1/todos/${encodeURIComponent(todoId)}`, {
     method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ note }),
   });
-  if (r.ok) { noteEditId = null; refreshTodos(); }
+  if (r.ok) { noteEditId = null; refreshTodos({ force: true }); }
   else showErr((await r.json().catch(() => ({}))).error?.message || `详情保存失败（HTTP ${r.status}）`);
 }
 
@@ -1071,6 +1098,11 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (e.target.closest('button[data-notecancel]')) { noteEditId = null; renderTodos(); return; }
+  // 子项勾选：走 click 委托（键盘空格同样触发 checkbox 的 click）。放在「点外退出
+  // 编辑」重渲染之后也无妨——节点即便被摘下树，dataset 与已翻转的 checked 属性仍在，
+  // 勾选不丢事件（change 事件在节点摘树后不再冒泡到 document，故不用 change）
+  const cb = e.target.closest('input[type="checkbox"][data-itemid]');
+  if (cb) { safe(toggleItem)(cb.dataset.todo, cb.dataset.itemid, cb.checked); return; }
   // 删除子项（轻量操作，不 confirm——标题删除才有 confirm）
   const idel = e.target.closest('button[data-itemdel]');
   if (idel) { safe(delItem)(idel.dataset.todo, idel.dataset.itemid); return; }
@@ -1118,11 +1150,6 @@ document.addEventListener('submit', (e) => {
     if (!title) { af.elements.itemTitle.focus(); return; }
     safe(addItem)(af.dataset.itemform, title);
   }
-});
-// 子项勾选（checkbox 的 change 事件，不走 click 委托——键盘空格切换同样触发）
-document.addEventListener('change', (e) => {
-  const cb = e.target.closest('input[type="checkbox"][data-itemid]');
-  if (cb) safe(toggleItem)(cb.dataset.todo, cb.dataset.itemid, cb.checked);
 });
 // Esc 退出就地编辑/详情编辑（编辑中无论焦点在哪，与点外取消一致）；
 // / 聚焦待办搜索框并全选（焦点在输入类控件内、带修饰键、IME 组合中、正在就地编辑时不抢键）
