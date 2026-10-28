@@ -69,7 +69,13 @@ lib/log.mjs           日志（内存环形缓冲 1000 行 + 落盘 + 5MB 轮转
 lib/util.mjs          httpError / sendJson / readBodyLimited（上游响应体有界读：content-length
                       预检 + 无/非法长度边读边检）/ token 权重（CJK 1:1 其余 4:1）/ randHex
 lib/todos.mjs         工作台待办数据层（todos.json 写穿原子落盘 0600、坏文件自愈空列表、
-                      字段码位校验、todosInWindow 供报告素材）
+                      字段码位校验、todosInWindow 供报告素材）。子项 checklist：todo.items=
+                      [{id,title,done,done_at}]，每次子项变更后 deriveFromItems 派生父状态
+                      （非空且全 done→父 done 盖 completed_at 不重盖；有未完成且父 done→回
+                      in_progress 清章；空清单不派生；显式 PATCH status 永远生效）。note 即
+                      「详情」：agent 来源（source≠user）硬上限 300 码位、用户 2000；子项
+                      标题 ≤200、每条待办 ≤50 子项；createTodoItem/updateTodoItem/
+                      deleteTodoItem 供 /v1/todos/:id/items 端点
 lib/report/sqlite.mjs 只读 SQLite 封装（spawn 系统 sqlite3 -json；只发 SELECT、id 白名单内联）
 lib/report/sources/   四个 agent 会话源适配器（统一 listSessions({startMs,endMs})，正文判别式
                       与时间归因详见各文件头注释与 spec §5）：
@@ -83,14 +89,16 @@ lib/report/sources/   四个 agent 会话源适配器（统一 listSessions({sta
                       锚点时间归因、无窗口标签回退 mtime+tailOnly）
 lib/report/collect.mjs 素材收集：4 源并发降级（单源故障记 sourcesFailed 不失败）、项目归并
                       （basename 短名）、三级压缩（LIMITS 码位截断、tailOnly 尾取）、脱敏、
-                      待办变动 + stats 用量佐证
+                      待办变动（含子项进度）+ stats 用量佐证
 lib/report/generate.mjs 报告生成状态机：单任务串行（409）、collect→summarize→final 三段进度、
                       模型兜底链（workbench 节 → 默认上游目录第一个）、requestUpstream 协议
                       分支、reports.json 原子存档（上限 200）；两级总结失败或空响应自动重试一次
-                      （CANNBOT_REPORT_RETRY_DELAY_MS 可调间隔）
+                      （CANNBOT_REPORT_RETRY_DELAY_MS 可调间隔）；「无记录」固定快径只在会话
+                      与待办**双双为空**时走（有待办变动即调模型），materials.todos 记两列表计数
 lib/report-prompts.mjs 两级总结 prompt + 压缩/脱敏阈值**全部集中在此**——调汇报质量只改这里
 workbench.html/css    工作台页（待办管理 + 报告生成/历史，键盘 skip link「跳到报告区」）
-                      与 admin/workbench 共享主题
+                      与 admin/workbench 共享主题。待办行：收起只扫父标题（2 行钳制 +「子项
+                      k/j」徽标），展开看子项清单（勾选即 PATCH 单条）与详情（agent 长文默认折叠）
 ```
 
 ### 请求路由（server.mjs 主入口）
@@ -98,8 +106,11 @@ workbench.html/css    工作台页（待办管理 + 报告生成/历史，键盘
 | 路径 | 处理 |
 |---|---|
 | `/v1/messages`、`/messages` | Anthropic 客户端：先 checkClientAuth → 解析 model → 路由 → 直通或翻译 |
-| `/v1/todos`、`/v1/todos/:id` | 工作台待办 CRUD（Bearer 鉴权；**必须排在 /v1/* catch-all 之前**）：
-  GET（`?status=` 过滤）/ POST / PUT·PATCH 部分字段（PATCH 与 PUT 同义，工作台就地编辑用；status=done 盖 completed_at）/ DELETE |
+| `/v1/todos`、`/v1/todos/:id`、`/v1/todos/:id/items(/:itemId)` | 工作台待办 CRUD（Bearer 鉴权；**必须排在 /v1/* catch-all 之前**）：
+  GET（`?status=` 过滤，子项随父返回）/ POST（可带 `items:[{title,done?}]` 初始清单）/ PUT·PATCH
+  部分字段（PATCH 与 PUT 同义；可带 items 整组替换、子项对象带 id 则保留；status=done 盖
+  completed_at）/ DELETE；子项：POST 加 / PATCH·PUT 勾选改名 / DELETE 删，写响应带整只父待办
+  （全部子项完成 → 父自动 done，规则见 lib/todos.mjs 头注释） |
 | `/v1/*` 其余 | OpenAI 客户端：鉴权 → 路由 → openai 上游透传 / anthropic 上游反向翻译 |
 | `/v1/models` | 聚合所有 provider 目录（重名消歧为 `pid/model`，`owned_by`=provider id） |
 | `/workbench`、`/workbench.css` | 工作台页与共享主题样式（静态文件，硬编码路由） |
@@ -143,7 +154,7 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
 
 ### 工作台页（workbench.html）
 
-`/workbench` 提供，两区：**待办**（快速添加：标题/紧急度 seg/项目标签；按 进行中→待办（紧急在前）→完成折叠 分组；行内状态循环/删除；agent 来源徽标）与**报告**（预设区间 seg + 自定义 datetime-local；生成 → 2s 轮询 job 进度（琥珀扫掠条）→ Markdown 渲染 + 复制 + 历史表格）。动态文本一律 `esc()` 转义后再做 Markdown 结构替换（XSS 防线）。API 侧：待办走 Bearer（loadToken/apiFetch 照抄 admin 模式，401 重取一次），报告端点仅回环免 token。设计文档与数据源判别式：`docs/superpowers/specs/2026-10-27-workbench-design.md`。
+`/workbench` 提供，两区：**待办**（快速添加：标题/紧急度 seg/项目标签；按 进行中→待办（紧急在前）→完成折叠 分组；行内状态循环/删除；agent 来源徽标；**有子项/详情的行可展开**——收起只扫父标题（2 行钳制 +「子项 k/j」徽标），展开区勾子项/加删子项/编辑详情（agent 长文默认折叠，输入态不重建列表 DOM））与**报告**（预设区间 seg + 自定义 datetime-local；生成 → 2s 轮询 job 进度（琥珀扫掠条）→ Markdown 渲染 + 复制 + 历史表格；成稿元数据行含「待办 新增 n / 完成 m」）。动态文本一律 `esc()` 转义后再做 Markdown 结构替换（XSS 防线）。API 侧：待办走 Bearer（loadToken/apiFetch 照抄 admin 模式，401 重取一次），报告端点仅回环免 token。设计文档与数据源判别式：`docs/superpowers/specs/2026-10-27-workbench-design.md`；子项/详情/自动完成规则：`docs/superpowers/specs/2026-10-28-todo-subitems-design.md`。
 
 ## 外部集成（改动前了解影响面）
 

@@ -203,18 +203,25 @@ API Key  : ANTHROPIC_AUTH_TOKEN = 网关 token
 
 浏览器打开 `http://127.0.0.1:8484/workbench`（管理台左栏「工作台」进入）：
 
-- **待办事项**：标题 + 紧急程度（紧急/普通/不急）+ 可选项目标签；进行中 → 待办 → 已完成（折叠）
-  分组；紧急排前。点标题可就地编辑（标题/紧急度/项目标签，走 `PATCH /v1/todos/:id`），列表上方可按
-  项目标签、来源（user / agent）与紧急度筛选，也可按标题关键字搜索（纯前端，与筛选叠加），筛选状态记在
-  浏览器 localStorage；`/` 快捷键聚焦搜索、Esc 清空；一键「清理已完成」（全量口径，编辑中的跳过）。
-  键盘可达：主区首部有视觉隐藏的 skip link「跳到报告区」，大量待办下 Tab 一次即到报告区。
-  数据在 `todos.json`（运行时目录），人与 agent 共用同一份。
+- **待办事项**：标题 + 紧急程度（紧急/普通/不急）+ 可选项目标签 + **子项清单（checklist）+
+  可编辑详情（note）**；进行中 → 待办 → 已完成（折叠）分组；紧急排前。点标题可就地编辑
+  （标题/紧急度/项目标签，走 `PATCH /v1/todos/:id`）。有子项或详情的行出现展开钮：**收起行只扫
+  父标题**（长标题 2 行钳制，「子项 k/j」徽标显示进度，详情长文默认折叠不显），展开后勾子项
+  （每勾一条即时保存、父状态由服务端派生）、回车加子项、✕ 删子项，详情可查看全文与编辑
+  （textarea，agent 来源上限 300 字、用户 2000）。**全部子项勾完 → 父待办自动完成**（自动
+  status=done 并盖 completed_at；再取消任一子项 → 父回到「进行中」并撤章——规则见下文 REST 明细）。
+  列表上方可按项目标签、来源（user / agent）与紧急度筛选，也可按标题关键字搜索（纯前端，与筛选叠加），
+  筛选状态记在浏览器 localStorage；`/` 快捷键聚焦搜索、Esc 清空；一键「清理已完成」（全量口径，
+  编辑中的跳过）。键盘可达：主区首部有视觉隐藏的 skip link「跳到报告区」，大量待办下 Tab 一次即到
+  报告区。数据在 `todos.json`（运行时目录），人与 agent 共用同一份。
 - **时间段工作总结**：预设区间（今日/昨天/本周/上周/近7天/近30天）或自定义起止 → 点「生成报告」。
   网关读取 **Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录**（只读各自的
   数据文件，互相独立、单源故障只降级不失败），按项目归并压缩、脱敏（密钥样式 → `[REDACTED]`），
+  并纳入**该窗口内新增/完成的待办**（标题短列表，新增行带子项进度（k/j）；详情长文不进 prompt）。
   经两级总结（逐项目小结 → 汇总成稿）产出**给上级看的中文 Markdown 汇报**——按项目分节、
   突出做了什么/推进到哪/产出什么，文末附待办进展与模型用量数据附注。一键复制、下载 .md（按报告时间窗命名）、历史存档可回看并按原时间段一键重跑。任一级总结失败或空响应会自动重试一次（间隔可用
-  `CANNBOT_REPORT_RETRY_DELAY_MS` 调）。
+  `CANNBOT_REPORT_RETRY_DELAY_MS` 调）。窗口内即使没有会话素材、只要待办有变动也照常出稿
+  （不会把「只有待办进展的时段」写成无记录）。
 - **报告用什么模型**：providers.json 的 `workbench` 节（`reportProvider` / `reportModel`，改完热
   生效）；不配则自动用默认上游的第一个可用模型。**总结质量的调优入口集中在
   `lib/report-prompts.mjs`**（prompt 文案、截断阈值、脱敏模式都在这一个文件）。
@@ -232,17 +239,29 @@ providers.json 的 gateway.clientToken，或先 GET http://127.0.0.1:8484/admin/
 - 列出：curl -s http://127.0.0.1:8484/v1/todos -H "Authorization: Bearer <token>"
 - 新增：curl -s -X POST http://127.0.0.1:8484/v1/todos -H "Authorization: Bearer <token>" \
     -H 'content-type: application/json' \
-    -d '{"title":"一句话说清","urgency":"urgent|normal|someday","project":"可选标签","source":"agent:claude-code"}'
+    -d '{"title":"一句话说清","urgency":"urgent|normal|someday","project":"可选标签","source":"agent:claude-code","items":[{"title":"第一步"},{"title":"第二步"}]}'
+- 勾子项：curl -s -X PATCH http://127.0.0.1:8484/v1/todos/<id>/items/<itemId> -H "Authorization: Bearer <token>" \
+    -H 'content-type: application/json' -d '{"done":true}'
 - 完成：curl -s -X PUT http://127.0.0.1:8484/v1/todos/<id> -H "Authorization: Bearer <token>" \
     -H 'content-type: application/json' -d '{"status":"done"}'
 
 加待办时始终带上 "source":"agent:<你的名字>"。
+写作纪律（可读性优先）：标题一行可扫（如「适配 unigemm SME 内核」，不要贴长文/堆链接）；
+note（详情）≤ 300 码位（超了网关直接 400），长上下文自己另存别处，只留一句话索引；
+子项每条 ≤ 200 码位、每条待办最多 50 条。子项全部勾完时父待办会自动完成，不用再手动 PUT status。
 ```
 
-REST 明细：`GET /v1/todos`（`?status=` 过滤）· `POST /v1/todos` · `PUT /v1/todos/:id`（部分字段；
-status=done 自动盖 completed_at）· `DELETE /v1/todos/:id`。报告 API（仅回环）：
-`POST /admin/report/generate` `{startMs,endMs}` → `{jobId}` · `GET /admin/report/job` 进度 ·
-`GET /admin/report/list` · `GET|DELETE /admin/report/:id`。
+REST 明细：`GET /v1/todos`（`?status=` 过滤，子项随父返回）· `POST /v1/todos`（可带
+`items:[{title,done?}]` 初始清单）· `PUT|PATCH /v1/todos/:id`（部分字段；可带 `items` 整组
+替换——子项对象带 `id` 则保留原 id；status=done 自动盖 completed_at）· `DELETE /v1/todos/:id` ·
+`POST /v1/todos/:id/items`（加子项）· `PATCH|PUT /v1/todos/:id/items/:itemId`（勾选/改名）·
+`DELETE /v1/todos/:id/items/:itemId`。
+
+**子项自动完成规则**：子项非空且全部 done → 父待办自动 `done`（completed_at 原为空才盖，不重盖）；
+此后任一子项取消完成 → 父回到 `in_progress` 并清 completed_at；清单为空/无清单 → 父状态纯手动
+（显式 PATCH status 永远生效；同一次 PATCH 同时带 status 与 items 时，items 的派生结果优先）。
+报告 API（仅回环）：`POST /admin/report/generate` `{startMs,endMs}` → `{jobId}` ·
+`GET /admin/report/job` 进度 · `GET /admin/report/list` · `GET|DELETE /admin/report/:id`。
 
 ## 管理台 / 统计
 
