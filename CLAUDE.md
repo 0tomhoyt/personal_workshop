@@ -33,10 +33,19 @@ curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
 
 ```
 server.mjs            HTTP 服务 + 路由分发 + healthz/admin 端点
-lib/config.mjs        providers.json 加载/校验/热重载（baseUrl 归一化：剥尾部 /v1）
+lib/config.mjs        providers.json 加载/校验/热重载（baseUrl 归一化：剥尾部 /v1）；
+                      workbench.remoteProjects = 不在这台机器上做的项目标签（归一化去空白去重，
+                      非数组/空数组整键忽略）
 lib/providers-admin.mjs  管理台对 providers.json 的增删改（写前整体校验 + 防自环、
                       原子落盘 0600、读视图只出 token 掩码、编辑留空 token=沿用）
-lib/gwauth.mjs        客户端 Bearer token 校验（timingSafeEqual）
+lib/gwauth.mjs        客户端 Bearer token 校验（timingSafeEqual；safeEqual 与 TV token 校验共用）
+lib/tv-snapshot.mjs   电视工作台快照（纯函数）：listTodos()+statsSnapshot() → 2–6 KB JSON，
+                      裁掉 spans/perf/days[]/prices、note/标题截断、服务端算好 runningMs/doneToday；
+                      ETag 只哈希数据本身（不含 now/runningMs，否则每分钟都 304 不命中）
+lib/tv-server.mjs     电视 LAN 监听（gateway.tv，默认关闭；同进程第二监听，8484 一行不动）：
+                      白名单 GET /tv/v1/snapshot|health，其余 404；Host 反 rebinding → 来源
+                      allowedCidrs → 白名单 → X-Aerial-Token（timingSafeEqual）→ 30 次/分钟/token
+                      （日志只记 token 名/前缀 + IP + 状态码）
 lib/models.mjs        模型目录聚合（TTL 10min + 失败负缓存 30s，目录响应 2MB 有界读）+ model→provider
                       路由（显式 pid/model > aliases > 裸名唯一 > defaultProvider 兜底）
 lib/upstream.mjs      requestUpstream：按 provider 解析凭证头、fetch（「发请求→收到
@@ -67,7 +76,8 @@ lib/monitors-admin.mjs 管理台对 monitors 节的改名写回（只动 name，
                       原子落盘 0600）
 lib/log.mjs           日志（内存环形缓冲 1000 行 + 落盘 + 5MB 轮转）
 lib/util.mjs          httpError / sendJson / readBodyLimited（上游响应体有界读：content-length
-                      预检 + 无/非法长度边读边检）/ token 权重（CJK 1:1 其余 4:1）/ randHex
+                      预检 + 无/非法长度边读边检）/ token 权重（CJK 1:1 其余 4:1）/ randHex /
+                      clientTag（请求日志里的调用方 UA 短标识，见「流量统计」节）
 lib/todos.mjs         工作台待办数据层（todos.json 写穿原子落盘 0600、坏文件自愈空列表、
                       字段码位校验、todosInWindow 供报告素材：新增/更新/完成三列表，
                       updated 只收「窗口前就存在、窗口内被推进、未在本窗新建或完成」）。
@@ -77,7 +87,17 @@ lib/todos.mjs         工作台待办数据层（todos.json 写穿原子落盘 0
                       in_progress 清章；空清单不派生；显式 PATCH status 永远生效）。note 即
                       「详情」：agent 来源（source≠user）硬上限 300 码位、用户 2000；子项
                       标题 ≤200、每条待办 ≤50 子项；createTodoItem/updateTodoItem/
-                      deleteTodoItem 供 /v1/todos/:id/items 端点
+                      deleteTodoItem 供 /v1/todos/:id/items 端点。
+                      **时段 spans=[{id,start,end}]**（end=null 为进行中）：**用途是产出日历
+                      事件**（每段 → 一条 start~end 事件），不是给汇报做归属——汇报的归属交给
+                      模型按内容判断（见 lib/report/attribute.mjs）。失败模式不同：不填 = 日历
+                      没有事件（看得见的空白），而不是汇报里悄悄丢掉一段工作。
+                      记录两种都支持：① 状态切换自动开闭段（进 in_progress 开、进 done 闭，
+                      幂等）；② PATCH spans 整组替换（id 留则保留，外部同步程序靠它认事件）。
+                      显式传 spans 时不自动开闭（调用方既然给了时间线就不该被改写）。
+                      **不限制全局单运行段**——并行的两件事是真实的，强约束会逼用户手动改时间。
+                      端点见下方路由表。note 语义是**用户给自己看的备忘**，汇报时交给模型过滤
+                      改写，不直接进正文
 lib/report/sqlite.mjs 只读 SQLite 封装（spawn 系统 sqlite3 -json；只发 SELECT、id 白名单内联）
 lib/report/sources/   四个 agent 会话源适配器（统一 listSessions({startMs,endMs})，正文判别式
                       与时间归因详见各文件头注释与 spec §5）：
@@ -88,22 +108,45 @@ lib/report/sources/   四个 agent 会话源适配器（统一 listSessions({sta
    opencode.mjs       opencode.db 双路（session/message/part 主路 + event 事件溯源补路，
                       part 全量快照取最终态、多 agent 合成注入过滤）
    cursor.mjs         ~/.cursor/projects agent-transcripts（浅层排除 subagents、user 标签
-                      锚点时间归因、无窗口标签回退 mtime+tailOnly）
+                      锚点时间归因、无窗口标签回退 mtime+tailOnly；tailOnly 另给 attrTime=mtime，
+                      tailOnly 会话另给 attrTime=mtime，供归属时参考其真实活跃时间）
+lib/report/attribute.mjs 会话→待办归属（**交给模型做内容判断**，不是时间重叠）：把「待办清单
+                      （标题+项目+状态+子项进度，**不含 note**——私人备忘不为归属外发）」和按项目
+                      归并的会话素材一起给模型，让它输出「项目 | 待办序号 | 说明」。
+                      parseAttribution 容错解析（全角竖线/表格包裹/列表符号/反引号包项目名），
+                      编造的项目名与越界序号一律丢弃（宁可漏配不可错配）；解析为空或归属调用
+                      失败不令任务失败，退化成「全部进其他」。代价：归属不确定，每次跑可能不同
 lib/report/collect.mjs 素材收集：4 源并发降级（单源故障记 sourcesFailed 不失败）、项目归并
                       （basename 短名）、三级压缩（LIMITS 码位截断、tailOnly 尾取）、脱敏、
-                      待办变动（含子项进度）+ stats 用量佐证
+                      只做项目归并（todoGroups/归属在 generate 里做，因为要调模型）+
+                      待办变动 + stats 用量佐证
 lib/report/generate.mjs 报告生成状态机：单任务串行（409）、collect→summarize→final 三段进度、
                       模型兜底链（workbench 节 → 默认上游目录第一个）、requestUpstream 协议
                       分支、reports.json 原子存档（上限 200）；两级总结失败或空响应自动重试一次
-                      （CANNBOT_REPORT_RETRY_DELAY_MS 可调间隔）；「无记录」固定快径只在会话
-                      与待办**双双为空**时走（有待办变动即调模型），materials.todos 记
-                      新增/更新/完成三列表计数（updated = 窗口前就存在、窗口内被推进、
-                      但没在本窗新建也没在本窗完成；与另两类互斥）
-lib/report-prompts.mjs 两级总结 prompt + 压缩/脱敏阈值**全部集中在此**——调汇报质量只改这里
+                      （CANNBOT_REPORT_RETRY_DELAY_MS 可调间隔）；一级按待办跑，未归属素材
+                      单独一次调用产出「其他」清单；一条待办都没有时回落按项目；
+                      「无记录」固定快径只在会话与待办**双双为空**时走（有待办变动即调模型）；
+                      归属是一次独立模型调用（phase=attribute）；**远程待办**（project 命中
+                      workbench.remoteProjects）不进归属候选——它们不在本机做，本机不会有
+                      会话，放进候选只会诱导模型错配同名无关会话（如「黄区kblas 问题单」vs
+                      本机 kblas 会话）；但仍照常进正文并标注「另一台机器上进行」；
+                      待办进正文的入场条件是
+                      **有会话素材 或 本窗内有变动**——没动过的待办不进（报告讲这段时间干了
+                      什么，不是当前任务清单）；**证据分级**：有会话→模型写；无会话但有子项/
+                      备忘→材料是待办自身，备忘标「需过滤」交给模型改写；都没有→只写
+                      「状态：标题」不编内容。materials 记 todoGroups / todoGroupsWithSessions /
+                      unassignedSessions；materials.todos 记新增/更新/完成三列表计数
+                      （updated = 窗口前就存在、窗口内被推进、但没在本窗新建也没在本窗完成）
+lib/report-prompts.mjs 两级总结 prompt + 压缩/脱敏阈值**全部集中在此**——调汇报质量只改这里。
+                      成稿**正文按待办分节**（每条 80-150 字，不再是每节 3 条长 bullet）、
+                      未归属工作进末尾「## 其他」一行一条，整体 ≤700 字
 index.html            单页外壳：左栏两级分组导航（工作台 / 管理台）+ 六个视图
                       （待办 / 汇报 / 总览 / 统计 / 诊断 / 配置）全部逻辑内联在一段脚本里。
-                      待办行：收起只扫父标题（2 行钳制 +「子项 k/j」徽标），展开看子项清单
-                      （勾选即 PATCH 单条）与详情（agent 长文默认折叠）
+                      待办行：收起只扫父标题（2 行钳制 +「子项 k/j」徽标）。**展开箭头与
+                      「＋ 加子项」输入框都必须恒显示**——它们曾经分别是「有子项/详情才显示」
+                      和「有子项才渲染」，而子项/详情只能在展开区里添加 → 干净待办永远进不去，
+                      功能只有 agent 走 REST 才用得着（同一个死角犯过两次）。展开看子项清单
+                      （勾选即 PATCH 单条）、详情（agent 长文默认折叠）
 theme.css             共享主题：令牌 / 骨架 / 左栏布局契约 / 通用组件（/theme.css 提供，
                       /workbench.css 为旧缓存的兼容别名，同一份内容）
 ```
@@ -113,12 +156,14 @@ theme.css             共享主题：令牌 / 骨架 / 左栏布局契约 / 通�
 | 路径 | 处理 |
 |---|---|
 | `/v1/messages`、`/messages` | Anthropic 客户端：先 checkClientAuth → 解析 model → 路由 → 直通或翻译 |
-| `/v1/todos`、`/v1/todos/:id`、`/v1/todos/:id/items(/:itemId)` | 工作台待办 CRUD（Bearer 鉴权；**必须排在 /v1/* catch-all 之前**）：
-  GET（**仅集合**，`?status=` 过滤、子项随父返回；单条 GET 返回 405——列表已含全部字段）/ POST
-  （可带 `items:[{title,done?}]` 初始清单）/ PUT·PATCH 部分字段（PATCH 与 PUT 同义；可带 items
-  整组替换、子项对象带 id 则保留；status=done 盖 completed_at）/ DELETE；子项：POST 加 /
-  PATCH·PUT 勾选改名 / DELETE 删，写响应带整只父待办
-  （全部子项完成 → 父自动 done，规则见 lib/todos.mjs 头注释） |
+| `/v1/todos`、`/v1/todos/:id`、`/v1/todos/:id/items(/:itemId)`、`/v1/todos/:id/spans(/:spanId|open|close)` | 工作台待办 CRUD（Bearer 鉴权；**必须排在 /v1/* catch-all 之前**）：
+  GET（**仅集合**，`?status=` 过滤、子项与时段随父返回；单条 GET 返回 405——列表已含全部字段）/
+  POST（可带 `items:[{title,done?}]` 初始清单、`spans`）/ PUT·PATCH 部分字段（PATCH 与 PUT 同义；
+  可带 items·spans 整组替换、对象带 id 则保留；status=done 盖 completed_at）/ DELETE；
+  子项：POST 加 / PATCH·PUT 勾选改名 / DELETE 删；**时段**：POST 加一段 / PATCH·PUT 改一段
+  （`{start}`、`{end}` 或 `{end:null}` 改回进行中）/ DELETE 删一段，另有 `POST /:id/spans/open`
+  开一段、`POST /:id/spans/close` 闭所有未闭合段（**都不改 status**——暂停 ≠ 完成）。
+  写响应一律带整只父待办（全部子项完成 → 父自动 done，规则见 lib/todos.mjs 头注释） |
 | `/v1/*` 其余 | OpenAI 客户端：鉴权 → 路由 → openai 上游透传 / anthropic 上游反向翻译 |
 | `/v1/models` | 聚合所有 provider 目录（重名消歧为 `pid/model`，`owned_by`=provider id） |
 | `/`、`/admin`、`/workbench` | 同一个 `index.html`（单页应用）。`/workbench` 是旧链接：页面按 pathname 强制落 `#todos` 并把地址改写成 `/#todos` |
@@ -131,11 +176,26 @@ theme.css             共享主题：令牌 / 骨架 / 左栏布局契约 / 通�
   显示器切换：GET `/admin/monitors`（状态，`?refresh=1` 绕缓存）/ POST `/admin/monitors/switch`
   （`{"input":n}` 显式切全部屏，可选 `"display":"<UUID 或前 8 位或名字>"` 单切一台；
   `input` 也可写成 `"target":"<输入源名字>"`）/ POST `/admin/monitors/rename`
-  `{"input":n,"name":...}` 或 `{"display":...,"name":...}`，name 空串=恢复编号 |
+  `{"input":n,"name":...}` 或 `{"display":...,"name":...}`，name 空串=恢复编号；
+  远程项目标签：POST `/admin/workbench/remote-projects` `{"remoteProjects":["黄区"]}`
+  （写 providers.json 的 workbench 节，空数组=清空并删键） |
 
 URL 容忍 `/v1/v1/...` 叠加前缀。restart/stop/config/providers/monitors 仅接受回环 Host（防 DNS
-rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（POST）另强制 `application/json`
-（跨站表单伪造不出，防 CSRF）。
+rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（POST）、远程项目（POST）
+另强制 `application/json`（跨站表单伪造不出，防 CSRF）。
+
+### 电视工作台监听（gateway.tv，第二监听，默认关闭）
+
+`server.mjs` 在主监听启动后调 `startTvServer()`（`lib/tv-server.mjs`）另起一个 HTTP server；
+**主监听的 `HOST`/`listen(PORT, HOST)` 一行不动**。`gateway.tv.enabled !== true` 或 `tokens` 为空时
+完全不建监听；`port`/`bind`/`enabled` 启动时读取（改了要重启），`tokens`/`allowedCidrs`/限速
+每请求现读（吊销即时生效；限速上限 `maxPerMinute` 也现读）。`allowedCidrs` 填了就**完全按它匹配**（不叠加默认值；默认值含回环，
+自填时要显式保留 `127.0.0.1/32` 才能本机自检）。请求顺序：Host（只收 IP 字面量与 `.local`）→ 来源 `allowedCidrs` →
+路由白名单（`/tv/v1/snapshot`、`/tv/v1/health`，其余含 `/admin/*`、`/v1/*` 一律 404）→
+`X-Aerial-Token`（timingSafeEqual；与 `clientToken` 相同的一律在配置层被丢弃）→ 每 token 30 次/分钟，
+失败尝试另按来源 IP 限速（3 倍额度），401 不是可以无限猜的。
+快照由 `lib/tv-snapshot.mjs` 从 `listTodos()` + `statsSnapshot()` 现算，不上 spans/perf/days/prices。
+测试：`node test/tv-unit.mjs`（纯函数）、`node test/tv.mjs`（起真实网关的端到端）。
 
 ### 关键设计约束（改代码前想清楚）
 
@@ -150,6 +210,12 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
    （`__CLIENT_TOKEN__` 占位由 install.sh 首次安装时以随机 token 生成，**升级不覆盖已有配置**）。
 
 ### 流量统计与性能采样
+
+**请求日志带调用方标识**：每行末尾的 `ua=claude-cli/2.1.310` 是 `clientTag(req)` 从
+User-Agent 取的**产品名/版本**（剥掉 OS 注释与括号，超长截断，缺失给 `ua=-`）。
+为什么要有：日志原先只有 provider/model/耗时，查「这几次 glm 调用是谁发的」只能靠
+时间戳反推——而且 `zcode` 这类是 **provider id（上游订阅名）**，不是调用方，极易误读。
+边界：**只记 UA 短标识，不记请求体内容、不记自定义头**，与「网关只转发不改写内容」一致。
 
 - 两条入站管道各自用 Transform tap 旁路采集：字节数、usage（openai 与 anthropic 两种 SSE/JSON 形态都有对应解析）、SSE 块到达时间戳（marks）。
 - 流式请求自动补 `stream_options.include_usage`（openai 上游）。性能口径对齐 vLLM benchmark：TTFT/TPOT/ITL/E2E；上游 completion_tokens 按字符权重经最大余数法摊到各块（`apportionTokens`）。
@@ -186,13 +252,23 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
 刷新时刻，不伪装成实时。报告生成中的 2s job 轮询不受当前视图影响。
 
 **视图内容**：待办（快速添加：标题/紧急度 seg/项目标签；按 进行中→待办（紧急在前）→完成
-折叠 分组；行内状态循环/删除；agent 来源徽标；**有子项/详情的行可展开**——收起只扫父标题
-（2 行钳制 +「子项 k/j」徽标），展开区勾子项/加删子项/编辑详情（agent 长文默认折叠，输入态
-不重建列表 DOM））；汇报（预设区间 seg + 自定义 datetime-local；生成 → 2s 轮询 job 进度
+折叠 分组；**「已完成」组的展开态由用户决定并存 localStorage（`wb-todo-done-open`），
+没表过态才用「没有别的活时默认展开」的推断**——曾经它纯粹是算出来的，于是任何一次重绘
+都把用户刚点开的列表重新收回去；行内状态循环/删除；agent 来源徽标；**每一行都可展开**——收起只扫父标题
+（2 行钳制 +「子项 k/j」徽标 + 时段摘要「进行中 42m」/「3 段 · 2h15m」），
+展开区勾子项/加删子项/编辑详情/**编辑时段表**（每段起止可改可删、「＋ 补一段」；
+行内另有「⏸ 暂停」——只闭段不改状态，因为暂停 ≠ 完成）
+（agent 长文默认折叠，输入态不重建列表 DOM））；汇报（预设区间 seg + 自定义 datetime-local；生成 → 2s 轮询 job 进度
 （琥珀扫掠条）→ Markdown 渲染 + 复制 + 下载 .md + 历史表格；成稿元数据行含「待办 新增 n /
-更新 m / 完成 k」）；总览（订阅上游卡含凭证体检与协议串、模型目录 chips、今日速览、
-显示器输入源——左栏底部一台屏一个按钮（点一下把那台屏切到下一个输入源，循环），
-总览卡里每屏另有「⇄ 下一输入源」轮换单切，m1ddc 缺失降级提示）；
+更新 m / 完成 k」；**正文按待办分节**，对不上任何待办的零散会话落到末尾「## 其他」一行一条
+——这正是「不想在汇报里写太长、零散工作简单带过」的落点；区间选择器下面有「远程项目」
+一行（写 workbench.remoteProjects，全角/半角逗号与顿号都当分隔符）——打这些项目标签的
+待办不在这台机器上做，汇报时不参与会话归属但仍按子项/备忘进正文，避免本机同名无关会话
+被错配过去（「黄区kblas 问题单」vs 本机 kblas 是最典型的一例））；总览（订阅上游卡含凭证体检与协议串、模型目录 chips、今日速览、
+显示器输入源——左栏底部两组按钮：一台屏一个（点一下把那台屏切到下一个输入源，循环）+
+每个输入源一个「全部 → x」（所有屏一起切到该输入源；各屏当前源不一致时「下一个」对它们
+不是同一个值，所以全切必须显式指定目标），总览卡里每屏另有「⇄ 下一输入源」轮换单切，
+m1ddc 缺失降级提示）；
 统计（趋势图 + 分供应商汇总 + 模型表 + 单价表 + 性能表，区间与指标 seg）；诊断（测试台 +
 全模型对比 + 日志流）；配置（供应商增删改经 `/admin/providers`，token 脱敏、保存即热生效、
 `测试` 按钮经 GET /v1/models 验证端点与凭证；末尾「服务控制」小节含重启/停止）。
@@ -218,7 +294,9 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
 （决定 note 300 字上限）、先查再写。该目录是普通仓库内容（不是 `.claude/`），随代码分发。
 
 设计文档：`docs/superpowers/specs/2026-10-28-unified-shell-design.md`（统一外壳）；
-待办数据源判别式：`2026-10-27-workbench-design.md` / `2026-10-28-todo-subitems-design.md`。
+待办数据源判别式：`2026-10-27-workbench-design.md` / `2026-10-28-todo-subitems-design.md`；
+「正文按待办组织」与归属交给模型：`2026-10-29-todo-time-spans-design.md`
+（原设计是手填时段，实施后按实际使用证据撤掉了，文档里记了为什么）。
 
 ## 外部集成（改动前了解影响面）
 

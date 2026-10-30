@@ -2,7 +2,17 @@
   "_说明": "统一订阅网关配置模板。复制到运行时目录后按需修改：cp providers.template.json ~/.local/share/cannbot-gateway-proxy/providers.json && chmod 600 该文件。含全部订阅凭证，绝不入版本库。",
   "gateway": {
     "clientToken": "__CLIENT_TOKEN__",
-    "upstreamHeadersTimeoutMs": 180000
+    "upstreamHeadersTimeoutMs": 180000,
+    "tv": {
+      "_说明": "可选：电视工作台屏保的只读 LAN 监听（默认关闭）。启动时 enabled 不为 true、或 tokens 为空就不监听；运行期改 enabled 需重启才生效（tokens / allowedCidrs / maxPerMinute 即时生效）。bind 留 0.0.0.0 只走局域网；不要填 127.0.0.1（电视够不到）。token 每台电视一枚，与上面的 clientToken 互不复用，也绝不写进仓库：这里留空，到运行时目录的 providers.json 里填。",
+      "enabled": false,
+      "port": 8490,
+      "bind": "0.0.0.0",
+      "tokens": [],
+      "allowedCidrs": ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "127.0.0.1/32", "::1/128"],
+      "cacheSeconds": 5,
+      "maxPerMinute": 30
+    }
   },
   "providers": [
     {
@@ -60,6 +70,11 @@
   "_字段说明": {
     "gateway.clientToken": "客户端调用 /v1/* 需带的 Bearer token；置空或不配则不鉴权（不建议）",
     "gateway.upstreamHeadersTimeoutMs": "上游『发请求→收到响应头』的超时，超时不影响已建立的流式响应",
+    "gateway.tv": "电视屏保的只读 LAN 监听：只认 GET /tv/v1/snapshot 与 /tv/v1/health；来源必须命中 allowedCidrs（默认三个私网段），Host 必须是 IP 或 .local（防 DNS rebinding），X-Aerial-Token 每台电视一枚、每 token 30 次/分钟；其余路径（含 /admin/*、/v1/*）一律 404。8484 的绑定与鉴权完全不变。",
+    "gateway.tv.tokens[]": "每台电视一枚独立 token：{ \"name\": \"客厅\", \"token\": \"<随机长串>\" }。吊销 = 从数组删掉这一项，下一请求即 401。",
+    "gateway.tv.allowedCidrs": "来源地址白名单；默认 192.168.0.0/16、10.0.0.0/8、172.16.0.0/12 三个私网段，外加 127.0.0.1/32 与 ::1/128（本机自检用，见 README 的 curl）。填了这里就**完全按这里**匹配：想保留本机自检，就把回环一起写进来；改窄到自家子网更安全。",
+    "gateway.tv.cacheSeconds": "响应 Cache-Control 的 max-age 提示（快照本身每次现算）；电视端另有 60 s 轮询间隔。",
+    "gateway.tv.maxPerMinute": "每 token 每分钟请求上限，超出 429 + Retry-After: 60。",
     "providers[].baseUrl": "统一填不含尾部 /v1 的地址（代码自动补 /v1/chat/completions 或 /v1/messages）；粘贴带 /v1 的也会自动去掉",
     "providers[].protocol": "openai | anthropic —— 上游兼容的 API 协议，决定直通还是翻译",
     "providers[].auth": "cannwork-jwt-vk：读 opencode session.json 的 JWT+VK 链；static-token：token / tokenEnv / tokenFile(+tokenJsonPath) 三选一",

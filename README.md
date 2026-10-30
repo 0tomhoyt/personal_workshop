@@ -106,7 +106,7 @@ $EDITOR ~/.local/share/cannbot-gateway-proxy/providers.json   # 填入各订阅�
   },
   "pricing": {                             // 可选：模型单价覆盖（美元 / 1M tokens），费用统计用
     "glm-5.3": { "input": 1.2, "output": 4.5 },
-    "kimi/k3.1-pro": { "input": 1.5, "output": 6.0 }   // pid/模型名 精确覆盖 > 裸模型名 > 内置参考价
+    "kimi/k3.1-pro": { "input": 2.0, "output": 10.0 }   // pid/模型名 精确覆盖 > 裸模型名 > 内置参考价
   }
 }
 ```
@@ -325,6 +325,51 @@ REST 明细：`GET /v1/todos`（`?status=` 过滤，子项随父返回）· `POS
   「显示器输入源」卡可改名（热生效）；`monitors.inputs` 换成任何机器自己的 VCP 值都照常工作。
   （旧版的系统热键 / 一键切换 toggle 功能已于 2026-10-28 移除；曾装过热键 LaunchAgent 的
   机器重跑 `./install.sh` 或 `./uninstall.sh` 会自动清掉遗留。）
+
+## 电视工作台（Aerial 屏保，只读，默认关闭）
+
+Aerial（`0tomhoyt/aerial-tv`）的 `Workbench` 屏保在客厅电视上显示一页大字待办 + 今日用量。
+数据由网关**同进程**再开一个只挂白名单的 LAN 监听提供——`8484` 的绑定与鉴权**一行不动**，
+`/admin/*`、`/v1/*` 不会因为开这个功能而暴露到局域网。
+
+```jsonc
+"gateway": {
+  "clientToken": "sk-gw-…",
+  "tv": {
+    "enabled": false,                              // 默认关闭；true 且 tokens 非空才监听
+    "port": 8490,
+    "bind": "0.0.0.0",                             // 只走局域网；别填 127.0.0.1
+    "tokens": [{ "name": "客厅", "token": "<随机长串>" }],  // 每台电视一枚，自己生成
+    "allowedCidrs": ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "127.0.0.1/32", "::1/128"],
+    "cacheSeconds": 5,
+    "maxPerMinute": 30
+  }
+}
+```
+
+- **只认两个路由**：`GET /tv/v1/snapshot`（2–6 KB 聚合快照，ETag + `If-None-Match` → 304）、
+  `GET /tv/v1/health`。其余一切路径（含 `/admin/*`、`/v1/*`、`/`）一律 **404**。
+- **四道门，顺序固定**：Host 必须是 IP 字面量或 `.local`（挡 DNS rebinding，外部域名 403）→
+  来源必须命中 `allowedCidrs`（非私网 403）→ 路由白名单（其余 404）→ `X-Aerial-Token`
+  （`timingSafeEqual`，缺/错 401）→ 每 token 每分钟 30 次（超限 429）；失败尝试另按来源 IP 限速，
+  token 不能被无限猜。与 `clientToken` 相同的 token 会在加载配置时被丢弃并记一条警告。
+- **TV token 与 `clientToken` 完全独立**，电视拿不到网关全权凭证；每台电视一枚，吊销 =
+  从 `tokens` 里删掉那一项（热生效，下一请求即 401）。日志只记 token 名/前缀 + 来源 IP + 状态码。
+- **监听开关要重启**（`enabled` / `port` / `bind` 启动时读取）：运行期把 `enabled` 改成 false 不会关掉已经起来的监听；`tokens` / `allowedCidrs` / `maxPerMinute` 热生效。
+  `allowedCidrs` 一旦填了就**完全按它匹配**（不是叠加默认值）：想保留下面那条本机 curl 自检，
+  记得把 `127.0.0.1/32`（IPv6 再加 `::1/128`）一起写上。
+- **威胁模型（如实说明）**：家庭 LAN 上是**明文 HTTP**，同网段设备可嗅探到 TV token——它能读到的
+  只有待办标题/项目/紧急度/备注前 80 字与今日用量，不能调用模型、改配置或读凭证。要更强隔离就用
+  独立 VLAN / 自签 HTTPS（v1 未做）。**不要**把 `bind` 改成公网可达地址。
+- **怎么关**：`gateway.tv.enabled` 改回 `false` 并重启；或 `tokens` 清空（同样不监听）；
+  或直接从 `providers.json` 删掉 `tv` 节。删掉后电视屏保显示「离线 · 显示 HH:MM 的数据」。
+- 快照由 `lib/tv-snapshot.mjs` 从 `listTodos()` + `statsSnapshot()` 现算：不下发 `spans` /
+  `perf` / `days[]` / `prices`，`runningMs`、`doneToday` 由 Mac 算好，电视不做时间戳推导。
+- 自检（Mac 本机，回环在默认白名单里）：
+  ```bash
+  curl -s -H "X-Aerial-Token: <token>" http://127.0.0.1:8490/tv/v1/snapshot | head -c 600
+  curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8490/admin/stats   # 期望 404
+  ```
 
 ## 刷新凭证（通常无事可做）
 

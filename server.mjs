@@ -36,6 +36,7 @@ import { renameMonitors } from './lib/monitors-admin.mjs';
 import { listTodos, createTodo, updateTodo, deleteTodo, createTodoItem, updateTodoItem, deleteTodoItem } from './lib/todos.mjs';
 import { startReportJob, getReportJob, listReports, getReport, deleteReport } from './lib/report/generate.mjs';
 import { httpError, sendJson, extractModel } from './lib/util.mjs';
+import { startTvServer } from './lib/tv-server.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOST = '127.0.0.1';
@@ -458,8 +459,19 @@ server.listen(PORT, HOST, () => {
   log(`统一订阅网关就绪: http://${HOST}:${PORT}/v1 → 上游 [${names}]`
     + `（OpenAI /v1/* 透传或翻译；Anthropic /v1/messages 直通或翻译）`
     + (config.gateway?.clientToken ? '；客户端鉴权已启用' : '；未配置客户端鉴权'));
+  // 电视工作台：同进程第二监听（gateway.tv，默认关闭）。主监听上面的 HOST/PORT 不动。
+  tvReady = startTvServer();
 });
 
+/** 电视监听（未启用时为 null）：退出时一起关。 */
+let tvReady = null;
+
 for (const sig of ['SIGTERM', 'SIGINT']) {
-  process.on(sig, () => { log(`收到 ${sig}，退出`); flushStats(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000).unref(); });
+  process.on(sig, () => {
+    log(`收到 ${sig}，退出`);
+    flushStats();
+    Promise.resolve(tvReady).then((tv) => { try { tv?.server.close(); } catch {} });
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+  });
 }
