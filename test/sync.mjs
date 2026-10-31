@@ -191,6 +191,65 @@ try {
     });
     check('PATCH 过期 rev → 409', stale.status === 409, `got ${stale.status}`);
 
+    // ── 删除同步（墓碑）：删除必须成为可同步的事实，否则 A 机删除 B 机永远留着，
+    //    spoke 重启全量拉取还会把已删待办复活 ──
+    const del1 = await fetch(`${SYNC}/sync/v1/todos/${stableId}`, { method: 'DELETE', headers: syncHeaders() });
+    check('DELETE 待办 → 204', del1.status === 204, `got ${del1.status}`);
+    const del2 = await fetch(`${SYNC}/sync/v1/todos/${stableId}`, { method: 'DELETE', headers: syncHeaders() });
+    check('DELETE 已删的再删 → 仍 204（幂等）', del2.status === 204, `got ${del2.status}`);
+
+    const snapDel = await fetch(`${SYNC}/sync/v1/snapshot`, { headers: syncHeaders() });
+    const sjDel = await snapDel.json();
+    check('删除后快照 todos 不含、tombstones 带 deleted 标记', Array.isArray(sjDel.tombstones)
+      && sjDel.tombstones.some((t) => t.id === stableId && t.deleted === true && typeof t.rev === 'number')
+      && sjDel.todos.every((t) => t.id !== stableId), JSON.stringify(sjDel.tombstones ?? null)?.slice(0, 160));
+
+    const staleTomb = await fetch(`${SYNC}/sync/v1/todos/${stableId}`, {
+      method: 'PATCH',
+      headers: { ...syncHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '旧编辑', updated_at: 1_700_000_000_000 }),
+    });
+    const stombj = await staleTomb.json();
+    check('PATCH 已删 id 且 updated_at 不新于墓碑 → 409 带 deleted 墓碑', staleTomb.status === 409 && stombj.todo?.id === stableId && stombj.todo?.deleted === true, JSON.stringify(stombj).slice(0, 160));
+
+    const resurrectAt = Date.now() + 5000;
+    const resurrect = await fetch(`${SYNC}/sync/v1/todos/${stableId}`, {
+      method: 'PATCH',
+      headers: { ...syncHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '新编辑复活', updated_at: resurrectAt }),
+    });
+    const rj = await resurrect.json();
+    check('PATCH 已删 id 且 updated_at 新于墓碑 → 200 复活', resurrect.status === 200 && rj.title === '新编辑复活' && rj.rev === resurrectAt, JSON.stringify(rj).slice(0, 160));
+    const snapRe = await fetch(`${SYNC}/sync/v1/snapshot`, { headers: syncHeaders() });
+    const sjRe = await snapRe.json();
+    check('复活后快照回到 todos 且墓碑清除', sjRe.todos.some((t) => t.id === stableId)
+      && (sjRe.tombstones ?? []).every((t) => t.id !== stableId), JSON.stringify(sjRe.tombstones ?? []).slice(0, 160));
+
+    // 枢纽本机删除（走主监听 /v1/todos，clientToken）→ 墓碑进快照，spoke 才看得见
+    const hubCreated = await fetch(`${SYNC}/sync/v1/todos`, {
+      method: 'POST',
+      headers: { ...syncHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'hub-del-me', status: 'pending' }),
+    });
+    const hcj = await hubCreated.json();
+    check('POST 供枢纽删除的待办 → 201', hubCreated.status === 201 && hcj.id, JSON.stringify(hcj).slice(0, 120));
+    const hubDel = await fetch(`http://127.0.0.1:${GW_PORT}/v1/todos/${hcj.id}`, {
+      method: 'DELETE', headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    check('枢纽本机 DELETE（主监听）→ 204', hubDel.status === 204, `got ${hubDel.status}`);
+    const snapHubDel = await fetch(`${SYNC}/sync/v1/snapshot`, { headers: syncHeaders() });
+    const sjHd = await snapHubDel.json();
+    check('枢纽本机删除也进快照墓碑', (sjHd.tombstones ?? []).some((t) => t.id === hcj.id && t.deleted === true)
+      && sjHd.todos.every((t) => t.id !== hcj.id), JSON.stringify(sjHd.tombstones ?? []).slice(0, 160));
+
+    const staleRecreate = await fetch(`${SYNC}/sync/v1/todos`, {
+      method: 'POST',
+      headers: { ...syncHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({ id: hcj.id, title: '旧复活', rev: hcj.rev }),
+    });
+    const srj = await staleRecreate.json();
+    check('POST 已删 id 旧 rev → 409 带 deleted 墓碑', staleRecreate.status === 409 && srj.todo?.deleted === true, JSON.stringify(srj).slice(0, 160));
+
     const stPost = await fetch(`${SYNC}/sync/v1/stats`, {
       method: 'POST',
       headers: { ...syncHeaders(), 'content-type': 'application/json' },

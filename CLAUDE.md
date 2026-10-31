@@ -63,11 +63,15 @@ lib/quota.mjs          编码套餐额度查询（Kimi / 智谱 / CANNWork 三�
 lib/home.mjs           首屏数据组装（纯函数可注入）：待办裁剪（进行中全收 / 待办前 8 / 今天完成
                      前 3，超出给 hidden 数）+ 每订阅花费与额度。标题数「所有未完成」，
                       措辞不用「今天」——积压几天的也在里面。额度失败降级不拖垮整页
-lib/sync-snapshot.mjs Mac↔Mac 同步快照纯函数（rev=updated_at，支持 since 增量）
+lib/sync-snapshot.mjs Mac↔Mac 同步快照纯函数（rev=updated_at，支持 since 增量）；
+                      墓碑以 {id, rev, deleted: true} 下发、cursor 计入墓碑 rev（否则增量拉取漏删）
 lib/sync-server.mjs   同步监听（gateway.sync，默认关闭，端口 8491）：白名单 /sync/v1/*；
-                      Bearer 或 X-Workshop-Token；不挂 /admin、/v1；默认 CIDR 含 Tailscale
+                      Bearer 或 X-Workshop-Token；不挂 /admin、/v1；默认 CIDR 含 Tailscale。
+                      删除幂等（再删 204）；PATCH/POST 撞墓碑：不新于墓碑 → 409 带
+                      deleted 墓碑，新于墓碑 → 复活（LWW）
 lib/sync-client.mjs   同步客户端（gateway.syncClient，默认关闭）：spoke 轮询枢纽 snapshot，
-                      按 id/rev 合并待办；不另起监听
+                      按 id/rev 合并待办、按墓碑删除；本地删除推 DELETE（404 视为删成）；
+                      不另起监听
 lib/sync-config.mjs   可同步配置的抽取/合并。**本机事实键 SYNC_LOCAL_ONLY_KEYS = ['monitors']**
                       永不进同步：显示器拓扑（哪块屏、哪个 VCP）绑的是本机硬件，两台机器
                       可以完全不同。两个方向的坏法——拉取方向：spoke 拿枢纽的屏 UUID 去
@@ -114,6 +118,8 @@ lib/util.mjs          httpError / sendJson / readBodyLimited（上游响应体�
 lib/todos.mjs         工作台待办数据层（todos.json 写穿原子落盘 0600、坏文件自愈空列表、
                       字段码位校验、todosInWindow 供报告素材：新增/更新/完成三列表，
                       updated 只收「窗口前就存在、窗口内被推进、未在本窗新建或完成」）。
+                      删除记 30 天墓碑 {id, rev, deleted_at}——删除进同步协议全靠它；
+                      applyRemoteTodo/applyRemoteTombstone 按 rev 仲裁（墓碑赢平局）
                       子项 checklist：todo.items=[{id,title,done,done_at}]，每次子项变更后
                       deriveFromItems 派生父状态
                       （非空且全 done→父 done 盖 completed_at 不重盖；有未完成且父 done→回
