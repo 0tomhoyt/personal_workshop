@@ -41,7 +41,7 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
 |---|---|
 | `server.mjs` | 入口：HTTP 服务 + 路由分发 + healthz/admin 端点（Node ≥18 零依赖） |
 | `lib/` | 服务端模块：config（providers.json）/ models（模型目录与路由）/ upstream（统一上游请求）/ auth/（cannwork、static 凭证链）/ translate/（Anthropic↔OpenAI 双向翻译）/ proxy-openai、proxy-anthropic（两条入站管道）/ stats / log / gwauth / util / todos（工作台待办）/ report（总结管线：四源适配器 + 素材收集 + 生成状态机）/ report-prompts（总结 prompt 与阈值，调质量改这里） |
-| `index.html` | 单页应用（`http://127.0.0.1:8484/`）：左栏两级导航，六个视图——待办 / 汇报 / 总览 / 统计 / 诊断 / 配置 |
+| `index.html` | 单页应用（`http://127.0.0.1:8484/`）：左栏两级导航，七个视图——首屏 / 待办 / 汇报 / 总览 / 统计 / 诊断 / 配置 |
 | `theme.css` | 共享主题：令牌 / 骨架 / 左栏布局契约 / 通用组件（`/theme.css` 提供） |
 | `providers.template.json` | providers.json 模板（install.sh 首次安装时生成到运行时目录） |
 | `test/mock-upstream.mjs` `test/smoke.mjs` | 端到端冒烟测试：mock 双协议上游 + 三百余项断言（`node test/smoke.mjs`） |

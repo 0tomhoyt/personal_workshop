@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-**个人工作台 = 统一订阅 API 网关 + 待办 + AI 工作总结**。网关部分：把多个订阅服务（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，本机所有 Agent（zcode CLI、Claude Code、opencode 等）统一调用。按请求体里的**模型名**路由到对应订阅（providers.json 声明），自动注入该订阅凭证；同协议**原样直通**，跨协议走**双向翻译**。工作台部分（同一页的左栏第一组）：跨 agent 的**待办事项**（`/v1/todos`，人与 agent 共用）+ **时间段 AI 工作总结**（读 Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录 → 两级总结成给上级的汇报）。**管理台与工作台是同一个页面（`index.html`）、六个视图**，左栏两级分组导航。
+**个人工作台 = 统一订阅 API 网关 + 待办 + AI 工作总结**。网关部分：把多个订阅服务（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，本机所有 Agent（zcode CLI、Claude Code、opencode 等）统一调用。按请求体里的**模型名**路由到对应订阅（providers.json 声明），自动注入该订阅凭证；同协议**原样直通**，跨协议走**双向翻译**。工作台部分（同一页的左栏第一组）：跨 agent 的**待办事项**（`/v1/todos`，人与 agent 共用）+ **时间段 AI 工作总结**（读 Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录 → 两级总结成给上级的汇报）。**管理台与工作台是同一个页面（`index.html`）、七个视图**，左栏两级分组导航。
 
 - **零依赖 + 模块化**：无 package.json / node_modules，只用 Node ≥ 18 内置模块 + spawn 系统 `sqlite3`，`server.mjs` 入口 + `lib/` 若干 ESM 模块。没有构建、lint；测试是 `node test/smoke.mjs`（mock 上游端到端 + fixture 数据源，不依赖真实订阅与真实 agent 数据）。
 - **语言约定**：注释、文档、commit message 全部使用中文，与现有风格保持一致。
@@ -47,6 +47,14 @@ lib/tv-server.mjs     电视 LAN 监听（gateway.tv，默认关闭；同进程�
                       白名单 GET /tv/v1/snapshot|health，其余 404；Host 反 rebinding → 来源
                       allowedCidrs → 白名单 → X-Aerial-Token（timingSafeEqual）→ 30 次/分钟/token
                       （日志只记 token 名/前缀 + IP + 状态码）
+lib/quota.mjs          编码套餐额度查询（Kimi / 智谱）：按 baseUrl 的 **host** 认家数（不按路径），
+                      额度 URL = 该 provider 的 origin + 该家固定路径（两家都与对话接口同源），
+                      60 秒缓存 + 并发去重；失败**不清空**上次值（15 分钟内 stale、之后 error）。
+                      **智谱 percentage 是「已用」**，对外契约是 remainingPct，适配器做 100-x。
+                      Kimi 的窗口类型在 limits[].window（不是数组位置，也没有顶层 usage）
+lib/home.mjs           首屏数据组装（纯函数可注入）：待办裁剪（进行中全收 / 待办前 8 / 今天完成
+                     前 3，超出给 hidden 数）+ 每订阅花费与额度。标题数「所有未完成」，
+                      措辞不用「今天」——积压几天的也在里面。额度失败降级不拖垮整页
 lib/sync-snapshot.mjs Mac↔Mac 同步快照纯函数（rev=updated_at，支持 since 增量）
 lib/sync-server.mjs   同步监听（gateway.sync，默认关闭，端口 8491）：白名单 /sync/v1/*；
                       Bearer 或 X-Workshop-Token；不挂 /admin、/v1；默认 CIDR 含 Tailscale
@@ -154,8 +162,10 @@ lib/report/generate.mjs 报告生成状态机：单任务串行（409）、colle
 lib/report-prompts.mjs 两级总结 prompt + 压缩/脱敏阈值**全部集中在此**——调汇报质量只改这里。
                       成稿**正文按待办分节**（每条 80-150 字，不再是每节 3 条长 bullet）、
                       未归属工作进末尾「## 其他」一行一条，整体 ≤700 字
-index.html            单页外壳：左栏两级分组导航（工作台 / 管理台）+ 六个视图
-                      （待办 / 汇报 / 总览 / 统计 / 诊断 / 配置）全部逻辑内联在一段脚本里。
+index.html            单页外壳：左栏两级分组导航（工作台 / 管理台）+ 七个视图
+                      （首屏 / 待办 / 汇报 / 总览 / 统计 / 诊断 / 配置）全部逻辑内联在一段脚本里。
+                      首屏（#home）：左待办右订阅卡，数据走 GET /admin/home；额度 60 秒缓存，
+                      切走时停轮询。
                       待办行：收起只扫父标题（2 行钳制 +「子项 k/j」徽标）。**展开箭头与
                       「＋ 加子项」输入框都必须恒显示**——它们曾经分别是「有子项/详情才显示」
                       和「有子项才渲染」，而子项/详情只能在展开区里添加 → 干净待办永远进不去，
@@ -185,6 +195,8 @@ theme.css             共享主题：令牌 / 骨架 / 左栏布局契约 / 通�
 | `/healthz`、`/admin/*` | healthz（providers[] 凭证体检）、管理台页面与 API（log/stats/config/restart/stop、
   providers CRUD+测试：GET 脱敏视图 / POST 新增 / PUT、DELETE `/admin/providers/:id` /
   POST `.../:id/check` 现拉目录验证凭证；写后热加载即时生效；
+  首屏（仅回环）：GET `/admin/home` —— 待办简览 + 每订阅花费与额度（额度走 lib/quota.mjs，
+  单家失败降级不影响整页）；
   报告生成（仅回环）：POST `/admin/report/generate` `{startMs,endMs}` 异步启动（在跑 409）、
   GET `/admin/report/job` 进度、GET `/admin/report/list`、GET/DELETE `/admin/report/:id`；
   显示器切换：GET `/admin/monitors`（状态，`?refresh=1` 绕缓存）/ POST `/admin/monitors/switch`
@@ -241,15 +253,17 @@ User-Agent 取的**产品名/版本**（剥掉 OS 注释与括号，超长截断
 `<a href="#v">`（可中键新开、可复制、Tab 可达），由 `hashchange` 驱动切视图：
 
 ```
-工作台  [默认展开]     待办 #todos（首屏默认）· 汇报 #report
+工作台  [默认展开]     首屏 #home（落地默认）· 待办 #todos · 汇报 #report
 管理台  [默认收起]     总览 #overview · 统计 #traffic · 诊断 #test · 配置 #providers
 ```
 
 - 组头点击只折叠/展开，不导航；状态存 `localStorage` 的 `gw-groups`。
 - **当前视图所属组自动展开**：进了 `#traffic` 却看到组还收着，会让人以为走错页。
-- 深链：`#todos`…`#providers` 直达；历史形态 `#latency`→统计、`#log`→诊断、`#stats`→统计、
-  `#stats-7`/`#stats-30`→统计并预选区间、`#workbench`→待办；`gw-view` 记住上次视图。
-- 数字键 1–6 按左栏顺序切视图（输入控件内不抢键）。
+- 深链：`#home`、`#todos`…`#providers` 直达；历史形态 `#latency`→统计、`#log`→诊断、`#stats`→统计、
+  `#stats-7`/`#stats-30`→统计并预选区间、`#workbench`→待办。
+- **落地顺序 = 有效 hash > `/workbench`（强制待办）> `#home`。不再读 `gw-view` 记忆**——
+  首屏的用途是「打开就看」，记住上次视图与它直接冲突（写入仍保留，读取路径已删）。
+- 数字键 1–7 按左栏顺序切视图（输入控件内不抢键）。
 - 徽标：工作台「待办」=未完成数（pending+in_progress）、「汇报」=存档数；管理台组头=
   凭证异常 provider 数；「诊断」=最近 80 行错误行数。今日完成数在待办页说明行。
 
