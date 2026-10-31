@@ -33,8 +33,8 @@ fs.writeFileSync(path.join(tmp, 'providers.json'), JSON.stringify({
     { id: 'mock-oai', name: 'MockOAI', baseUrl: `http://127.0.0.1:${MOCK_PORT}/oai`, protocol: 'openai', auth: { type: 'static-token', token: 'mock-token-oai' }, models: { source: 'api' } },
     { id: 'mock-anth', name: 'MockAnth', baseUrl: `http://127.0.0.1:${MOCK_PORT}/anth`, protocol: 'anthropic', auth: { type: 'static-token', token: 'mock-token-anthropic' }, models: { source: 'api' } },
     // 方言 provider：baseUrl 含 'zhipu' / 'kimi' 关键词（searchDialect 按此推断），mock 端点内嵌搜索分支
-    { id: 'mock-zhipu', name: 'MockZhipu', baseUrl: `http://127.0.0.1:${MOCK_PORT}/zhipu`, protocol: 'openai', auth: { type: 'static-token', token: 'mock-token-zhipu' }, models: { source: 'api' } },
-    { id: 'mock-kimi', name: 'MockKimi', baseUrl: `http://127.0.0.1:${MOCK_PORT}/kimi`, protocol: 'openai', auth: { type: 'static-token', token: 'mock-token-kimi' }, models: { source: 'api' } },
+    { id: 'mock-zhipu', name: 'MockZhipu', baseUrl: `http://127.0.0.1:${MOCK_PORT}/zhipu`, protocol: 'openai', quota: { kind: 'zhipu' }, auth: { type: 'static-token', token: 'mock-token-zhipu' }, models: { source: 'api' } },
+    { id: 'mock-kimi', name: 'MockKimi', baseUrl: `http://127.0.0.1:${MOCK_PORT}/kimi`, protocol: 'openai', quota: { kind: 'kimi' }, auth: { type: 'static-token', token: 'mock-token-kimi' }, models: { source: 'api' } },
     // z.ai 域名变体：GLM Coding Plan 的 api.z.ai 若配成 openai 协议端点，同样应命中智谱方言
     { id: 'mock-zai', name: 'MockZAI', baseUrl: `http://127.0.0.1:${MOCK_PORT}/z.ai`, protocol: 'openai', auth: { type: 'static-token', token: 'mock-token-zhipu' }, models: { source: 'api' } },
     // 双入口：默认 openai；endpoints 按入站协议直通到对应 mock 路径（同一 token）
@@ -493,6 +493,45 @@ try {
     const echo4 = parseEcho(j4.choices[0].message.content);
     // anthropic 上游的 ECHO 带 system 键，openai 上游没有——以此区分两个 shared-model 谁接了
     check('裸重名模型路由到目录序首个上游（mock-oai）', echo4.model === 'shared-model' && !('system' in echo4), JSON.stringify(echo4).slice(0, 120));
+  }
+
+  console.log('— 首屏（/admin/home）—');
+  {
+    // 主实例上直接打：mock-kimi / mock-zhipu 带 quota.kind，且它们的 baseUrl 指向
+    // mock 端口 —— 额度 URL 由 origin + 固定路径推导，所以端到端真的打到 mock 上游。
+    const h = await (await fetch(`${GW}/admin/home`)).json();
+    const byId = Object.fromEntries(h.providers.map((p) => [p.id, p]));
+    check('首屏结构完整（todos/providers/generatedAt）',
+      h.todos && Array.isArray(h.providers) && typeof h.generatedAt === 'number',
+      JSON.stringify(Object.keys(h ?? {})));
+    check('首屏 counts.open = in_progress + pending',
+      h.todos.counts.open === h.todos.counts.in_progress + h.todos.counts.pending,
+      JSON.stringify(h.todos.counts));
+    check('Kimi 额度端到端：两档且剩余 75% / 60%',
+      byId['mock-kimi']?.quota?.state === 'ok'
+      && byId['mock-kimi'].quota.tiers.find((t) => t.name === 'five_hour')?.remainingPct === 75
+      && byId['mock-kimi'].quota.tiers.find((t) => t.name === 'weekly_limit')?.remainingPct === 60,
+      JSON.stringify(byId['mock-kimi']?.quota));
+    check('智谱额度端到端：CREDIT_LIMIT 的 percentage 取反（32→68, 53→47）',
+      byId['mock-zhipu']?.quota?.state === 'ok'
+      && byId['mock-zhipu'].quota.tiers.find((t) => t.name === 'five_hour')?.remainingPct === 68
+      && byId['mock-zhipu'].quota.tiers.find((t) => t.name === 'weekly_limit')?.remainingPct === 47,
+      JSON.stringify(byId['mock-zhipu']?.quota));
+    check('认不出的家数 → quota.state=none（只显示金额）',
+      byId['mock-oai']?.quota?.state === 'none', JSON.stringify(byId['mock-oai']?.quota));
+    check('每张卡都带花费数字（今日 + 近 30 天）',
+      h.providers.every((p) => p.spend && typeof p.spend.days30 === 'number' && typeof p.spend.today === 'number'));
+    check('订阅卡片严格按 config.providers 出（共 6 个）', h.providers.length === 6, String(h.providers.length));
+
+    const bad = await fetch(`${GW}/admin/home`, { method: 'POST' });
+    check('/admin/home 非 GET → 405', bad.status === 405, String(bad.status));
+    // node 的 fetch 不允许改 Host（它按 URL 重设），只能用原生 http 发一个伪造 Host
+    const offStatus = await new Promise((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port: GW_PORT, path: '/admin/home', headers: { host: 'evil.example.com' } }, (res) => { res.resume(); resolve(res.statusCode); });
+      req.on('error', () => resolve(0));
+      req.end();
+    });
+    check('/admin/home 非回环 Host → 403', offStatus === 403, String(offStatus));
   }
 
   console.log('— 统计 —');

@@ -21,6 +21,10 @@ const ANTH_TOKEN = 'mock-token-anthropic';
 const ZHIPU_TOKEN = 'mock-token-zhipu';
 const KIMI_TOKEN = 'mock-token-kimi';
 const DUAL_TOKEN = 'mock-token-dual';
+// 首屏额度端点用的凭证（与订阅转发用的 token 分开，避免两套语义互相污染）
+// 额度端点复用各自的订阅 token（真实世界也是同一枚 key），不做额外账号
+const KIMI_QUOTA_KEY = 'mock-token-kimi';
+const ZHIPU_QUOTA_KEY = 'mock-token-zhipu';
 
 const ECHO = (extra) => 'ECHO:' + JSON.stringify(extra);
 
@@ -101,6 +105,38 @@ const server = http.createServer(async (req, res) => {
   if (url === '/z.ai/v1/models') {
     return json(res, 200, { object: 'list', data: [{ id: 'glm-zai' }] });
   }
+  // ── 首屏额度端点 ──────────────────────────────────────────────────────────
+  // 两个 mock provider 的 baseUrl 指向这里（见 smoke 的 providers.json），形状按
+  // 2026-10-31 线上实测的**真实**响应写，不是 cc-switch 夹具那种推测形态。
+  // /kimi-quota/*：窗口类型在 limits[].window；鉴权必须是 Bearer。
+  // /zhipu-quota/*：type 是 CREDIT_LIMIT；鉴权是**裸值**（不带 Bearer）。
+  if (url === '/coding/v1/usages') {
+    if (auth !== `Bearer ${KIMI_QUOTA_KEY}`) return json(res, 401, { error: { message: 'bad token' } });
+    return json(res, 200, {
+      limits: [
+        { window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' },
+          detail: { limit: '100', used: '25', remaining: '75', resetTime: '2030-01-01T00:00:00Z' } },
+        { window: { duration: 7, timeUnit: 'TIME_UNIT_DAY' },
+          detail: { limit: '100', used: '40', remaining: '60', resetTime: '2030-01-08T00:00:00Z' } },
+      ],
+    });
+  }
+  if (url === '/api/monitor/usage/quota/limit') {
+    if (auth !== ZHIPU_QUOTA_KEY) return json(res, 401, { error: { message: 'bad token' } });
+    return json(res, 200, {
+      code: 200, msg: '操作成功', success: true,
+      data: {
+        level: 'pro',
+        limits: [
+          { type: 'CREDIT_LIMIT', unit: 3, number: 5, usage: 12000, currentValue: 3800, remaining: 8200, percentage: 32, nextResetTime: 1793445471898 },
+          { type: 'CREDIT_LIMIT', unit: 6, number: 1, usage: 60000, currentValue: 31800, remaining: 28200, percentage: 53, nextResetTime: 1793945297975 },
+        ],
+      },
+    });
+  }
+  // 查不到的情况：403 → 首屏应降级成 error 且不影响其他卡片
+  if (url === '/api/broken') return json(res, 403, { error: { message: 'forbidden' } });
+
   if (url === '/kimi/v1/models') {
     return json(res, 200, { object: 'list', data: [{ id: 'kimi-mock' }] });
   }

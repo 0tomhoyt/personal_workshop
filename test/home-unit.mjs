@@ -160,13 +160,21 @@ await checkAsync('请求头：Kimi 带 Bearer，智谱不带', async () => {
   assert.equal(seen[0], 'Bearer KEY');
   assert.equal(seen[1], 'KEY');
 });
-await checkAsync('请求的是固定额度 URL，不拼 baseUrl', async () => {
+await checkAsync('额度 URL = provider 的 origin + 该家固定路径', async () => {
   const urls = [];
   const spy = (b) => async (url) => { urls.push(url); return { ok: true, status: 200, json: async () => b }; };
   await queryQuota({ id: 'uk', baseUrl: 'https://api.kimi.com/coding/', auth: { type: 'static-token', token: 't' } }, { fetchImpl: spy(KIMI) });
   await queryQuota({ id: 'uz', baseUrl: 'https://api.z.ai/api/anthropic', auth: { type: 'static-token', token: 't' } }, { fetchImpl: spy(ZHIPU) });
+  await queryQuota({ id: 'uc', baseUrl: 'https://open.bigmodel.cn/api/anthropic', auth: { type: 'static-token', token: 't' } }, { fetchImpl: spy(ZHIPU) });
   assert.equal(urls[0], 'https://api.kimi.com/coding/v1/usages');
   assert.equal(urls[1], 'https://api.z.ai/api/monitor/usage/quota/limit');
+  assert.equal(urls[2], 'https://open.bigmodel.cn/api/monitor/usage/quota/limit');
+});
+await checkAsync('baseUrl 指向 mock 端口时额度也打到 mock（端到端可用）', async () => {
+  const urls = [];
+  const spy = (b) => async (url) => { urls.push(url); return { ok: true, status: 200, json: async () => b }; };
+  await queryQuota({ id: 'um', baseUrl: 'http://127.0.0.1:6291/zhipu-quota', quota: { kind: 'zhipu' }, auth: { type: 'static-token', token: 't' } }, { fetchImpl: spy(ZHIPU) });
+  assert.equal(urls[0], 'http://127.0.0.1:6291/api/monitor/usage/quota/limit');
 });
 await checkAsync('401 → state=error 且文案是凭证问题，不是「用尽」', async () => {
   const q = await queryQuota({ id: 'e401', baseUrl: 'https://api.kimi.com/coding', auth: { type: 'static-token', token: 't' } }, { fetchImpl: failFetch(401) });
