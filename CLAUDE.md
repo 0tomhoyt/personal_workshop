@@ -52,6 +52,15 @@ lib/sync-server.mjs   同步监听（gateway.sync，默认关闭，端口 8491�
                       Bearer 或 X-Workshop-Token；不挂 /admin、/v1；默认 CIDR 含 Tailscale
 lib/sync-client.mjs   同步客户端（gateway.syncClient，默认关闭）：spoke 轮询枢纽 snapshot，
                       按 id/rev 合并待办；不另起监听
+lib/sync-config.mjs   可同步配置的抽取/合并。**本机事实键 SYNC_LOCAL_ONLY_KEYS = ['monitors']**
+                      永不进同步：显示器拓扑（哪块屏、哪个 VCP）绑的是本机硬件，两台机器
+                      可以完全不同。两个方向的坏法——拉取方向：spoke 拿枢纽的屏 UUID 去
+                      本机跑 m1ddc 全失败、本机的屏从界面消失；推送方向：没配 monitors 的
+                      机器抽出 `{}`，而旧判断 `if (s.monitors && …)` 对 `{}` 为真 → 整段
+                      覆盖成空 → 回落到 defaultMonitors() 的硬编码 UUID（看着在工作，
+                      其实指向不存在的硬件）。所以 apply 时**显式忽略并还原本机值**，
+                      extract 时彻底不产出该键（也不进 rev 指纹，改显示屏名字不该让两台
+                      机器反复互相覆盖）。
 lib/models.mjs        模型目录聚合（TTL 10min + 失败负缓存 30s，目录响应 2MB 有界读）+ model→provider
                       路由（显式 pid/model > aliases > 裸名唯一 > defaultProvider 兜底）
 lib/upstream.mjs      requestUpstream：按 provider 解析凭证头、fetch（「发请求→收到

@@ -396,6 +396,11 @@ Aerial（`0tomhoyt/aerial-tv`）的 `Workbench` 屏保在客厅电视上显示�
 - **鉴权**：`Authorization: Bearer <token>` 或 `X-Workshop-Token`（`timingSafeEqual`）；与 `clientToken` /
   TV token 不得相同（配置加载时丢弃并告警）。
 - **快照**：`rev` 暂等于 `updated_at`；`?since=` 只回此后有变更的待办。冲突：PATCH 带过期 `rev` → **409**。
+- **同步什么、不同步什么**：`providers` / `routing` / `pricing` / `workbench` 会同步；
+  **`monitors`（显示器拓扑）永不同步**——它描述的是这台机器接了哪块屏、走哪个 VCP 值，
+  两台机器通常完全不同。把枢纽的屏 UUID 搬到另一台会让那台的 m1ddc 全部失败；反过来
+  没配 `monitors` 的机器会把对方的配置覆盖成空、回落到内置示例 UUID。`gateway.sync` /
+  `gateway.syncClient` / `gateway.tv` 同样是本机角色键，永不被覆盖。
 - **怎么开（枢纽，不动现网 8484 时可先换端口测）**：在运行时 `providers.json` 填好 `gateway.sync`，
   `enabled: true`，放一枚长随机 token，然后重启该网关进程（或 `./install.sh` 装到运行时目录后再启）。
 - **LAN 自检（无需 Tailscale）**：

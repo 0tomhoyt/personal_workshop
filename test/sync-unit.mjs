@@ -264,6 +264,47 @@ check('applyShareableToRaw 不覆盖角色键；rev 稳定', () => {
   assert.equal(r1, r2);
 });
 
+group('monitors 是本机事实：永不同步');
+check('extractShareableConfig 不含 monitors（不下发、不进 rev）', () => {
+  const shared = extractShareableConfig({
+    providers: [{ id: 'p', name: 'P', baseUrl: 'http://p', protocol: 'openai' }],
+    monitors: { inputs: [{ value: 15, name: 'Mac' }], list: [{ uuid: 'A016429F-BCEC-4FAF-BD7D-23128391F7F1', name: '左屏' }] },
+  });
+  assert.equal(shared.monitors, undefined, 'monitors 不该出现在可同步配置里');
+  // 改显示器名字不能改变 rev——否则两台机器的配置会为它反复互相覆盖
+  const a = configContentRev(extractShareableConfig({ providers: [], monitors: { inputs: [{ value: 15 }] } }));
+  const b = configContentRev(extractShareableConfig({ providers: [], monitors: { inputs: [{ value: 21 }] } }));
+  assert.equal(a, b, 'monitors 不参与 rev 指纹');
+});
+check('apply 时远端带的 monitors 被忽略、本机原值保留', () => {
+  const local = {
+    monitors: { inputs: [{ value: 15, name: '本机Mac' }], list: [{ uuid: 'AAAAAAAA-0000-0000-0000-000000000000', name: '本机屏' }] },
+    providers: [{ id: 'a', name: 'A', baseUrl: 'http://a', protocol: 'openai' }],
+  };
+  // 场景 ①：远端有具体值（枢纽的屏 UUID）
+  const merged1 = applyShareableToRaw(local, {
+    providers: [{ id: 'b', name: 'B', baseUrl: 'http://b', protocol: 'openai' }],
+    monitors: { inputs: [{ value: 21, name: '枢纽Mac' }], list: [{ uuid: 'BBBBBBBB-0000-0000-0000-000000000000', name: '枢纽屏' }] },
+  });
+  assert.deepEqual(merged1.monitors, local.monitors, '本机显示器配置必须原样保留');
+  // 场景 ②：远端是空对象——这正是原 bug 最阴的形态（`s.monitors && …` 对 {} 为真，
+  // 会把本机配置整段清空后回落硬编码默认值）
+  const merged2 = applyShareableToRaw(local, { providers: [], ...{ monitors: {} } });
+  assert.deepEqual(merged2.monitors, local.monitors, '空对象也不能清空本机配置');
+  // 场景 ③：本机本来没配 → 不能被远端塞进来
+  const merged3 = applyShareableToRaw({ providers: [] }, { providers: [], monitors: { inputs: [{ value: 15 }] } });
+  assert.equal(merged3.monitors, undefined, '本机没有的键不该被远端创建');
+});
+check('remoteProjects / workbench 仍正常同步（本机事实只排除 monitors）', () => {
+  const merged = applyShareableToRaw(
+    { providers: [], workbench: { reportModel: 'old', remoteProjects: ['旧'] } },
+    { providers: [], workbench: { reportModel: 'new', remoteProjects: ['黄区'] }, monitors: { inputs: [] } },
+  );
+  assert.equal(merged.workbench.reportModel, 'new');
+  assert.deepEqual(merged.workbench.remoteProjects, ['黄区']);
+  assert.equal(merged.monitors, undefined);
+});
+
 group('planConfigSync');
 check('hub 新 → applyHub；本地脏 → pushLocal', () => {
   assert.equal(planConfigSync({ hubRev: 'aaa', localRev: 'bbb', lastAppliedRev: 'old', localUpdatedAt: 10, lastPullAt: 5 }).action, 'applyHub');
