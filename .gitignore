@@ -27,3 +27,6 @@ providers.json
 .claude/
 .superpowers/
 .sync-hub-token*
+
+stats-sync-hub.json
+stats-sync.json
