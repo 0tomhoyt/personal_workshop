@@ -112,6 +112,18 @@ check('nextResetTime 是毫秒数字时转成 ISO', () => {
   const t = parseZhipuQuota(ZHIPU);
   assert.match(t.find((x) => x.name === 'five_hour').resetsAt, /^\d{4}-\d{2}-\d{2}T/);
 });
+check('percentage 缺失时用 currentValue/usage 兜底（不能算成满环）', () => {
+  // 上游若把 percentage 改名/去掉，num(undefined)=0 → 100% 剩余 → 满环。
+  // 满环在额度耗尽时是最危险的误导方向，所以必须有兜底。
+  const t = parseZhipuQuota({ data: { limits: [
+    { type: 'CREDIT_LIMIT', unit: 3, usage: 12000, currentValue: 9000, remaining: 3000 },
+  ] } });
+  assert.equal(t[0].remainingPct, 25); // 100 - 9000/12000*100
+});
+check('percentage 与 currentValue/usage 都没有时不产出该档（宁缺勿假）', () => {
+  const t = parseZhipuQuota({ data: { limits: [{ type: 'CREDIT_LIMIT', unit: 3 }] } });
+  assert.deepEqual(t, [], '不许编一个 100% 剩余出来');
+});
 check('percentage 超过 100 时 remainingPct 夹到 0', () => {
   assert.equal(parseZhipuQuota({ data: { limits: [{ type: 'TOKENS_LIMIT', unit: 3, percentage: 130 }] } })[0].remainingPct, 0);
 });
@@ -203,6 +215,22 @@ await checkAsync('缓存：60 秒内不重复打上游', async () => {
   await queryQuota(p, { now: () => 5500, fetchImpl: spy(KIMI) });
   assert.equal(calls, 1, '第二次应命中缓存');
 });
+await checkAsync('同 id 换了账号/baseUrl 时不吃旧缓存（别家的环不能冒充这一家的）', async () => {
+  const { _resetQuotaCache } = await import('../lib/quota.mjs');
+  _resetQuotaCache();
+  let calls = 0;
+  const spy = (body) => async () => { calls++; return { ok: true, status: 200, json: async () => body }; };
+  await queryQuota({ id: 'same-id', baseUrl: 'https://api.kimi.com/coding', quota: { kind: 'kimi' },
+    auth: { type: 'static-token', token: 't' } }, { now: () => 1000, fetchImpl: spy(KIMI) });
+  // 用户删了账号 A、用同一个 id 建了 B（换到另一个 origin，额度完全不同）
+  const other = { limits: [{ window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' },
+    detail: { limit: '100', remaining: '5' } }] };
+  const q = await queryQuota({ id: 'same-id', baseUrl: 'https://api.kimi.ai/coding', quota: { kind: 'kimi' },
+    auth: { type: 'static-token', token: 't' } }, { now: () => 1500, fetchImpl: spy(other) });
+  assert.equal(calls, 2, '换 baseUrl 必须重新查，不能命中旧缓存');
+  assert.equal(q.tiers[0].remainingPct, 5, `必须是新账号的数据，实际 ${q.tiers[0].remainingPct}`);
+});
+
 await checkAsync('失败但未过期 → stale，仍返回上次的环', async () => {
   const p = { id: 's1', baseUrl: 'https://api.kimi.com/coding', auth: { type: 'static-token', token: 't' } };
   await queryQuota(p, { now: () => 10_000, fetchImpl: okFetch(KIMI) });
@@ -212,6 +240,19 @@ await checkAsync('失败但未过期 → stale，仍返回上次的环', async (
   assert.equal(q.tiers.length, 2, 'stale 时环照旧');
   assert.ok(q.error);
 });
+await checkAsync('baseUrl 解析不了时降级成 error，不抛异常（脏配置不能拖垮首屏）', async () => {
+  let q;
+  try {
+    q = await queryQuota({ id: 'dtdz', baseUrl: 'https://%zz', quota: { kind: 'kimi' },
+      auth: { type: 'static-token', token: 't' } }, { now: () => 1, fetchImpl: async () => { throw new Error('不该发请求'); } });
+  } catch (e) {
+    assert.fail(`不应抛异常，实际抛出 ${e.constructor.name}: ${e.message}`);
+  }
+  assert.equal(q.state, 'error');
+  assert.match(q.error, /baseUrl|解析/);
+  assert.deepEqual(q.tiers, []);
+});
+
 await checkAsync('失败且超过 15 分钟 → error，环清空', async () => {
   const p = { id: 'x1', baseUrl: 'https://api.kimi.com/coding', auth: { type: 'static-token', token: 't' } };
   await queryQuota(p, { now: () => 0, fetchImpl: okFetch(KIMI) });
@@ -234,16 +275,24 @@ check('providerSpend 从快照已合并视图求和（今日 + 近 30 天）', (
     ],
     days: [
       { date: '2026-10-30', models: { 'zcode:x': { cost: 0.25 } } },
-      { date: '2026-10-31', models: { 'zcode:m': { cost: 1.5 }, 'kimi:m': { cost: 2 } } },
+      { date: '2026-10-31', models: { 'zcode:m': { cost: 1.5 }, 'zcode:n': { cost: 0.5 }, 'kimi:m': { cost: 2 } } },
     ],
   };
-  assert.deepEqual(providerSpend('zcode', snap), { today: 2, days30: 1.75 });
-  assert.deepEqual(providerSpend('kimi', snap), { today: 2, days30: 2 });
-  assert.deepEqual(providerSpend('nobody', snap), { today: 0, days30: 0 });
+  assert.deepEqual(providerSpend('zcode', snap, '2026-10-31'), { today: 2, days30: 2.25 });
+  assert.deepEqual(providerSpend('kimi', snap, '2026-10-31'), { today: 2, days30: 2 });
+  assert.deepEqual(providerSpend('nobody', snap, '2026-10-31'), { today: 0, days30: 0 });
+});
+check('今日必是近 30 天的一部分（同源，不能一个走本机一个走 sync）', () => {
+  // sync 文件缺今天时，statsSnapshot 的顶层 models 会回落本机，但 days[] 仍只有 sync——
+  // 若 providerSpend 的 today 取顶层、days30 取 days[]，就会出现今日 > 近 30 天。
+  const snap = { models: [{ provider: 'p', cost: 9 }], days: [{ date: '2026-10-30', models: { 'p:x': { cost: 1 } } }] };
+  const r = providerSpend('p', snap, '2026-10-31');
+  assert.ok(r.today <= r.days30, `今日 ${r.today} 不应超过近 30 天 ${r.days30}`);
+  assert.deepEqual(r, { today: 0, days30: 1 });
 });
 check('providerSpend 保留两位小数（分）', () => {
-  const snap = { models: [{ provider: 'p', cost: 0.1 }, { provider: 'p', cost: 0.2 }], days: [] };
-  assert.equal(providerSpend('p', snap).today, 0.3);
+  const snap = { models: [], days: [{ date: '2026-10-31', models: { 'p:a': { cost: 0.1 }, 'p:b': { cost: 0.2 } } }] };
+  assert.equal(providerSpend('p', snap, '2026-10-31').today, 0.3);
 });
 
 group('配置：quota 白名单');
@@ -344,6 +393,16 @@ await checkAsync('URL 解析失败的脏配置不拖垮整页', async () => {
     providers: [{ id: 'bad', name: 'Bad', baseUrl: 'not a url' }], spend: noSpend, quota: noQuota });
   assert.equal(h.providers.length, 1);
 });
+await checkAsync('进行中但无段的待办：runningMs 为 0 但仍按 in_progress 归类', async () => {
+  const h = await buildHome({ todos: [
+    { id: 'nos', title: '无段进行中', status: 'in_progress', urgency: 'someday', spans: [] },
+  ], now: 1000, providers: [], spend: noSpend, quota: noQuota });
+  assert.equal(h.todos.items[0].status, 'in_progress');
+  assert.equal(h.todos.items[0].runningMs, 0);
+  assert.equal(h.todos.counts.in_progress, 1);
+  assert.equal(h.todos.counts.open, 1);
+});
+
 await checkAsync('runningMs 透传给前端（进行中待办带时长）', async () => {
   const h = await buildHome({ todos: [
     { id: 'r', title: '跑着', status: 'in_progress', urgency: 'normal',

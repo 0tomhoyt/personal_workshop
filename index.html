@@ -855,7 +855,6 @@ function setView(v, { push = true } = {}) {
 // ── 首屏（#home）────────────────────────────────────────────────────────────
 // 数据全部来自 GET /admin/home 一次拉取。额度在服务端有 60 秒缓存，所以这里 30 秒
 // 轮一次也不会真打上游；切到其他视图就停，不做背地里常驻。
-let homeLastFetch = 0;
 let homeTimer = null;
 
 async function loadHome() {
@@ -868,7 +867,6 @@ async function loadHome() {
     $('homeTodos').innerHTML = `<span class="bad">加载失败：${esc(e?.message || e)}</span>`;
     return;
   }
-  homeLastFetch = Date.now();
   renderHome(d);
   scheduleHomePoll();
 }
@@ -900,8 +898,6 @@ function homeRing(tier) {
   </div>`;
 }
 
-const HOME_TIER_LABEL = { five_hour: '5 小时', weekly_limit: '周' };
-
 function homeQuotaBlock(q) {
   if (!q || q.state === 'none') return '';
   if (q.state === 'error') {
@@ -924,13 +920,16 @@ function renderHome(d) {
   const week = '日一二三四五六'[now.getDay()];
   $('homeDate').textContent = `${now.getFullYear()} · ${String(now.getMonth() + 1).padStart(2, '0')} · ${String(now.getDate()).padStart(2, '0')} 星期${week}`;
   // 数「所有未完成」，措辞里不能出现「今天」——积压几天的也在里面
-  $('homeHead').innerHTML = t.counts.open > 0
-    ? `还有 <em>${t.counts.open}</em> 件事` : '手头都清空了';
+  const openN = Number(t.counts.open) || 0;
+  $('homeHead').innerHTML = openN > 0
+    ? `还有 <em>${esc(openN)}</em> 件事` : '手头都清空了';
 
   const row = (it) => {
     const dot = it.status === 'in_progress' ? 'ip' : it.status === 'done' ? 'dn' : 'pd';
-    const meta = it.status === 'in_progress' && it.runningMs > 0
-      ? `<span class="hmt warn">进行中 ${fmtSpanDur(it.runningMs)}</span>`
+    // in_progress 但没有段（老待办、或直接 PATCH status 建出来的）也要显示「进行中」——
+    // 否则状态与文案打架：琥珀色圆点配着「待办」两个字。
+    const meta = it.status === 'in_progress'
+      ? `<span class="hmt warn">进行中${it.runningMs > 0 ? ' ' + fmtSpanDur(it.runningMs) : ''}</span>`
       : it.status === 'done' ? '<span class="hmt">完成</span>'
         : `<span class="hmt">${HOME_URG[it.urgency] || '待办'}</span>`;
     return `<div class="hline${it.status === 'done' ? ' dn' : ''}">
