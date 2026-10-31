@@ -436,6 +436,7 @@ Aerial（`0tomhoyt/aerial-tv`）的 `Workbench` 屏保在客厅电视上显示�
 tail -f ~/.local/share/cannbot-gateway-proxy/proxy.log
 tail -50 ~/.local/share/cannbot-gateway-proxy/logs/proxy.err.log
 node test/smoke.mjs               # 端到端回归（不依赖真实订阅）
+node test/robustness.mjs          # 稳健性回归（Multi-byte / 断流 / 原型污染 / 跨站 / 并行 tool_use）
 ```
 
 | 现象 | 原因与处理 |

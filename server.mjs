@@ -57,10 +57,22 @@ const PORT = Number(process.env.CANNBOT_PROXY_PORT)
   || Number(startupConfig.gateway?.port)
   || 8484;
 
-// DNS-rebinding 防护：状态变更端点要求 Host 为本机回环地址
+// DNS-rebinding / 跨站防护：要求 Host 为本机回环地址，且浏览器发起的跨站请求一律拒绝。
+//
+// 只有 Host 校验不够：恶意网页可以把 action 指向 http://127.0.0.1:8484/admin/stop
+// 并让浏览器 POST（跨站表单伪造不出 application/json，但 restart/stop 这类端点
+// 本来就不要求 JSON），Host 会如实是 127.0.0.1 ——单靠 Host 拦不住 drive-by。
+// sec-fetch-site 由浏览器强制填写、JS 改不了：同源页面发 same-origin，地址栏直接
+// 访问是 none，其他站点发起的是 cross-site（或同站不同端口 same-site）。
+//
+// 空 Host 不再放行：HTTP/1.1 要求必带 Host，空值是异常请求；放行它等于给
+// 「Host 头被剥掉」的路径开洞。
 function isLocalHost(req) {
   const host = (req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
-  return host === '127.0.0.1' || host === 'localhost' || host === '[::1]' || host === '';
+  if (host !== '127.0.0.1' && host !== 'localhost' && host !== '[::1]') return false;
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none' && site !== 'same-site') return false;
+  return true;
 }
 
 const INDEX_HTML = path.join(SCRIPT_DIR, 'index.html');

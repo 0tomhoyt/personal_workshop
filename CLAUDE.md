@@ -14,6 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 node server.mjs              # 前台直接运行（调试用；源目录无 providers.json，会回落内置默认配置——仅 cannbot、无客户端鉴权）
 node test/smoke.mjs          # 端到端冒烟测试（起 mock 上游 + 网关实例，三百余项断言；固定端口 6290/6291）
+node test/robustness.mjs     # 稳健性回归（多字节跨 chunk / 上游断流 / 原型污染 / 跨站 / 并行 tool_use）
 # 前台联调真实配置（换端口避开 launchd 实例；VK 缓存指到临时目录防活凭证落入源目录）：
 CANNBOT_PROXY_PORT=8485 CANNBOT_CONFIG_FILE="$HOME/.local/share/cannbot-gateway-proxy/providers.json" CANNBOT_VK_CACHE=/tmp/vk-debug.json node server.mjs
 ./install.sh [端口]           # 安装并启动 launchd 常驻服务（幂等，缺省 8484）；CGP_SKIP_LAUNCHCTL=1 演练（跳过 launchctl 步骤）
