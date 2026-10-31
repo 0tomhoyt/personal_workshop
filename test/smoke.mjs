@@ -22,6 +22,11 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-smoke-'));
 // 防泄漏：进程内会动态 import lib/pricing.mjs，其 config/log 模块的默认落点在源目录
 // （resolvePrice → tryGetConfig 的内置回退警告会在源目录写 proxy.log）——先指到临时目录
 process.env.CANNBOT_LOG_FILE = path.join(tmp, 'inproc.log');
+// stats-sync.json 同样必须隔离：statsSnapshot() 在它存在时**整段改用跨设备合计**，
+// 进程内 import lib/stats.mjs 的用例会读到源目录里那份真机数据，统计断言全变真值
+// （症状：分桶断言里出现真机的 cannbot/zcode 模型名）。源目录被手工/调试实例写过这份
+// 文件就复发——踩过一次，所以在这里钉死。
+process.env.CANNBOT_STATS_SYNC_FILE = path.join(tmp, 'stats-sync.json');
 fs.writeFileSync(path.join(tmp, 'providers.json'), JSON.stringify({
   gateway: { clientToken: TOKEN },
   providers: [
@@ -102,6 +107,9 @@ const gateway = spawnNode([path.join(ROOT, 'server.mjs')], {
   CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
   CANNBOT_LOG_FILE: path.join(tmp, 'proxy.log'),
   CANNBOT_STATS_FILE: path.join(tmp, 'stats.json'),
+  // 统计的跨设备合计文件也必须隔离：它存在时 statsSnapshot() 整段改用 sync 视图，
+  // 断言会看到源目录里的真机数据（症状：分桶断言出现 cannbot/zcode 的真实模型名）
+  CANNBOT_STATS_SYNC_FILE: path.join(tmp, 'stats-sync.json'),
   CANNBOT_TODOS_FILE: path.join(tmp, 'todos.json'),
   CANNBOT_REPORTS_FILE: path.join(tmp, 'reports.json'),
   // 报告源隔离：gateway 进程的 collect 绝不碰真实 ~/.zcode / ~/.claude / ~/.cursor 数据
@@ -878,6 +886,7 @@ try {
       CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
       CANNBOT_LOG_FILE: path.join(tmp, 'proxy4.log'),
       CANNBOT_STATS_FILE: path.join(tmp, 'stats4.json'),
+      CANNBOT_STATS_SYNC_FILE: path.join(tmp, 'stats4-sync.json'),
       CANNBOT_TODOS_FILE: path.join(tmp, 'todos-bad.json'),
       CANNBOT_REPORTS_FILE: path.join(tmp, 'reports-bad.json'),
     }, 'gateway-bad-todos');
@@ -896,6 +905,7 @@ try {
       CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
       CANNBOT_LOG_FILE: path.join(tmp, 'proxy4.log'),
       CANNBOT_STATS_FILE: path.join(tmp, 'stats4.json'),
+      CANNBOT_STATS_SYNC_FILE: path.join(tmp, 'stats4-sync.json'),
       CANNBOT_TODOS_FILE: path.join(tmp, 'todos-bad.json'),
       CANNBOT_REPORTS_FILE: path.join(tmp, 'reports-ok2.json'),
     }, 'gateway-bad-todos-2');
@@ -1716,6 +1726,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
         CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
         CANNBOT_LOG_FILE: path.join(tmp, 'proxy5.log'),
         CANNBOT_STATS_FILE: path.join(tmp, 'stats5.json'),
+        CANNBOT_STATS_SYNC_FILE: path.join(tmp, 'stats5-sync.json'),
         CANNBOT_TODOS_FILE: path.join(tmp, 'todos.json'),
         CANNBOT_REPORTS_FILE: path.join(tmp, 'reports5.json'),
         CANNBOT_CC_DIR: path.join(tmp, 'cc-projects'),
@@ -1746,6 +1757,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
         CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
         CANNBOT_LOG_FILE: path.join(tmp, 'proxy6.log'),
         CANNBOT_STATS_FILE: path.join(tmp, 'stats6.json'),
+        CANNBOT_STATS_SYNC_FILE: path.join(tmp, 'stats6-sync.json'),
         CANNBOT_TODOS_FILE: path.join(tmp, 'todos-only.json'),
         CANNBOT_REPORTS_FILE: path.join(tmp, 'reports6.json'),
         CANNBOT_CC_DIR: path.join(tmp, 'no-such-cc'),
@@ -1789,6 +1801,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
         CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
         CANNBOT_LOG_FILE: path.join(tmp, 'proxy7.log'),
         CANNBOT_STATS_FILE: path.join(tmp, 'stats7.json'),
+        CANNBOT_STATS_SYNC_FILE: path.join(tmp, 'stats7-sync.json'),
         CANNBOT_TODOS_FILE: updTodosFile,
         CANNBOT_REPORTS_FILE: path.join(tmp, 'reports7.json'),
         CANNBOT_CC_DIR: path.join(tmp, 'no-such-cc'),
@@ -1916,6 +1929,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
         CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
         CANNBOT_LOG_FILE: path.join(tmp, 'proxy5.log'),
         CANNBOT_STATS_FILE: path.join(tmp, 'stats5.json'),
+        CANNBOT_STATS_SYNC_FILE: path.join(tmp, 'stats5-sync.json'),
         CANNBOT_TODOS_FILE: path.join(tmp, 'todos.json'),
         CANNBOT_REPORTS_FILE: path.join(roDir, 'reports.json'),
         CANNBOT_CC_DIR: path.join(tmp, 'cc-projects'),
@@ -1987,10 +2001,17 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('index.html 外链共享样式', idxHtml.includes('<link rel="stylesheet" href="/theme.css">'), '未找到 link 标签');
     check('index.html 通用样式已移出（body 底纹不再内嵌）', !idxHtml.includes('body::before'), 'body::before 仍内嵌');
     check('index.html 视图专属样式保留（趋势图/性能表）', idxHtml.includes('.chartwrap') && idxHtml.includes('.tbl.perf'));
-    // 合并后左栏不再是「跳页到工作台」，而是六个同页视图（Task 4 再分组）
-    check('左栏六个视图项（不再靠跳页切换）',
-      ['todos', 'report', 'overview', 'traffic', 'test', 'providers']
+    // 合并后左栏不再是「跳页到工作台」，而是同页视图（Task 4 再分组）
+    check('左栏七个视图项（不再靠跳页切换）',
+      ['home', 'todos', 'report', 'overview', 'traffic', 'test', 'providers']
         .every((v) => idxHtml.includes(`data-view="${v}"`)));
+    // 首屏：落地视图、左栏第一项、不再读 gw-view 记忆
+    check('首屏视图存在且排在待办之前',
+      idxHtml.indexOf('href="#home"') > 0 && idxHtml.indexOf('href="#home"') < idxHtml.indexOf('href="#todos"'));
+    // 落地不再读记忆：判定「有没有 localStorage.getItem('gw-view')」这次调用，
+    // 而不是搜 'gw-view' 字样——注释里说明「为什么不再读」会把字样留在源码中。
+    check('首屏落地：initView 不再读 gw-view 记忆',
+      !/localStorage\.getItem\(\s*['"]gw-view['"]\s*\)/.test(idxHtml), '落地规则应为 hash → /workbench → #home');
     // -- 左栏瘦身：协议串与提示行移出（竖排的来源）；切屏按钮留在左栏但改纵向 --
     check('左栏不再有协议串与提示行',
       !idxHtml.includes('id="monRailMsg"') && !idxHtml.includes('class="rail-proto"'));
@@ -2032,7 +2053,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       && ['todos', 'report', 'overview', 'traffic', 'test', 'providers'].every((v) => idxHtml.includes(`href="#${v}"`)));
     const navHrefs = [...idxHtml.matchAll(/<a class="viewbtn" href="#([a-z]+)"/g)].map((m) => m[1]);
     check('导航链接与视图双向一致（无孤儿）',
-      navHrefs.length === 6 && navHrefs.every((v) => idxHtml.includes(`data-view="${v}"`)), navHrefs.join(','));
+      navHrefs.length === 7 && navHrefs.every((v) => idxHtml.includes(`data-view="${v}"`)), navHrefs.join(','));
     check('导航是真链接（不用 button 切视图）', !/class="viewbtn"[^>]*data-view/.test(idxHtml));
     // 禁 break-all：只认「规则里真的用了」，注释里提到这个词（作为禁令说明）不算
     const cssRulesOnly = themeCssText.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -2113,9 +2134,9 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const wb = await fetch(`${GW}/workbench`);
     const wbText = await wb.text();
     check('/workbench → 200 含「工作台」', wb.status === 200 && wbText.includes('工作台'), `got ${wb.status}`);
-    // -- 合并为单页：六个视图、严格模式、标识符归并 --
+    // -- 合并为单页：七个视图、严格模式、标识符归并 --
     check('/workbench 与 / 返回同一份字节', wbText === idxHtml);
-    check('单页含六个视图', ['todos', 'report', 'overview', 'traffic', 'test', 'providers']
+    check('单页含七个视图', ['home', 'todos', 'report', 'overview', 'traffic', 'test', 'providers']
       .every((v) => idxHtml.includes(`data-view="${v}"`)), '缺视图');
     // 取最后一个 <script>：首个是 9 行首屏主题脚本（防闪色必须 inline），主逻辑在后面
     const scripts = [...idxHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
@@ -2355,6 +2376,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
         CANNBOT_CONFIG_FILE: cfgNoMon,
         CANNBOT_LOG_FILE: path.join(tmp, 'proxy3.log'),
         CANNBOT_STATS_FILE: path.join(tmp, 'stats3.json'),
+        CANNBOT_STATS_SYNC_FILE: path.join(tmp, 'stats3-sync.json'),
         CANNBOT_M1DDC: path.join(ROOT, 'test/mock-m1ddc.mjs'),
         MOCK_M1DDC_STATE: path.join(tmp, 'mon-state.json'),
         MOCK_M1DDC_LOG: path.join(tmp, 'mon-log3.txt'),
@@ -2385,6 +2407,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       CANNBOT_CONFIG_FILE: path.join(tmp, 'providers.json'),
       CANNBOT_LOG_FILE: path.join(tmp, 'proxy2.log'),
       CANNBOT_STATS_FILE: path.join(tmp, 'stats2.json'),
+      CANNBOT_STATS_SYNC_FILE: path.join(tmp, 'stats2-sync.json'),
       CANNBOT_M1DDC: path.join(tmp, 'no-such-m1ddc'),
     }, 'gateway-no-m1ddc');
     await sleep(1500);

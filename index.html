@@ -245,6 +245,46 @@
   }
   details.tdone-group summary:hover { color: var(--amber-hi); }
 
+  /* ---- 首屏（#home）：待办简览 + 订阅额度 --------------------------------
+     两栏：左侧待办、右侧订阅卡。视觉上比管理台更"壁纸"——大标题用衬线、
+     订阅卡不用表格。所有类名以 .h 开头，不与其他视图共享。 */
+  .home { display: flex; gap: 40px; align-items: flex-start; padding-top: 6px; }
+  .home-left { flex: 1.6; min-width: 0; }
+  .home-right { flex: 1; min-width: 0; padding-left: 40px; border-left: 1px solid var(--line-soft); }
+  .home-date { font: 500 11px var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--faint); }
+  .home-head { font: 400 42px/1.15 var(--serif); letter-spacing: .01em; margin: 8px 0 26px; }
+  .home-head em { font-style: normal; color: var(--amber); }
+  .hline { display: flex; align-items: baseline; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+  .hline:last-of-type { border-bottom: 0; }
+  .hdot { width: 5px; height: 5px; border-radius: 50%; flex: none; transform: translateY(-3px); background: var(--faint); }
+  .hdot.ip { background: var(--amber); box-shadow: 0 0 0 3px rgba(var(--amber-rgb), .14); }
+  .hdot.dn { background: var(--green); }
+  .httl { flex: 1; min-width: 0; font-size: 14.5px; color: var(--ink);
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hline.dn .httl { color: var(--faint); text-decoration: line-through; text-decoration-color: rgba(128, 128, 128, .5); }
+  .hmt { flex: none; font: 11px var(--mono); color: var(--faint); }
+  .hmt.warn { color: var(--amber); }
+  .hmore { padding-top: 12px; font: 11.5px var(--mono); color: var(--faint); }
+  .hcard { padding: 14px 0 16px; border-bottom: 1px solid var(--line-soft); }
+  .hcard:first-child { padding-top: 0; }
+  .hcard:last-child { border-bottom: 0; }
+  .hname { font: 500 12.5px var(--sans); color: var(--dim); white-space: nowrap;
+           overflow: hidden; text-overflow: ellipsis; }
+  .hrow { display: flex; align-items: center; gap: 16px; margin-top: 10px; }
+  .hspend { flex: none; min-width: 0; }
+  .hmoney { font: 400 26px/1 var(--serif); color: var(--amber-hi); letter-spacing: -.01em; }
+  .hsub { font: 10.5px var(--mono); color: var(--faint); margin-top: 6px; white-space: nowrap; }
+  .hdisc { font: 10px var(--mono); color: var(--faint); margin-top: 4px; opacity: .8; }
+  .hrings { display: flex; gap: 14px; align-items: center; margin-left: auto; }
+  .hring { text-align: center; flex: none; }
+  .hring svg { display: block; }
+  .hpct { font: 600 13px var(--mono); fill: var(--ink); }
+  .hring.low .hpct { fill: var(--red); }
+  .hcap { font: 10px var(--mono); color: var(--faint); margin-top: 5px; letter-spacing: .04em; white-space: nowrap; }
+  .hstale { font: 10px var(--mono); color: var(--faint); margin-top: 6px; text-align: right; }
+  .hqerr { font: 10.5px var(--mono); color: var(--faint); margin-left: auto; text-align: right;
+           max-width: 46%; overflow-wrap: anywhere; }
+
   /* ---- 报告：区间选择与生成 --------------------------------------------- */
   .rng { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
   /* 远程项目标签行：与区间选择器同一条视觉语言（一行文字控件组），
@@ -396,6 +436,7 @@
       <div class="navgroup" data-group="workbench">
         <button class="grouphead" data-group-toggle="workbench" aria-expanded="true" aria-controls="sub-workbench"><span class="caret">▾</span><span class="gname">工作台</span></button>
         <div class="groupsub" id="sub-workbench">
+          <a class="viewbtn" href="#home"><span class="vname">首屏</span></a>
           <a class="viewbtn" href="#todos"><span class="vname">待办</span><span class="vbadge" id="vbTodoN" hidden></span></a>
           <a class="viewbtn" href="#report"><span class="vname">汇报</span><span class="vbadge" id="vbReport" hidden></span></a>
         </div>
@@ -645,8 +686,20 @@
       </section>
     </section>
 
+    <!-- 00 首屏（落地视图）：待办简览 + 订阅额度 -->
+    <section class="view" data-view="home">
+      <div class="home">
+        <div class="home-left">
+          <div class="home-date" id="homeDate">…</div>
+          <h2 class="home-head" id="homeHead">…</h2>
+          <div id="homeTodos"><span class="dim">加载中…</span></div>
+        </div>
+        <div class="home-right" id="homeProv"><span class="dim">加载中…</span></div>
+      </div>
+    </section>
+
     <!-- 01 待办 -->
-    <section class="view active" data-view="todos">
+    <section class="view" data-view="todos">
     <section class="sec">
       <div class="sechead">
         <span class="idx">01</span><h2>待办事项</h2><span class="en">Todos</span><span class="spacer"></span>
@@ -745,11 +798,11 @@ let gwToken = null;
 /* ---- 视图切换：两级分组导航 + hash 深链 + localStorage 记忆 + 数字键 1-6 ----
    左栏是两组可折叠分组（工作台 / 管理台），子项是 <a href="#v"> 真链接——
    可中键新开、可复制、Tab 可达；视图切换由 hashchange 驱动，不写 JS 导航。 */
-const VIEW_IDS = ['todos', 'report', 'overview', 'traffic', 'test', 'providers'];
+const VIEW_IDS = ['home', 'todos', 'report', 'overview', 'traffic', 'test', 'providers'];
 // 旧版 hash 深链兼容：性能已并入「统计」、日志已并入「诊断」、工作台已并入「待办」
 const VIEW_ALIASES = { latency: 'traffic', log: 'test', stats: 'traffic', workbench: 'todos' };
 // 视图 → 所属分组（用于「当前视图的组自动展开」）
-const VIEW_GROUP = { todos: 'workbench', report: 'workbench', overview: 'console', traffic: 'console', test: 'console', providers: 'console' };
+const VIEW_GROUP = { home: 'workbench', todos: 'workbench', report: 'workbench', overview: 'console', traffic: 'console', test: 'console', providers: 'console' };
 const GROUPS_KEY = 'gw-groups';
 let curView = 'todos';
 
@@ -795,6 +848,117 @@ function setView(v, { push = true } = {}) {
   maybeFetchStats();
   maybeFetchLog();
   if (v === 'overview') loadMonitors();
+  if (v === 'home') loadHome();
+  else scheduleHomePoll(); // 切走：清掉首屏定时器，不留后台轮询
+}
+
+// ── 首屏（#home）────────────────────────────────────────────────────────────
+// 数据全部来自 GET /admin/home 一次拉取。额度在服务端有 60 秒缓存，所以这里 30 秒
+// 轮一次也不会真打上游；切到其他视图就停，不做背地里常驻。
+let homeLastFetch = 0;
+let homeTimer = null;
+
+async function loadHome() {
+  let d;
+  try {
+    const r = await apiFetch('/admin/home');
+    if (!r.ok) { $('homeTodos').innerHTML = `<span class="bad">加载失败（HTTP ${r.status}）</span>`; return; }
+    d = await r.json();
+  } catch (e) {
+    $('homeTodos').innerHTML = `<span class="bad">加载失败：${esc(e?.message || e)}</span>`;
+    return;
+  }
+  homeLastFetch = Date.now();
+  renderHome(d);
+  scheduleHomePoll();
+}
+
+// 只在首屏可见时轮询：切走就清掉，回来重新排
+function scheduleHomePoll() {
+  if (homeTimer) { clearTimeout(homeTimer); homeTimer = null; }
+  if (curView !== 'home') return;
+  homeTimer = setTimeout(() => { if (curView === 'home') loadHome(); }, 30_000);
+}
+
+const HOME_URG = { urgent: '紧急', normal: '', someday: '不急' };
+
+function homeRing(tier) {
+  const pct = Math.max(0, Math.min(100, Number(tier.remainingPct) || 0));
+  // 剩余越少越该被看见：>=50 绿、>=20 琥珀、其余红
+  const color = pct >= 50 ? 'var(--green)' : pct >= 20 ? 'var(--amber)' : 'var(--red)';
+  const r = 20;
+  const c = 2 * Math.PI * r;
+  const dash = c * (1 - pct / 100);
+  return `<div class="hring${pct < 20 ? ' low' : ''}">
+    <svg width="50" height="50" viewBox="0 0 50 50" aria-hidden="true">
+      <circle cx="25" cy="25" r="${r}" fill="none" stroke="var(--line)" stroke-width="4"/>
+      <circle cx="25" cy="25" r="${r}" fill="none" stroke="${color}" stroke-width="4" stroke-linecap="round"
+              stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${dash.toFixed(1)}" transform="rotate(-90 25 25)"/>
+      <text x="25" y="29" text-anchor="middle" class="hpct">${pct}%</text>
+    </svg>
+    <div class="hcap">${tier.name === 'five_hour' ? '5 小时' : tier.name === 'weekly_limit' ? '周' : esc(tier.name)}</div>
+  </div>`;
+}
+
+const HOME_TIER_LABEL = { five_hour: '5 小时', weekly_limit: '周' };
+
+function homeQuotaBlock(q) {
+  if (!q || q.state === 'none') return '';
+  if (q.state === 'error') {
+    return `<div class="hqerr" title="${esc(q.error || '')}">查询失败 · ${esc(q.error || '未知原因')}</div>`;
+  }
+  const rings = (q.tiers || []).map(homeRing).join('');
+  // stale：环照画，但标出「这是几分钟前的数」——不把旧值伪装成当前值
+  const staleNote = q.state === 'stale' && q.at
+    ? `<div class="hstale">${Math.max(1, Math.round((Date.now() - q.at) / 60000))} 分钟前 · 刷新失败</div>` : '';
+  return `${rings ? `<div class="hrings">${rings}</div>` : ''}${staleNote}`;
+}
+
+// 额度已用 > 20% 但等效花费 < $0.5 → 明显对不上（多半是直连流量没经过网关）
+const HOME_SPEND_DISCLAIMER = (q, days30) => q && q.state !== 'none' && q.tiers?.length
+  && q.tiers.some((t) => t.remainingPct < 80) && days30 < 0.5;
+
+function renderHome(d) {
+  const t = d.todos || { counts: {}, items: [], hidden: 0 };
+  const now = new Date();
+  const week = '日一二三四五六'[now.getDay()];
+  $('homeDate').textContent = `${now.getFullYear()} · ${String(now.getMonth() + 1).padStart(2, '0')} · ${String(now.getDate()).padStart(2, '0')} 星期${week}`;
+  // 数「所有未完成」，措辞里不能出现「今天」——积压几天的也在里面
+  $('homeHead').innerHTML = t.counts.open > 0
+    ? `还有 <em>${t.counts.open}</em> 件事` : '手头都清空了';
+
+  const row = (it) => {
+    const dot = it.status === 'in_progress' ? 'ip' : it.status === 'done' ? 'dn' : 'pd';
+    const meta = it.status === 'in_progress' && it.runningMs > 0
+      ? `<span class="hmt warn">进行中 ${fmtSpanDur(it.runningMs)}</span>`
+      : it.status === 'done' ? '<span class="hmt">完成</span>'
+        : `<span class="hmt">${HOME_URG[it.urgency] || '待办'}</span>`;
+    return `<div class="hline${it.status === 'done' ? ' dn' : ''}">
+      <span class="hdot ${dot}"></span>
+      <span class="httl">${esc(it.title)}</span>${meta}</div>`;
+  };
+  const items = t.items || [];
+  $('homeTodos').innerHTML = items.length
+    ? items.map(row).join('') + (t.hidden > 0 ? `<div class="hmore">还有 ${t.hidden} 条…</div>` : '')
+    : '<div class="hmore">暂时没有待办。</div>';
+
+  const provs = d.providers || [];
+  $('homeProv').innerHTML = provs.length ? provs.map((p) => {
+    const s = p.spend || { today: 0, days30: 0 };
+    const disc = HOME_SPEND_DISCLAIMER(p.quota, s.days30)
+      ? '<div class="hdisc">记账未含直连流量</div>' : '';
+    return `<div class="hcard">
+      <div class="hname" title="${esc(p.name)}">${esc(p.name)}</div>
+      <div class="hrow">
+        <div class="hspend">
+          <div class="hmoney">${fmtCost(s.days30)}</div>
+          <div class="hsub">近 30 天 · 今日 ${fmtCost(s.today)}</div>
+          ${disc}
+        </div>
+        ${homeQuotaBlock(p.quota)}
+      </div>
+    </div>`;
+  }).join('') : '<span class="dim">没有启用的订阅。</span>';
 }
 
 // 组头点击：只折叠/展开，不导航
@@ -822,18 +986,16 @@ addEventListener('keydown', (e) => {
   applyGroup('workbench', st.workbench !== false);
   applyGroup('console', st.console === true);
 
-  // /workbench 是旧工作台链接：默认落待办，优先于 gw-view 记忆——旧书签的语义是
-  // 「我要工作台」，落到上次看的统计页就是违约。但若链接自带**有效** hash（/workbench#report），
-  // 用户的意图更具体，以它为准；只有 hash 缺失/无效时才退回待办。落地后统一改写成 /#<视图>。
+  // 落地顺序：有效 hash > /workbench（旧书签的语义是「我要工作台」，落到别处就是违约）
+  // > 首屏。
+  //
+  // **不再读 localStorage 的 gw-view**：首屏的用途是「打开就看」，而「记住上次视图」
+  // 与它直接冲突——上次停在统计页，这次打开就没有首屏了。写入保留（无副作用），
+  // 读取路径删掉是刻意的，不是漏改。
   const onWorkbench = location.pathname === '/workbench';
   const h = location.hash.replace(/^#/, '');
-  let saved = null;
-  try { saved = localStorage.getItem('gw-view'); } catch {}
-  const norm = (v) => VIEW_ALIASES[v] || v;
   const hashView = viewForHash(h);
-  const start = hashView
-    || (onWorkbench ? 'todos' : null)
-    || (VIEW_IDS.includes(norm(saved)) ? norm(saved) : 'todos');
+  const start = hashView || (onWorkbench ? 'todos' : 'home');
   setView(start, { push: false });
   // 从 /workbench 进来：把地址归一到 /#<当前视图>，刷新与再收藏都一致
   if (onWorkbench) history.replaceState(null, '', '/#' + curView);

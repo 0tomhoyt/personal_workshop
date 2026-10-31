@@ -17,10 +17,15 @@ const group = (title) => console.log(`\n— ${title} —`);
 
 const { detectQuotaKind, parseKimiQuota, parseZhipuQuota } = await import('../lib/quota.mjs');
 
-// Kimi 真实形状：数字是字符串，5 小时在 limits[].detail，周在 usage
+// Kimi 真实形状（2026-10-31 用线上凭证实测）：窗口类型在 limits[].window，
+// 数字是字符串，**没有**顶层 usage 字段。
 const KIMI = {
-  usage: { limit: '100', remaining: '40', resetTime: '2030-01-01T00:00:00Z' },
-  limits: [{ detail: { limit: '100', remaining: '62', resetTime: '2026-11-01T10:00:00Z' } }],
+  limits: [
+    { window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' },
+      detail: { limit: '100', used: '38', remaining: '62', resetTime: '2026-10-31T11:22:43.630264Z' } },
+    { window: { duration: 7, timeUnit: 'TIME_UNIT_DAY' },
+      detail: { limit: '100', used: '60', remaining: '40', resetTime: '2026-11-04T00:00:00Z' } },
+  ],
 };
 
 group('Kimi 额度解析');
@@ -29,18 +34,36 @@ check('两档：5 小时在前、周在后', () => {
   assert.deepEqual(t.map((x) => x.name), ['five_hour', 'weekly_limit']);
   assert.equal(t[0].remainingPct, 62);
   assert.equal(t[1].remainingPct, 40);
-  assert.equal(t[1].resetsAt, '2030-01-01T00:00:00Z');
+  assert.equal(t[1].resetsAt, '2026-11-04T00:00:00Z');
 });
 check('字符串数字按数字解析（剩余 40/100 不是拼接）', () => {
   const t = parseKimiQuota({ usage: { limit: '100', remaining: '40' } });
   assert.equal(t[0].remainingPct, 40);
   assert.equal(typeof t[0].remainingPct, 'number');
 });
-check('缺 limits 时只剩周档', () => {
+check('窗口类型来自 window（300 分钟 → 5 小时，7 天 → 周）', () => {
+  const t = parseKimiQuota(KIMI);
+  assert.equal(t[0].name, 'five_hour');
+  assert.equal(t[1].name, 'weekly_limit');
+  assert.equal(t[0].remainingPct, 62);
+  assert.equal(t[1].remainingPct, 40);
+});
+check('只有一条 limits → 只有 5 小时档（不凭空造周档）', () => {
+  const t = parseKimiQuota({ limits: [KIMI.limits[0]] });
+  assert.deepEqual(t.map((x) => x.name), ['five_hour']);
+});
+check('window 缺失时按顺序兜底（第一条 5 小时、第二条周）', () => {
+  const t = parseKimiQuota({ limits: [
+    { detail: { limit: '100', remaining: '80' } },
+    { detail: { limit: '100', remaining: '30' } },
+  ] });
+  assert.deepEqual(t.map((x) => x.name), ['five_hour', 'weekly_limit']);
+});
+check('顶层 usage（旧形状）仅在没有 limits 时当周额度', () => {
   assert.deepEqual(parseKimiQuota({ usage: { limit: '10', remaining: '5' } }).map((x) => x.name), ['weekly_limit']);
 });
 check('limit 为 0 时不产生 NaN', () => {
-  const t = parseKimiQuota({ usage: { limit: '0', remaining: '0' } });
+  const t = parseKimiQuota({ limits: [{ window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' }, detail: { limit: '0', remaining: '0' } }] });
   assert.equal(t[0].remainingPct, 0);
 });
 check('空响应返回空数组', () => {
@@ -48,10 +71,11 @@ check('空响应返回空数组', () => {
 });
 
 group('智谱额度解析');
-// 真实形状：percentage 是「已用」，unit 3 = 5 小时、6 = 周
-const ZHIPU = { success: true, data: { level: 'max', limits: [
-  { type: 'TOKENS_LIMIT', unit: 3, percentage: 38.0, nextResetTime: '2026-11-01T10:00:00Z' },
-  { type: 'TOKENS_LIMIT', unit: 6, percentage: 53.0, nextResetTime: '2026-11-04T00:00:00Z' },
+// 真实形状（2026-10-31 实测）：Coding Plan 回的是 CREDIT_LIMIT；
+// percentage 是「已用」，unit 3 = 5 小时、6 = 周。
+const ZHIPU = { success: true, data: { level: 'pro', limits: [
+  { type: 'CREDIT_LIMIT', unit: 3, number: 5, usage: 12000, currentValue: 1365, remaining: 10634, percentage: 38, nextResetTime: 1793445471898 },
+  { type: 'CREDIT_LIMIT', unit: 6, number: 1, usage: 60000, currentValue: 5348, remaining: 54651, percentage: 53, nextResetTime: 1793945297975 },
 ] } };
 check('percentage 是已用 → remainingPct 必须取反', () => {
   const t = parseZhipuQuota(ZHIPU);
@@ -72,12 +96,21 @@ check('老套餐只有一条 TOKENS_LIMIT → 只有 5 小时档', () => {
   assert.deepEqual(t.map((x) => x.name), ['five_hour']);
   assert.equal(t[0].remainingPct, 98);
 });
+check('CREDIT_LIMIT（线上真实形态）也能识别', () => {
+  const t = parseZhipuQuota(ZHIPU);
+  assert.equal(t.length, 2);
+  assert.equal(t.find((x) => x.name === 'five_hour').remainingPct, 62);
+});
 check('TIME_LIMIT 等其他类型忽略', () => {
   assert.deepEqual(parseZhipuQuota({ data: { limits: [{ type: 'TIME_LIMIT', percentage: 7 }] } }), []);
 });
-check('type 大小写不敏感', () => {
-  const t = parseZhipuQuota({ data: { limits: [{ type: 'tokens_limit', unit: 3, percentage: 10 }] } });
-  assert.equal(t.length, 1);
+check('type 大小写不敏感（tokens_limit / credit_limit）', () => {
+  assert.equal(parseZhipuQuota({ data: { limits: [{ type: 'tokens_limit', unit: 3, percentage: 10 }] } }).length, 1);
+  assert.equal(parseZhipuQuota({ data: { limits: [{ type: 'credit_limit', unit: 3, percentage: 10 }] } }).length, 1);
+});
+check('nextResetTime 是毫秒数字时转成 ISO', () => {
+  const t = parseZhipuQuota(ZHIPU);
+  assert.match(t.find((x) => x.name === 'five_hour').resetsAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 check('percentage 超过 100 时 remainingPct 夹到 0', () => {
   assert.equal(parseZhipuQuota({ data: { limits: [{ type: 'TOKENS_LIMIT', unit: 3, percentage: 130 }] } })[0].remainingPct, 0);
