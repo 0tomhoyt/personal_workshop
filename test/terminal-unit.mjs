@@ -255,6 +255,34 @@ check('normalizeQuestion → summary=header detail=question options 原样', () 
   });
 });
 
+// ── host：孤儿判定与日志打码（纯逻辑）────────────────────────────────────────
+import { shouldKillOrphan, redactLine } from '../lib/terminal/host.mjs';
+
+group('host · shouldKillOrphan');
+check('活 + 命令行含 opencode 与正确端口 → 杀（是孤儿）', () => {
+  assert.equal(shouldKillOrphan({ pid: 123 }, { alive: true, command: '/x/opencode serve --port 4096 --hostname 127.0.0.1', backendPort: 4096 }), true);
+});
+check('活 + 命令行不含 opencode（pid 被复用）→ 不杀', () => {
+  assert.equal(shouldKillOrphan({ pid: 123 }, { alive: true, command: 'sleep 100', backendPort: 4096 }), false);
+});
+check('进程已死 → 不杀', () => {
+  assert.equal(shouldKillOrphan({ pid: 123 }, { alive: false, command: 'opencode serve --port 4096', backendPort: 4096 }), false);
+});
+check('命令行匹配但端口不同（别人的 opencode）→ 不杀', () => {
+  assert.equal(shouldKillOrphan({ pid: 123 }, { alive: true, command: 'opencode serve --port 9999 --hostname 127.0.0.1', backendPort: 4096 }), false);
+});
+check('无 pidfile 记录 → 不杀', () => {
+  assert.equal(shouldKillOrphan(null, { alive: true, command: 'opencode serve --port 4096', backendPort: 4096 }), false);
+});
+
+group('host · redactLine');
+check('口令明文替换为 ***；不含口令的行原样', () => {
+  const secret = 'a'.repeat(32);
+  assert.equal(redactLine(`listening pw=${secret}`, secret), 'listening pw=***');
+  assert.equal(redactLine('普通日志行', secret), '普通日志行');
+  assert.equal(redactLine('没有口令可用时原样', ''), '没有口令可用时原样');
+});
+
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 console.log(`\n结果: ${passed} 通过, ${failures.length} 失败`);
 try { fs.rmSync(tmpA, { recursive: true, force: true }); fs.rmSync(tmpB, { recursive: true, force: true }); } catch {}
