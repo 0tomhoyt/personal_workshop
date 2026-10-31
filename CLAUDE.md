@@ -46,6 +46,11 @@ lib/tv-server.mjs     电视 LAN 监听（gateway.tv，默认关闭；同进程�
                       白名单 GET /tv/v1/snapshot|health，其余 404；Host 反 rebinding → 来源
                       allowedCidrs → 白名单 → X-Aerial-Token（timingSafeEqual）→ 30 次/分钟/token
                       （日志只记 token 名/前缀 + IP + 状态码）
+lib/sync-snapshot.mjs Mac↔Mac 同步快照纯函数（rev=updated_at，支持 since 增量）
+lib/sync-server.mjs   同步监听（gateway.sync，默认关闭，端口 8491）：白名单 /sync/v1/*；
+                      Bearer 或 X-Workshop-Token；不挂 /admin、/v1；默认 CIDR 含 Tailscale
+lib/sync-client.mjs   同步客户端（gateway.syncClient，默认关闭）：spoke 轮询枢纽 snapshot，
+                      按 id/rev 合并待办；不另起监听
 lib/models.mjs        模型目录聚合（TTL 10min + 失败负缓存 30s，目录响应 2MB 有界读）+ model→provider
                       路由（显式 pid/model > aliases > 裸名唯一 > defaultProvider 兜底）
 lib/upstream.mjs      requestUpstream：按 provider 解析凭证头、fetch（「发请求→收到

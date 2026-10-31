@@ -26,3 +26,7 @@ providers.json
 # Claude Code / superpowers 工作区元数据（worktree、SDD 台账）
 .claude/
 .superpowers/
+.sync-hub-token*
+
+stats-sync-hub.json
+stats-sync.json
