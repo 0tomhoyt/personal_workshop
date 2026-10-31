@@ -13,6 +13,7 @@ import {
 } from '../lib/sync-config.mjs';
 import {
   sumDay, sumDaysMaps, replaceDeviceDays, migrateHubStatsStore, sanitizeDaysForSync,
+  wrapStatsForSync,
 } from '../lib/sync-stats.mjs';
 
 let passed = 0;
@@ -294,6 +295,25 @@ check('snapshot 可带 config/stats', () => {
   assert.equal(snap.version, 2);
   assert.equal(snap.config.rev, 'abc');
   assert.equal(snap.stats.rev, 1);
+});
+check('wrapStatsForSync days = devices sum + hubLocal overlay', () => {
+  let store = migrateHubStatsStore(null);
+  store = replaceDeviceDays(store, 'macbook', {
+    '2026-10-30': { total: { req: 5, tin: 1, tout: 1, cost: 1.5 }, providers: {}, hours: [] },
+  }).store;
+  store = replaceDeviceDays(store, 'other', {
+    '2026-10-30': { total: { req: 2, tin: 0, tout: 0, cost: 0.5 }, providers: {}, hours: [] },
+  }).store;
+  const hubLocal = {
+    '2026-10-30': { total: { req: 3, tin: 0, tout: 0, cost: 0.25 }, providers: {}, hours: [] },
+  };
+  const section = wrapStatsForSync(store, { hubLocalDays: hubLocal, hubDeviceId: 'mini', now: 99 });
+  assert.equal(section.days['2026-10-30'].total.req, 10);
+  assert.equal(section.days['2026-10-30'].total.cost, 2.25);
+  assert.equal(section.hubDeviceId, 'mini');
+  assert.equal(section.deviceCount, 3); // 2 devices + hubLocal
+  const withoutLocal = wrapStatsForSync(store, { hubLocalDays: null, hubDeviceId: 'mini', now: 99 });
+  assert.equal(withoutLocal.days['2026-10-30'].total.req, 7);
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

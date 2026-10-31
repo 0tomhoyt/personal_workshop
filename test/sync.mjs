@@ -52,6 +52,8 @@ const gateway = spawn(process.execPath, [path.join(ROOT, 'server.mjs')], {
     CANNBOT_CONFIG_FILE: configFile,
     CANNBOT_LOG_FILE: path.join(tmp, 'proxy.log'),
     CANNBOT_STATS_FILE: path.join(tmp, 'stats.json'),
+    CANNBOT_STATS_SYNC_FILE: path.join(tmp, 'stats-sync.json'),
+    CANNBOT_SYNC_STATS_FILE: path.join(tmp, 'stats-sync-hub.json'),
     CANNBOT_TODOS_FILE: path.join(tmp, 'todos.json'),
     CANNBOT_REPORTS_FILE: path.join(tmp, 'reports.json'),
     CANNBOT_CC_DIR: path.join(tmp, 'cc'),
@@ -210,6 +212,25 @@ try {
     });
     const stj2 = await stPost2.json();
     check('POST stats 同切片再推 changed=false（不双计）', stPost2.status === 200 && stj2.changed === false, JSON.stringify(stj2).slice(0, 160));
+
+    // 枢纽 buildStatsSection 应把跨设备 sum 写入 stats-sync.json，供本机 /admin/stats 展示
+    const syncDisplayPath = path.join(tmp, 'stats-sync.json');
+    let displayOk = false;
+    let displayDetail = '';
+    try {
+      const raw = JSON.parse(fs.readFileSync(syncDisplayPath, 'utf8'));
+      const dayReq = raw?.days?.['2026-10-30']?.total?.req;
+      const sectionReq = stj2.stats?.days?.['2026-10-30']?.total?.req;
+      displayOk = Number(raw?.version) === 1
+        && dayReq != null
+        && sectionReq != null
+        && Number(dayReq) === Number(sectionReq)
+        && Number(dayReq) >= 3;
+      displayDetail = JSON.stringify({ dayReq, sectionReq, rev: raw?.rev }).slice(0, 160);
+    } catch (e) {
+      displayDetail = e.message;
+    }
+    check('hub POST stats 后写出 stats-sync.json 且 days 与 section 一致', displayOk, displayDetail);
 
     const cfgGet = await fetch(`${SYNC}/sync/v1/config`, { headers: syncHeaders() });
     const cgj = await cfgGet.json();
