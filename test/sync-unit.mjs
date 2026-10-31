@@ -14,7 +14,8 @@ process.env.CANNBOT_LOG_FILE = path.join(tmp, 'inproc.log');
 const { normalizeSync, normalizeSyncClient, SYNC_DEFAULT_CIDRS, normalizeTv } = await import('../lib/config.mjs');
 const { buildSyncSnapshot, toSyncTodo } = await import('../lib/sync-snapshot.mjs');
 const { planRemoteMerges, planLocalPushes, planAfterConflict, planConfigSync } = await import('../lib/sync-client.mjs');
-const { remoteTodoWins, createTodo, updateTodo, listTodos, applyRemoteTodo } = await import('../lib/todos.mjs');
+const { remoteTodoWins, createTodo, updateTodo, listTodos, applyRemoteTodo, deleteTodo, listTombstones, applyRemoteTombstone } = await import('../lib/todos.mjs');
+const { planRemoteDeletes } = await import('../lib/sync-client.mjs');
 const { matchSyncToken } = await import('../lib/sync-server.mjs');
 const { safeEqual } = await import('../lib/gwauth.mjs');
 const {
@@ -310,6 +311,102 @@ check('hub 新 → applyHub；本地脏 → pushLocal', () => {
   assert.equal(planConfigSync({ hubRev: 'aaa', localRev: 'bbb', lastAppliedRev: 'old', localUpdatedAt: 10, lastPullAt: 5 }).action, 'applyHub');
   assert.equal(planConfigSync({ hubRev: 'aaa', localRev: 'bbb', lastAppliedRev: 'aaa', localUpdatedAt: 20, lastPullAt: 10 }).action, 'pushLocal');
   assert.equal(planConfigSync({ hubRev: 'aaa', localRev: 'aaa', lastAppliedRev: 'aaa', localUpdatedAt: 20, lastPullAt: 10 }).action, 'noop');
+});
+
+// ── 删除同步（墓碑）────────────────────────────────────────────────────────
+// 删除曾是同步盲区：删除后待办离开 listTodos()，推送端再无机会告知枢纽；快照
+// 由 listTodos() 现算，「没了」不可表达 → A 机删除后 B 机永远留着，且 spoke 重启
+// cursor 归零全量拉取时已删待办还会复活。墓碑 {id, rev, deleted: true} 让删除成为
+// 可同步的事实；rev 全程做 LWW 仲裁，平局墓碑赢。
+group('tombstone 数据层');
+check('deleteTodo 记墓碑；listTombstones 可读', () => {
+  const t = createTodo({ title: '会删的' });
+  deleteTodo(t.id);
+  const tb = listTombstones().find((x) => x.id === t.id);
+  assert.ok(tb, '墓碑应存在');
+  assert.ok(tb.rev >= t.updated_at, `墓碑 rev=${tb.rev} 应 >= 原 updated_at=${t.updated_at}`);
+  assert.ok(tb.deleted_at > 0, '墓碑带 deleted_at');
+  assert.ok(listTodos().every((x) => x.id !== t.id), '待办本体应已移除');
+});
+check('deleteTodo 不存在的 id 仍 404', () => {
+  assert.throws(() => deleteTodo('no-such-id'), /不存在/);
+});
+check('applyRemoteTombstone：新于本地 → 删除且不另记墓碑', () => {
+  const t = createTodo({ title: '枢纽删的' });
+  const r = applyRemoteTombstone({ id: t.id, rev: Date.now() + 1000 });
+  assert.equal(r.action, 'delete');
+  assert.ok(listTodos().every((x) => x.id !== t.id));
+  // 本机不再记墓碑：枢纽保留着，重拉还会再见到；本机记了反而会在推送端反复 DELETE
+  assert.equal(listTombstones().find((x) => x.id === t.id), undefined, '远端删除不该落本机墓碑');
+});
+check('applyRemoteTombstone：不新于本地 → 跳过（本地更新则留着等推送复活）', () => {
+  const t = createTodo({ title: '本地更新的' });
+  updateTodo(t.id, { title: '本地改过' });
+  const r = applyRemoteTombstone({ id: t.id, rev: t.updated_at - 1 });
+  assert.equal(r.action, 'skip');
+  assert.ok(listTodos().some((x) => x.id === t.id), '本地更新的待办不该被旧墓碑删掉');
+});
+check('applyRemoteTombstone：同刻打平 → 删除（墓碑赢平局）', () => {
+  const t = createTodo({ title: '同刻' });
+  const r = applyRemoteTombstone({ id: t.id, rev: t.updated_at });
+  assert.equal(r.action, 'delete');
+});
+check('applyRemoteTodo：不复活本地墓碑更旧的远端 rev', () => {
+  const t = createTodo({ title: 'x' });
+  deleteTodo(t.id); // 本地墓碑 rev ≈ now
+  const r = applyRemoteTodo({ id: t.id, title: '枢纽还有', rev: t.updated_at });
+  assert.equal(r.action, 'skip', '旧 rev 不该穿过本地墓碑复活');
+  assert.ok(listTodos().every((x) => x.id !== t.id));
+});
+check('applyRemoteTodo：新于本地墓碑 → 复活并清墓碑', () => {
+  const t = createTodo({ title: 'x' });
+  deleteTodo(t.id);
+  const tb = listTombstones().find((x) => x.id === t.id);
+  const r = applyRemoteTodo({ id: t.id, title: '别机改的新版', rev: tb.rev + 1000 });
+  assert.equal(r.action, 'insert');
+  assert.ok(listTodos().some((x) => x.id === t.id));
+  assert.equal(listTombstones().find((x) => x.id === t.id), undefined, '复活后墓碑应清除');
+});
+
+group('snapshot 墓碑下发');
+check('tombstones → deleted 标记 + rev 排序 + cursor 计入 + since 过滤 + 空则省键', () => {
+  const todos = [{ id: 'a', title: 't', status: 'pending', urgency: 'normal', updated_at: 100, created_at: 50 }];
+  const tombs = [{ id: 'c', rev: 200 }, { id: 'd', rev: 400 }];
+  const full = buildSyncSnapshot({ todos, tombstones: tombs, now: 999 });
+  assert.deepEqual(full.tombstones, [{ id: 'd', rev: 400, deleted: true }, { id: 'c', rev: 200, deleted: true }]);
+  assert.equal(full.cursor, 400, 'cursor 必须计入墓碑 rev，否则增量拉取漏删');
+  const inc = buildSyncSnapshot({ todos, tombstones: tombs, now: 999, since: 250 });
+  assert.deepEqual(inc.tombstones, [{ id: 'd', rev: 400, deleted: true }]);
+  assert.equal(buildSyncSnapshot({ todos, tombstones: [], now: 1 }).tombstones, undefined, '无墓碑不下发空数组');
+  assert.equal(buildSyncSnapshot({ todos, now: 1 }).tombstones, undefined, '不传也不下发');
+});
+
+group('删除的合并/推送决策');
+check('planRemoteMerges 墓碑守门：不新于墓碑的远端跳过', () => {
+  const local = [{ id: 'a', updated_at: 100 }];
+  const tombs = [{ id: 'a', rev: 150 }];
+  const remote = [{ id: 'a', rev: 150, title: '同刻' }, { id: 'a', rev: 149, title: '旧' }];
+  const { apply, skip } = planRemoteMerges(local, remote, tombs);
+  assert.deepEqual(apply, [], '墓碑及更旧的远端都不该 apply');
+  assert.equal(skip.length, 2);
+  const r2 = planRemoteMerges(local, [{ id: 'a', rev: 151, title: '新' }], tombs);
+  assert.deepEqual(r2.apply.map((t) => t.id), ['a'], '新于墓碑的远端胜出（别机的编辑复活）');
+});
+check('planRemoteDeletes：本地更旧 → 删；本地更新/无本地 → 跳过', () => {
+  const local = [{ id: 'a', updated_at: 100 }, { id: 'b', updated_at: 300 }];
+  const { delete: dels, skip } = planRemoteDeletes(
+    [{ id: 'a', rev: 200 }, { id: 'b', rev: 250 }, { id: 'zz', rev: 999 }],
+    local,
+  );
+  assert.deepEqual(dels.map((d) => d.id), ['a'], '只有本地存在的更旧条目进删除清单');
+  assert.deepEqual(skip, ['b', 'zz']);
+});
+check('planLocalPushes 墓碑推送：rev 更新且枢纽认识该 id → deletes', () => {
+  const tombs = [{ id: 'a', rev: 300 }, { id: 'b', rev: 50 }, { id: 'never', rev: 900 }];
+  const hub = { a: 100, b: 100 };
+  const { deletes } = planLocalPushes([{ id: 'x', updated_at: 1 }], hub, tombs);
+  assert.deepEqual(deletes.map((d) => d.id), ['a'], '仅「枢纽有旧版」的墓碑推 DELETE');
+  assert.deepEqual(planLocalPushes([], {}, tombs).deletes, [], '枢纽没见过的 id 无需删');
 });
 
 group('sync-stats merge / replace-by-device');
