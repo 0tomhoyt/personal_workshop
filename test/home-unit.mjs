@@ -179,5 +179,47 @@ await checkAsync('失败且超过 15 分钟 → error，环清空', async () => 
   assert.deepEqual(q.tiers, []);
 });
 
+group('花费聚合');
+const { providerSpend } = await import('../lib/stats.mjs');
+const { validateRawConfig } = await import('../lib/config.mjs');
+
+check('providerSpend 从快照已合并视图求和（今日 + 近 30 天）', () => {
+  // statsSnapshot 的 models[] 已按 pid:model 展平；days[] 每天各带一份 models
+  const snap = {
+    models: [
+      { provider: 'zcode', model: 'm', cost: 1.5 },
+      { provider: 'zcode', model: 'n', cost: 0.5 },
+      { provider: 'kimi', model: 'm', cost: 2 },
+    ],
+    days: [
+      { date: '2026-10-30', models: { 'zcode:x': { cost: 0.25 } } },
+      { date: '2026-10-31', models: { 'zcode:m': { cost: 1.5 }, 'kimi:m': { cost: 2 } } },
+    ],
+  };
+  assert.deepEqual(providerSpend('zcode', snap), { today: 2, days30: 1.75 });
+  assert.deepEqual(providerSpend('kimi', snap), { today: 2, days30: 2 });
+  assert.deepEqual(providerSpend('nobody', snap), { today: 0, days30: 0 });
+});
+check('providerSpend 保留两位小数（分）', () => {
+  const snap = { models: [{ provider: 'p', cost: 0.1 }, { provider: 'p', cost: 0.2 }], days: [] };
+  assert.equal(providerSpend('p', snap).today, 0.3);
+});
+
+group('配置：quota 白名单');
+check('normalizeProvider 保留 quota.kind', () => {
+  const cfg = validateRawConfig({ providers: [
+    { id: 'k', name: 'K', baseUrl: 'https://api.kimi.com/coding', protocol: 'anthropic',
+      auth: { type: 'static-token', token: 't' }, models: { source: 'static', list: [] }, quota: { kind: 'kimi' } },
+  ] });
+  assert.equal(cfg.providers[0].quota.kind, 'kimi');
+});
+check('非法 quota.kind 丢弃（不阻塞配置加载）', () => {
+  const cfg = validateRawConfig({ providers: [
+    { id: 'k', name: 'K', baseUrl: 'https://x.dev', protocol: 'openai',
+      auth: { type: 'static-token', token: 't' }, models: { source: 'static', list: [] }, quota: { kind: 'bogus' } },
+  ] });
+  assert.equal(cfg.providers[0].quota, undefined);
+});
+
 console.log(`\n结果: ${passed} 通过${failures.length ? `, ${failures.length} 失败 — ${failures.join(' / ')}` : ', 0 失败'}`);
 process.exit(failures.length ? 1 : 0);
