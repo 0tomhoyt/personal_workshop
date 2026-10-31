@@ -153,6 +153,41 @@ try {
     });
     const cj = await created.json();
     check('POST todo → 201 且带 rev', created.status === 201 && cj.id && typeof cj.rev === 'number', JSON.stringify(cj).slice(0, 160));
+
+    const stableId = 'ab12cd';
+    const stamped = await fetch(`${SYNC}/sync/v1/todos`, {
+      method: 'POST',
+      headers: { ...syncHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: stableId, title: 'spoke-push', status: 'pending',
+        updated_at: 1_700_000_000_000, rev: 1_700_000_000_000, created_at: 1_700_000_000_000,
+      }),
+    });
+    const sj2 = await stamped.json();
+    check('POST 带稳定 id → 201 且保留 id/rev', stamped.status === 201 && sj2.id === stableId && sj2.rev === 1_700_000_000_000, JSON.stringify(sj2).slice(0, 160));
+
+    const dup = await fetch(`${SYNC}/sync/v1/todos`, {
+      method: 'POST',
+      headers: { ...syncHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({ id: stableId, title: 'dup', rev: 1 }),
+    });
+    const dj = await dup.json();
+    check('POST 重复 id → 409', dup.status === 409 && dj.todo?.id === stableId, JSON.stringify(dj).slice(0, 160));
+
+    const patched = await fetch(`${SYNC}/sync/v1/todos/${stableId}`, {
+      method: 'PATCH',
+      headers: { ...syncHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'spoke-push-2', rev: 1_700_000_000_000 }),
+    });
+    const pj = await patched.json();
+    check('PATCH 正确 rev → 200', patched.status === 200 && pj.title === 'spoke-push-2' && pj.rev > 1_700_000_000_000, JSON.stringify(pj).slice(0, 160));
+
+    const stale = await fetch(`${SYNC}/sync/v1/todos/${stableId}`, {
+      method: 'PATCH',
+      headers: { ...syncHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'stale', rev: 1_700_000_000_000 }),
+    });
+    check('PATCH 过期 rev → 409', stale.status === 409, `got ${stale.status}`);
   }
 
   console.log('— 默认关闭不监听 —');

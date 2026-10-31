@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { normalizeSync, normalizeSyncClient, SYNC_DEFAULT_CIDRS, normalizeTv } from '../lib/config.mjs';
 import { buildSyncSnapshot, toSyncTodo } from '../lib/sync-snapshot.mjs';
-import { planRemoteMerges } from '../lib/sync-client.mjs';
+import { planRemoteMerges, planLocalPushes, planAfterConflict } from '../lib/sync-client.mjs';
 import { remoteTodoWins } from '../lib/todos.mjs';
 import { matchSyncToken } from '../lib/sync-server.mjs';
 import { safeEqual } from '../lib/gwauth.mjs';
@@ -89,12 +89,19 @@ check('normalizeTv 默认不含 Tailscale CGNAT（sync 才有）', () => {
 });
 
 group('normalizeSyncClient');
-check('默认关闭 + 空 url/token + 15s', () => {
+check('默认关闭 + 空 url/token + 15s + push true', () => {
   const c = normalizeSyncClient(undefined);
   assert.equal(c.enabled, false);
   assert.equal(c.url, '');
   assert.equal(c.token, '');
   assert.equal(c.intervalSec, 15);
+  assert.equal(c.push, true);
+});
+check('push 仅显式 false 关闭', () => {
+  assert.equal(normalizeSyncClient({}).push, true);
+  assert.equal(normalizeSyncClient({ push: true }).push, true);
+  assert.equal(normalizeSyncClient({ push: false }).push, false);
+  assert.equal(normalizeSyncClient({ push: 'false' }).push, true);
 });
 check('enabled 只认严格 true；剥尾斜杠；interval 边界', () => {
   assert.equal(normalizeSyncClient({ enabled: 'true' }).enabled, false);
@@ -131,6 +138,36 @@ check('planRemoteMerges：新 id / 更新 / 跳过', () => {
   const { apply, skip } = planRemoteMerges(local, remote);
   assert.deepEqual(apply.map((t) => t.id), ['a', 'c']);
   assert.deepEqual(skip, ['b']);
+});
+
+
+group('planLocalPushes');
+check('缺 hub id → post；本地更新 → patch；相等跳过', () => {
+  const local = [
+    { id: 'new', updated_at: 50, title: 'n' },
+    { id: 'old', updated_at: 300, title: 'u' },
+    { id: 'same', updated_at: 100, title: 's' },
+  ];
+  const hub = { old: 200, same: 100 };
+  const { post, patch } = planLocalPushes(local, hub);
+  assert.deepEqual(post.map((t) => t.id), ['new']);
+  assert.equal(patch.length, 1);
+  assert.equal(patch[0].id, 'old');
+  assert.equal(patch[0].rev, 200);
+});
+check('Map 与空 hubRevs', () => {
+  const m = new Map([['a', 10]]);
+  const { post, patch } = planLocalPushes([{ id: 'a', updated_at: 11 }, { id: 'b', updated_at: 1 }], m);
+  assert.deepEqual(post.map((t) => t.id), ['b']);
+  assert.equal(patch[0].id, 'a');
+  assert.deepEqual(planLocalPushes([{ id: 'x', updated_at: 1 }], {}).post.map((t) => t.id), ['x']);
+});
+
+group('planAfterConflict');
+check('远端更新 / 本地仍新 / 对齐', () => {
+  assert.equal(planAfterConflict({ id: 'a', updated_at: 10 }, { id: 'a', rev: 20 }).action, 'apply');
+  assert.equal(planAfterConflict({ id: 'a', updated_at: 30 }, { id: 'a', rev: 20 }).action, 'retry');
+  assert.equal(planAfterConflict({ id: 'a', updated_at: 20 }, { id: 'a', rev: 20 }).action, 'align');
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

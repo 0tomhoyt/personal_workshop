@@ -36,11 +36,12 @@
       "maxPerMinute": 120
     },
     "syncClient": {
-      "_说明": "可选：Mac↔Mac 同步客户端（默认关闭）。客户机（如 MacBook）启用；url 指向枢纽 8491（Tailscale IP 或 *.ts.net），token 与枢纽 gateway.sync.tokens 中本机那枚相同。不另起监听。enabled 为 true 但 url/token 空则不启动。改 enabled/url 需重启。",
+      "_说明": "可选：Mac↔Mac 同步客户端（默认关闭）。客户机（如 MacBook）启用；url 指向枢纽 8491（Tailscale IP 或 *.ts.net），token 与枢纽 gateway.sync.tokens 中本机那枚相同。不另起监听。拉快照后默认再 push 本机更新（push:false 可关）。enabled 为 true 但 url/token 空则不启动。改 enabled/url/push 需重启。",
       "enabled": false,
       "url": "",
       "token": "",
-      "intervalSec": 15
+      "intervalSec": 15,
+      "push": true
     }
   },
   "providers": [
@@ -163,8 +164,9 @@
     "gateway.sync": "Mac↔Mac 同步监听：只认 /sync/v1/health、/sync/v1/snapshot 与待办 CRUD；来源须命中 allowedCidrs（默认私网+回环+Tailscale），Host 须为 IP、.local 或 Tailscale MagicDNS（*.ts.net）；Authorization: Bearer 或 X-Workshop-Token（timingSafeEqual）。其余路径（含 /admin/*、/v1/*）一律 404。默认关闭。",
     "gateway.sync.tokens[]": "每台客户机一枚独立 token：{ \"name\": \"macbook\", \"token\": \"<随机长串>\" }。吊销 = 从数组删掉。",
     "gateway.sync.allowedCidrs": "来源白名单；默认含 Tailscale CGNAT。填了就完全按这里匹配。",
-    "gateway.syncClient": "Mac↔Mac 同步客户端（spoke）：轮询枢纽 /sync/v1/health 与 snapshot，按 id/rev 合并待办。默认关闭；与 gateway.sync 互不要求同机开启。",
+    "gateway.syncClient": "Mac↔Mac 同步客户端（spoke）：轮询枢纽拉快照并（默认）推送本机待办更新。默认关闭；与 gateway.sync 互不要求同机开启。",
     "gateway.syncClient.url": "枢纽根地址，如 http://100.x.x.x:8491 或 http://name.tail….ts.net:8491（勿尾斜杠）。",
-    "gateway.syncClient.token": "与枢纽 tokens 中本机条目相同的长串；勿与 clientToken / TV token 共用。"
+    "gateway.syncClient.token": "与枢纽 tokens 中本机条目相同的长串；勿与 clientToken / TV token 共用。",
+    "gateway.syncClient.push": "是否在拉取后把本机较新/独有待办 POST/PATCH 到枢纽；默认 true，显式 false 则只拉。"
   }
 }
