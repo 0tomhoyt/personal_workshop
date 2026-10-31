@@ -38,6 +38,7 @@ import {
   addTodoSpan, updateTodoSpan, deleteTodoSpan, openTodoSpan, closeTodoSpans,
 } from './lib/todos.mjs';
 import { startReportJob, getReportJob, listReports, getReport, deleteReport } from './lib/report/generate.mjs';
+import { buildHome } from './lib/home.mjs';
 import { httpError, sendJson, extractModel } from './lib/util.mjs';
 import { startTvServer } from './lib/tv-server.mjs';
 import { startSyncServer } from './lib/sync-server.mjs';
@@ -186,6 +187,19 @@ const server = http.createServer(async (req, res) => {
 
     if (url === '/admin/stats') {
       return sendJson(res, 200, statsSnapshot());
+    }
+
+    // 首屏（#home）：待办简览 + 各订阅的花费与额度。一次给全，前端只渲染。
+    // 与 /admin/stats 不同，这里**要**回环校验——它带订阅读取（额度查询会带着凭证
+    // 去访问上游），不该让局域网里任何主机随手刷。
+    if (url === '/admin/home') {
+      if (!isLocalHost(req)) {
+        return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
+      }
+      if (req.method !== 'GET') {
+        return sendJson(res, 405, { error: { message: '此端点仅接受 GET', type: 'method_not_allowed' } });
+      }
+      return sendJson(res, 200, await buildHome());
     }
 
     // 显示器输入源切换（m1ddc/DDC）：状态查询（带缓存，?refresh=1 绕过）只读但属

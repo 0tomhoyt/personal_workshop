@@ -221,5 +221,95 @@ check('非法 quota.kind 丢弃（不阻塞配置加载）', () => {
   assert.equal(cfg.providers[0].quota, undefined);
 });
 
+group('首屏响应组装');
+const { buildHome } = await import('../lib/home.mjs');
+const noSpend = () => ({ today: 0, days30: 0 });
+const noQuota = () => ({ state: 'none', at: null, error: null, tiers: [] });
+
+await checkAsync('待办：counts.open = in_progress + pending', async () => {
+  const h = await buildHome({ todos: [
+    { id: '1', title: 'A', status: 'in_progress', urgency: 'normal', spans: [] },
+    { id: '2', title: 'B', status: 'pending', urgency: 'normal' },
+    { id: '3', title: 'C', status: 'pending', urgency: 'urgent' },
+  ], now: 1000, providers: [], spend: noSpend, quota: noQuota });
+  assert.equal(h.todos.counts.open, 3);
+  assert.equal(h.todos.counts.in_progress, 1);
+  assert.equal(h.todos.counts.pending, 2);
+});
+await checkAsync('排序：进行中 → 待办（紧急在前）', async () => {
+  const h = await buildHome({ todos: [
+    { id: 'p2', title: '普通', status: 'pending', urgency: 'normal', created_at: 1 },
+    { id: 'p1', title: '紧急', status: 'pending', urgency: 'urgent', created_at: 2 },
+    { id: 'ip', title: '进行中', status: 'in_progress', urgency: 'normal', spans: [] },
+  ], now: 1000, providers: [], spend: noSpend, quota: noQuota });
+  assert.deepEqual(h.todos.items.map((x) => x.id), ['ip', 'p1', 'p2']);
+});
+await checkAsync('完成组只收今天完成的（昨天的不出现）', async () => {
+  const now = new Date('2026-10-31T12:00:00').getTime();
+  const todayDone = new Date('2026-10-31T09:00:00').getTime();
+  const ydayDone = new Date('2026-10-30T09:00:00').getTime();
+  const h = await buildHome({ todos: [
+    { id: 'a', title: '今天完成', status: 'done', completed_at: todayDone, urgency: 'normal' },
+    { id: 'b', title: '昨天完成', status: 'done', completed_at: ydayDone, urgency: 'normal' },
+  ], now, providers: [], spend: noSpend, quota: noQuota });
+  assert.ok(h.todos.items.some((x) => x.id === 'a'));
+  assert.ok(!h.todos.items.some((x) => x.id === 'b'));
+});
+await checkAsync('空待办不产生 NaN / 空标题', async () => {
+  const h = await buildHome({ todos: [], now: 1000, providers: [], spend: noSpend, quota: noQuota });
+  assert.equal(h.todos.counts.open, 0);
+  assert.deepEqual(h.todos.items, []);
+});
+await checkAsync('截断：待办前 8 条，hidden 记超出数', async () => {
+  const todos = Array.from({ length: 12 }, (_, i) => ({ id: `t${i}`, title: `T${i}`, status: 'pending', urgency: 'normal', created_at: 100 - i }));
+  const h = await buildHome({ todos, now: 1000, providers: [], spend: noSpend, quota: noQuota });
+  assert.equal(h.todos.items.filter((x) => x.status === 'pending').length, 8);
+  assert.equal(h.todos.hidden, 4);
+});
+await checkAsync('订阅卡片严格按 config.providers 出（deepseek 这类无配置的不出现）', async () => {
+  const h = await buildHome({ todos: [], now: 1000,
+    providers: [{ id: 'kimi', name: 'Kimi', baseUrl: 'https://api.kimi.com/coding' }],
+    spend: (pid) => (pid === 'deepseek' ? { today: 9, days30: 9 } : { today: 1, days30: 2 }),
+    quota: noQuota });
+  assert.deepEqual(h.providers.map((p) => p.id), ['kimi']);
+  assert.deepEqual(h.providers[0].spend, { today: 1, days30: 2 });
+});
+await checkAsync('额度查询失败不影响花费数字', async () => {
+  const h = await buildHome({ todos: [], now: 1000,
+    providers: [{ id: 'kimi', name: 'Kimi', baseUrl: 'https://api.kimi.com/coding' }],
+    spend: () => ({ today: 1.5, days30: 9 }),
+    quota: () => ({ state: 'error', at: null, error: 'HTTP 401', tiers: [] }) });
+  assert.deepEqual(h.providers[0].spend, { today: 1.5, days30: 9 });
+  assert.equal(h.providers[0].quota.state, 'error');
+});
+await checkAsync('额度查询抛异常时整体不失败（降级成 error）', async () => {
+  const h = await buildHome({ todos: [], now: 1000,
+    providers: [{ id: 'kimi', name: 'Kimi', baseUrl: 'https://api.kimi.com/coding' }],
+    spend: noSpend,
+    quota: () => { throw new Error('boom'); } });
+  assert.equal(h.providers.length, 1);
+  assert.equal(h.providers[0].quota.state, 'error');
+});
+await checkAsync('停用的 provider 不出卡片', async () => {
+  const h = await buildHome({ todos: [], now: 1000,
+    providers: [
+      { id: 'on', name: 'On', baseUrl: 'https://x.dev', enabled: true },
+      { id: 'off', name: 'Off', baseUrl: 'https://y.dev', enabled: false },
+    ], spend: noSpend, quota: noQuota });
+  assert.deepEqual(h.providers.map((p) => p.id), ['on']);
+});
+await checkAsync('URL 解析失败的脏配置不拖垮整页', async () => {
+  const h = await buildHome({ todos: [], now: 1000,
+    providers: [{ id: 'bad', name: 'Bad', baseUrl: 'not a url' }], spend: noSpend, quota: noQuota });
+  assert.equal(h.providers.length, 1);
+});
+await checkAsync('runningMs 透传给前端（进行中待办带时长）', async () => {
+  const h = await buildHome({ todos: [
+    { id: 'r', title: '跑着', status: 'in_progress', urgency: 'normal',
+      spans: [{ id: 's', start: 1000, end: null }] },
+  ], now: 61_000, providers: [], spend: noSpend, quota: noQuota });
+  assert.equal(h.todos.items[0].runningMs, 60_000);
+});
+
 console.log(`\n结果: ${passed} 通过${failures.length ? `, ${failures.length} 失败 — ${failures.join(' / ')}` : ', 0 失败'}`);
 process.exit(failures.length ? 1 : 0);
