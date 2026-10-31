@@ -42,6 +42,17 @@
       "token": "",
       "intervalSec": 15,
       "push": true
+    },
+    "terminal": {
+      "_说明": "可选：远程 agent 终端监听（默认关闭）。手机等设备经 http://<本机IP>:8492/term 远程拉起/操作 opencode agent。token 每台设备一枚，与 clientToken / tv / sync 互不复用，绝不写进仓库——到运行时目录的 providers.json 里填。projects 是能起 agent 的目录白名单（必须绝对路径且存在的目录，不给默认值）；launchd 下没有 PATH，找不到 opencode 时填 backendBin 绝对路径。enabled/port/bind/backendBin 改动需重启。",
+      "enabled": false,
+      "port": 8492,
+      "bind": "0.0.0.0",
+      "tokens": [{ "name": "phone", "token": "" }],
+      "maxPerMinute": 120,
+      "backendPort": 4096,
+      "backendBin": "",
+      "projects": []
     }
   },
   "providers": [
