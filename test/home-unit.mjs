@@ -106,5 +106,78 @@ check('脏 baseUrl 不抛错', () => {
   assert.equal(detectQuotaKind({}), null);
 });
 
+group('额度查询与降级');
+const { queryQuota } = await import('../lib/quota.mjs');
+const okFetch = (body) => async () => ({ ok: true, status: 200, json: async () => body });
+const failFetch = (status) => async () => ({ ok: false, status, json: async () => ({}) });
+
+await checkAsync('成功 → state=ok 且带 at', async () => {
+  const q = await queryQuota(
+    { id: 'k1', baseUrl: 'https://api.kimi.com/coding', auth: { type: 'static-token', token: 't' } },
+    { now: () => 1000, fetchImpl: okFetch(KIMI) });
+  assert.equal(q.state, 'ok');
+  assert.equal(q.at, 1000);
+  assert.equal(q.tiers.length, 2);
+});
+await checkAsync('请求头：Kimi 带 Bearer，智谱不带', async () => {
+  const seen = [];
+  const spy = (b) => async (url, init) => { seen.push(init.headers.authorization); return { ok: true, status: 200, json: async () => b }; };
+  await queryQuota({ id: 'hk', baseUrl: 'https://api.kimi.com/coding', auth: { type: 'static-token', token: 'KEY' } }, { fetchImpl: spy(KIMI) });
+  await queryQuota({ id: 'hz', baseUrl: 'https://open.bigmodel.cn/api/anthropic', auth: { type: 'static-token', token: 'KEY' } }, { fetchImpl: spy(ZHIPU) });
+  assert.equal(seen[0], 'Bearer KEY');
+  assert.equal(seen[1], 'KEY');
+});
+await checkAsync('请求的是固定额度 URL，不拼 baseUrl', async () => {
+  const urls = [];
+  const spy = (b) => async (url) => { urls.push(url); return { ok: true, status: 200, json: async () => b }; };
+  await queryQuota({ id: 'uk', baseUrl: 'https://api.kimi.com/coding/', auth: { type: 'static-token', token: 't' } }, { fetchImpl: spy(KIMI) });
+  await queryQuota({ id: 'uz', baseUrl: 'https://api.z.ai/api/anthropic', auth: { type: 'static-token', token: 't' } }, { fetchImpl: spy(ZHIPU) });
+  assert.equal(urls[0], 'https://api.kimi.com/coding/v1/usages');
+  assert.equal(urls[1], 'https://api.z.ai/api/monitor/usage/quota/limit');
+});
+await checkAsync('401 → state=error 且文案是凭证问题，不是「用尽」', async () => {
+  const q = await queryQuota({ id: 'e401', baseUrl: 'https://api.kimi.com/coding', auth: { type: 'static-token', token: 't' } }, { fetchImpl: failFetch(401) });
+  assert.equal(q.state, 'error');
+  assert.match(q.error, /凭证|401/);
+  assert.doesNotMatch(q.error, /用尽/);
+});
+await checkAsync('智谱「未开通套餐」业务错误 → error，不是 0%', async () => {
+  const q = await queryQuota({ id: 'noplan', baseUrl: 'https://open.bigmodel.cn/api/anthropic', auth: { type: 'static-token', token: 't' } },
+    { fetchImpl: okFetch({ code: 500, success: false, msg: '当前用户不存在coding plan' }) });
+  assert.equal(q.state, 'error');
+  assert.match(q.error, /套餐/);
+});
+await checkAsync('认出但未识别的家数 → state=none 且不发请求', async () => {
+  let called = 0;
+  const q = await queryQuota({ id: 'none1', baseUrl: 'https://cannbot.hicann.cn/x', auth: { type: 'static-token', token: 't' } },
+    { fetchImpl: async () => { called++; return {}; } });
+  assert.equal(q.state, 'none');
+  assert.equal(called, 0);
+});
+await checkAsync('缓存：60 秒内不重复打上游', async () => {
+  let calls = 0;
+  const spy = (b) => async () => { calls++; return { ok: true, status: 200, json: async () => b }; };
+  const p = { id: 'c1', baseUrl: 'https://api.kimi.com/coding', auth: { type: 'static-token', token: 't' } };
+  await queryQuota(p, { now: () => 5000, fetchImpl: spy(KIMI) });
+  await queryQuota(p, { now: () => 5500, fetchImpl: spy(KIMI) });
+  assert.equal(calls, 1, '第二次应命中缓存');
+});
+await checkAsync('失败但未过期 → stale，仍返回上次的环', async () => {
+  const p = { id: 's1', baseUrl: 'https://api.kimi.com/coding', auth: { type: 'static-token', token: 't' } };
+  await queryQuota(p, { now: () => 10_000, fetchImpl: okFetch(KIMI) });
+  const q = await queryQuota(p, { now: () => 70_000, fetchImpl: failFetch(500), force: true });
+  assert.equal(q.state, 'stale');
+  assert.equal(q.at, 10_000);
+  assert.equal(q.tiers.length, 2, 'stale 时环照旧');
+  assert.ok(q.error);
+});
+await checkAsync('失败且超过 15 分钟 → error，环清空', async () => {
+  const p = { id: 'x1', baseUrl: 'https://api.kimi.com/coding', auth: { type: 'static-token', token: 't' } };
+  await queryQuota(p, { now: () => 0, fetchImpl: okFetch(KIMI) });
+  const q = await queryQuota(p, { now: () => 16 * 60_000, fetchImpl: failFetch(500), force: true });
+  assert.equal(q.state, 'error');
+  assert.deepEqual(q.tiers, []);
+});
+
 console.log(`\n结果: ${passed} 通过${failures.length ? `, ${failures.length} 失败 — ${failures.join(' / ')}` : ', 0 失败'}`);
 process.exit(failures.length ? 1 : 0);
