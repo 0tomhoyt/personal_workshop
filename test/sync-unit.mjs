@@ -3,10 +3,17 @@
 import assert from 'node:assert/strict';
 import { normalizeSync, normalizeSyncClient, SYNC_DEFAULT_CIDRS, normalizeTv } from '../lib/config.mjs';
 import { buildSyncSnapshot, toSyncTodo } from '../lib/sync-snapshot.mjs';
-import { planRemoteMerges, planLocalPushes, planAfterConflict } from '../lib/sync-client.mjs';
+import { planRemoteMerges, planLocalPushes, planAfterConflict, planConfigSync } from '../lib/sync-client.mjs';
 import { remoteTodoWins } from '../lib/todos.mjs';
 import { matchSyncToken } from '../lib/sync-server.mjs';
 import { safeEqual } from '../lib/gwauth.mjs';
+import {
+  stripRoleGateway, restoreRoleGateway, extractShareableConfig,
+  applyShareableToRaw, configContentRev, SYNC_ROLE_GATEWAY_KEYS,
+} from '../lib/sync-config.mjs';
+import {
+  sumDay, sumDaysMaps, replaceDeviceDays, migrateHubStatsStore, sanitizeDaysForSync,
+} from '../lib/sync-stats.mjs';
 
 let passed = 0;
 const failures = [];
@@ -57,6 +64,7 @@ check('rev 等于 updated_at；since 过滤', () => {
     { id: 'b', title: '新', status: 'in_progress', urgency: 'urgent', updated_at: 200, created_at: 150, note: 'n' },
   ];
   const full = buildSyncSnapshot({ todos, now: 999 });
+  assert.equal(full.version, 2);
   assert.equal(full.todos.length, 2);
   assert.equal(full.todos[0].id, 'b');
   assert.equal(full.todos[0].rev, 200);
@@ -168,6 +176,124 @@ check('远端更新 / 本地仍新 / 对齐', () => {
   assert.equal(planAfterConflict({ id: 'a', updated_at: 10 }, { id: 'a', rev: 20 }).action, 'apply');
   assert.equal(planAfterConflict({ id: 'a', updated_at: 30 }, { id: 'a', rev: 20 }).action, 'retry');
   assert.equal(planAfterConflict({ id: 'a', updated_at: 20 }, { id: 'a', rev: 20 }).action, 'align');
+});
+
+
+group('sync-config role keys');
+check('strip / restore 保留 sync syncClient tv', () => {
+  const gw = {
+    clientToken: 'ct',
+    upstreamHeadersTimeoutMs: 1,
+    sync: { enabled: true, port: 8491 },
+    syncClient: { enabled: true, url: 'http://x' },
+    tv: { enabled: false },
+  };
+  const stripped = stripRoleGateway(gw);
+  assert.equal(stripped.clientToken, 'ct');
+  for (const k of SYNC_ROLE_GATEWAY_KEYS) assert.equal(stripped[k], undefined);
+  const restored = restoreRoleGateway({ clientToken: 'new', port: 9 }, gw);
+  assert.equal(restored.clientToken, 'new');
+  assert.deepEqual(restored.sync, gw.sync);
+  assert.deepEqual(restored.syncClient, gw.syncClient);
+  assert.deepEqual(restored.tv, gw.tv);
+});
+check('applyShareableToRaw 不覆盖角色键；rev 稳定', () => {
+  const local = {
+    gateway: { clientToken: 'old', sync: { enabled: true, tokens: [{ name: 'a', token: 't' }] }, syncClient: { enabled: true, url: 'http://hub' }, tv: { enabled: false } },
+    providers: [{ id: 'a', name: 'A', baseUrl: 'http://a', protocol: 'openai', auth: { type: 'static-token', token: 'x' } }],
+    routing: {},
+  };
+  const shared = extractShareableConfig({
+    gateway: { clientToken: 'shared-ct', sync: { enabled: false }, syncClient: { enabled: false }, tv: { enabled: true } },
+    providers: [{ id: 'b', name: 'B', baseUrl: 'http://b', protocol: 'openai', auth: { type: 'static-token', token: 'secret' } }],
+    routing: { defaultProvider: 'b' },
+    pricing: { 'b/m': { input: 1, output: 2 } },
+    monitors: { inputs: [], list: [] },
+    workbench: { reportModel: 'm' },
+  });
+  assert.equal(shared.gateway.sync, undefined);
+  const merged = applyShareableToRaw(local, shared);
+  assert.equal(merged.gateway.clientToken, 'shared-ct');
+  assert.equal(merged.gateway.sync.enabled, true);
+  assert.equal(merged.gateway.syncClient.url, 'http://hub');
+  assert.equal(merged.gateway.tv.enabled, false);
+  assert.equal(merged.providers[0].id, 'b');
+  assert.equal(merged.providers[0].auth.token, 'secret');
+  const r1 = configContentRev(shared);
+  const r2 = configContentRev(extractShareableConfig(merged));
+  // merged 角色键不在 shareable 内，providers 等同 → 同指纹
+  assert.equal(r1, configContentRev(extractShareableConfig({ ...shared, gateway: shared.gateway })));
+  assert.equal(typeof r1, 'string');
+  assert.equal(r1.length, 16);
+  assert.equal(r1, r2);
+});
+
+group('planConfigSync');
+check('hub 新 → applyHub；本地脏 → pushLocal', () => {
+  assert.equal(planConfigSync({ hubRev: 'aaa', localRev: 'bbb', lastAppliedRev: 'old', localUpdatedAt: 10, lastPullAt: 5 }).action, 'applyHub');
+  assert.equal(planConfigSync({ hubRev: 'aaa', localRev: 'bbb', lastAppliedRev: 'aaa', localUpdatedAt: 20, lastPullAt: 10 }).action, 'pushLocal');
+  assert.equal(planConfigSync({ hubRev: 'aaa', localRev: 'aaa', lastAppliedRev: 'aaa', localUpdatedAt: 20, lastPullAt: 10 }).action, 'noop');
+});
+
+group('sync-stats merge / replace-by-device');
+check('sumDay 相加 providers 与 hours', () => {
+  const a = {
+    total: { req: 1, tin: 10, tout: 2, cost: 0.1 },
+    providers: { p: { models: { m: { req: 1, tin: 10, tout: 2, cost: 0.1 } } } },
+    hours: Array.from({ length: 24 }, (_, h) => (h === 3 ? { req: 1, tin: 10, tout: 2, cost: 0.1 } : { req: 0, tin: 0, tout: 0, cost: 0 })),
+  };
+  const b = {
+    total: { req: 2, tin: 5, tout: 1, cost: 0.2 },
+    providers: { p: { models: { m: { req: 2, tin: 5, tout: 1, cost: 0.2 } } }, q: { models: { n: { req: 1, tin: 1, tout: 1, cost: 0 } } } },
+    hours: Array.from({ length: 24 }, (_, h) => (h === 3 ? { req: 2, tin: 5, tout: 1, cost: 0.2 } : { req: 0, tin: 0, tout: 0, cost: 0 })),
+  };
+  const s = sumDay(a, b);
+  assert.equal(s.total.req, 3);
+  assert.equal(s.total.tin, 15);
+  assert.equal(s.providers.p.models.m.req, 3);
+  assert.equal(s.providers.q.models.n.req, 1);
+  assert.equal(s.hours[3].req, 3);
+});
+check('replaceDeviceDays 同切片再推不双计；跨设备 sum', () => {
+  let store = migrateHubStatsStore(null);
+  const daysA = { '2026-10-30': { total: { req: 5, tin: 1, tout: 1, cost: 0 }, providers: {}, hours: [] } };
+  const r1 = replaceDeviceDays(store, 'macbook', daysA);
+  assert.equal(r1.changed, true);
+  store = r1.store;
+  const r2 = replaceDeviceDays(store, 'macbook', daysA);
+  assert.equal(r2.changed, false);
+  assert.equal(r2.store.statsRev, store.statsRev);
+  const daysA2 = { '2026-10-30': { total: { req: 8, tin: 1, tout: 1, cost: 0 }, providers: {}, hours: [] } };
+  const r3 = replaceDeviceDays(store, 'macbook', daysA2);
+  assert.equal(r3.changed, true);
+  store = r3.store;
+  const daysB = { '2026-10-30': { total: { req: 2, tin: 0, tout: 0, cost: 0 }, providers: {}, hours: [] } };
+  store = replaceDeviceDays(store, 'mac-mini', daysB).store;
+  const summed = sumDaysMaps(store.devices.macbook.days, store.devices['mac-mini'].days);
+  assert.equal(summed['2026-10-30'].total.req, 10);
+});
+check('sanitizeDaysForSync 去掉 perf.s', () => {
+  const days = {
+    '2026-10-30': {
+      total: { req: 1, perf: { ttft: { n: 1, sum: 10, b: [1], s: [10] }, tpot: { n: 0, sum: 0, b: [] }, itl: { n: 0, sum: 0, b: [] }, e2e: { n: 0, sum: 0, b: [] }, dtok: 0, dms: 0, dn: 0 } },
+      providers: {},
+      hours: [],
+    },
+  };
+  const s = sanitizeDaysForSync(days);
+  assert.equal(s['2026-10-30'].total.perf.ttft.s, undefined);
+  assert.equal(s['2026-10-30'].total.perf.ttft.n, 1);
+});
+check('snapshot 可带 config/stats', () => {
+  const snap = buildSyncSnapshot({
+    todos: [],
+    now: 1,
+    config: { rev: 'abc', providers: [] },
+    stats: { rev: 1, days: {} },
+  });
+  assert.equal(snap.version, 2);
+  assert.equal(snap.config.rev, 'abc');
+  assert.equal(snap.stats.rev, 1);
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

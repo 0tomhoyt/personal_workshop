@@ -144,7 +144,7 @@ try {
 
     const snap = await fetch(`${SYNC}/sync/v1/snapshot`, { headers: syncHeaders() });
     const sj = await snap.json();
-    check('snapshot → 200 且带 version/todos/cursor', snap.status === 200 && sj.version === 1 && Array.isArray(sj.todos) && typeof sj.cursor === 'number', JSON.stringify(sj).slice(0, 120));
+    check('snapshot → 200 且带 version/todos/cursor/config/stats', snap.status === 200 && sj.version === 2 && Array.isArray(sj.todos) && typeof sj.cursor === 'number' && sj.config?.rev && sj.stats && typeof sj.stats.rev === 'number', JSON.stringify({v:sj.version,cfg:sj.config?.rev,st:sj.stats?.rev,td:sj.todos?.length}).slice(0, 160));
 
     const created = await fetch(`${SYNC}/sync/v1/todos`, {
       method: 'POST',
@@ -188,6 +188,32 @@ try {
       body: JSON.stringify({ title: 'stale', rev: 1_700_000_000_000 }),
     });
     check('PATCH 过期 rev → 409', stale.status === 409, `got ${stale.status}`);
+
+    const stPost = await fetch(`${SYNC}/sync/v1/stats`, {
+      method: 'POST',
+      headers: { ...syncHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        deviceId: 'macbook-test',
+        days: { '2026-10-30': { total: { req: 3, tin: 1, tout: 1, cost: 0 }, providers: { 'mock-oai': { models: { m: { req: 3, tin: 1, tout: 1, cost: 0 } } } }, hours: [] } },
+      }),
+    });
+    const stj = await stPost.json();
+    check('POST stats → 200 且含 device', stPost.status === 200 && stj.ok && stj.deviceId === 'macbook-test' && stj.stats?.days?.['2026-10-30']?.total?.req >= 3, JSON.stringify(stj).slice(0, 200));
+
+    const stPost2 = await fetch(`${SYNC}/sync/v1/stats`, {
+      method: 'POST',
+      headers: { ...syncHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        deviceId: 'macbook-test',
+        days: { '2026-10-30': { total: { req: 3, tin: 1, tout: 1, cost: 0 }, providers: { 'mock-oai': { models: { m: { req: 3, tin: 1, tout: 1, cost: 0 } } } }, hours: [] } },
+      }),
+    });
+    const stj2 = await stPost2.json();
+    check('POST stats 同切片再推 changed=false（不双计）', stPost2.status === 200 && stj2.changed === false, JSON.stringify(stj2).slice(0, 160));
+
+    const cfgGet = await fetch(`${SYNC}/sync/v1/config`, { headers: syncHeaders() });
+    const cgj = await cfgGet.json();
+    check('GET config → 200 且无 gateway.sync 键', cfgGet.status === 200 && cgj.rev && cgj.gateway && cgj.gateway.sync === undefined && Array.isArray(cgj.providers), JSON.stringify({ rev: cgj.rev, keys: Object.keys(cgj.gateway||{}) }).slice(0, 160));
   }
 
   console.log('— 默认关闭不监听 —');
