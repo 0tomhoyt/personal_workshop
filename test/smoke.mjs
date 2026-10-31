@@ -521,6 +521,9 @@ try {
       byId['mock-oai']?.quota?.state === 'none', JSON.stringify(byId['mock-oai']?.quota));
     check('每张卡都带花费数字（今日 + 近 30 天）',
       h.providers.every((p) => p.spend && typeof p.spend.days30 === 'number' && typeof p.spend.today === 'number'));
+    // cannwork 型不在这里端到端覆盖：它的上限来自真实 CANNWork 站点（JWT 鉴权），
+    // 造假就得连凭证链一起 mock，而路由与降级已在 test/home-unit.mjs 用 capsOf/usedOf
+    // 注入验证过（含「拿不到上限 → state:none」「接口挂了 → error」）。
     check('订阅卡片严格按 config.providers 出（共 6 个）', h.providers.length === 6, String(h.providers.length));
 
     const bad = await fetch(`${GW}/admin/home`, { method: 'POST' });

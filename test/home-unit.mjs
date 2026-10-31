@@ -15,7 +15,7 @@ async function checkAsync(name, fn) {
 }
 const group = (title) => console.log(`\n— ${title} —`);
 
-const { detectQuotaKind, parseKimiQuota, parseZhipuQuota } = await import('../lib/quota.mjs');
+const { detectQuotaKind, parseKimiQuota, parseZhipuQuota, queryQuota, _resetQuotaCache } = await import('../lib/quota.mjs');
 
 // Kimi 真实形状（2026-10-31 用线上凭证实测）：窗口类型在 limits[].window，
 // 数字是字符串，**没有**顶层 usage 字段。
@@ -152,7 +152,6 @@ check('脏 baseUrl 不抛错', () => {
 });
 
 group('额度查询与降级');
-const { queryQuota } = await import('../lib/quota.mjs');
 const okFetch = (body) => async () => ({ ok: true, status: 200, json: async () => body });
 const failFetch = (status) => async () => ({ ok: false, status, json: async () => ({}) });
 
@@ -262,7 +261,8 @@ await checkAsync('失败且超过 15 分钟 → error，环清空', async () => 
 });
 
 group('花费聚合');
-const { providerSpend } = await import('../lib/stats.mjs');
+const { providerSpend, providerTokens } = await import('../lib/stats.mjs');
+const { capTiers } = await import('../lib/quota.mjs');
 const { validateRawConfig } = await import('../lib/config.mjs');
 
 check('providerSpend 从快照已合并视图求和（今日 + 近 30 天）', () => {
@@ -293,6 +293,156 @@ check('今日必是近 30 天的一部分（同源，不能一个走本机一个
 check('providerSpend 保留两位小数（分）', () => {
   const snap = { models: [], days: [{ date: '2026-10-31', models: { 'p:a': { cost: 0.1 }, 'p:b': { cost: 0.2 } } }] };
   assert.equal(providerSpend('p', snap, '2026-10-31').today, 0.3);
+});
+
+group('本机记账额度（cap）：没有查询接口的家数用自己统计的已用量画环');
+// CANNWork 只在上限接口里给 dailyQuota/monthlyQuota（2026-10-31 实测
+// /cannbot/api/ai-keys/vk/my 返回 dailyQuota=1e8、monthlyQuota=2e9），**没有已用值**，
+// 站点也没有用量接口（7 个候选路径全 403）。所以已用只能取网关自己的记账。
+
+check('cap 口径＝全量输入 + 输出（缓存读已含在 tin 里，不再扣）', () => {
+  // cannbot 是 openai 协议，tin = prompt_tokens，**本身就包含缓存读**（cread 是另记的
+  // 拆项，不是 tin 之外的增量）。所以直接 tin + tout 即可，再扣 cread 就少算了。
+  const snap = { models: [], days: [
+    { date: '2026-10-30', models: { 'cannbot:m': { tin: 100, tout: 10, cread: 80 } } },
+    { date: '2026-10-31', models: { 'cannbot:m': { tin: 50, tout: 5, cread: 40 } } },
+  ] };
+  // 10-30：100+10 = 110；10-31：50+5 = 55
+  assert.deepEqual(providerTokens('cannbot', snap, '2026-10-31'), { today: 55, month: 165 });
+});
+
+check('cap：cread 是拆项不是增量，记不记都不影响结果', () => {
+  const withC = { models: [], days: [{ date: '2026-10-31', models: { 'p:a': { tin: 10, tout: 1, cread: 9 } } }] };
+  const noC = { models: [], days: [{ date: '2026-10-31', models: { 'p:a': { tin: 10, tout: 1 } } }] };
+  assert.deepEqual(providerTokens('p', withC, '2026-10-31'), providerTokens('p', noC, '2026-10-31'));
+  assert.deepEqual(providerTokens('p', noC, '2026-10-31'), { today: 11, month: 11 });
+});
+
+check('cap：month 是自然月，不是滚动 30 天（跨月的旧日期不计）', () => {
+  // 月度上限是「本月用了多少」，把上个月的用量算进来会让月初的环凭空少一截。
+  const snap = { models: [], days: [
+    { date: '2026-09-29', models: { 'p:a': { tin: 500, tout: 0 } } },
+    { date: '2026-10-01', models: { 'p:a': { tin: 100, tout: 0 } } },
+    { date: '2026-10-31', models: { 'p:a': { tin: 25, tout: 5 } } },
+    // 未来日期（sync 时钟偏差）同样不能进本月
+    { date: '2026-11-02', models: { 'p:a': { tin: 999, tout: 0 } } },
+  ] };
+  assert.deepEqual(providerTokens('p', snap, '2026-10-31'), { today: 30, month: 130 });
+});
+
+check('cap：cread 缺失/负数不留残余', () => {
+  const snap = { models: [], days: [{ date: '2026-10-31', models: { 'p:a': { tin: 10, tout: 1 } } }] };
+  assert.deepEqual(providerTokens('p', snap, '2026-10-31'), { today: 11, month: 11 });
+});
+
+check('cap：区分 provider（前缀不能误伤）', () => {
+  // 'cann' 不是 'cannbot' 的前缀匹配对象——必须按 pid 精确比对
+  const snap = { models: [], days: [
+    { date: '2026-10-31', models: { 'cann:x': { tin: 1, tout: 0 }, 'cannbot:y': { tin: 2, tout: 0 } } },
+  ] };
+  assert.equal(providerTokens('cann', snap, '2026-10-31').today, 1);
+  assert.equal(providerTokens('cannbot', snap, '2026-10-31').today, 2);
+});
+
+check('cap：没有上限就不编上限（quotas 为空 → 不上环）', () => {
+  assert.equal(capTiers(null, { today: 10, month: 20 }), null);
+  assert.equal(capTiers({}, { today: 10, month: 20 }), null);
+});
+
+check('cap：日/月分别出环，正常用量下按剩余百分比', () => {
+  const t = capTiers({ dailyQuota: 100, monthlyQuota: 1000 }, { today: 40, month: 250 });
+  assert.deepEqual(t.map((x) => [x.name, x.remainingPct]), [['daily', 60], ['monthly', 75]]);
+});
+
+check('cap：已用超上限 → over 标记 + usedPct 保留真实倍数（上限能超）', () => {
+  // 这个限额是软上限，超了是正常事。remainingPct 钳在 0（不能是负数），
+  // 但 usedPct 不钳——否则「超了多少」这个信息就丢了。
+  const t = capTiers({ dailyQuota: 100, monthlyQuota: 1000 }, { today: 250, month: 2500 });
+  assert.deepEqual(t.map((x) => [x.name, x.remainingPct, x.over, x.usedPct]),
+    [['daily', 0, true, 250], ['monthly', 0, true, 250]]);
+});
+
+check('cap：未超时 over=false，usedPct 与 remainingPct 互补', () => {
+  const t = capTiers({ dailyQuota: 100 }, { today: 2500 && 30, month: 0 });
+  assert.equal(t[0].over, false);
+  assert.equal(t[0].usedPct, 30);
+  assert.equal(t[0].remainingPct, 70);
+});
+
+check('cap：恰好用满（used == limit）算 over', () => {
+  const t = capTiers({ dailyQuota: 100 }, { today: 100, month: 0 });
+  assert.equal(t[0].over, true);
+  assert.equal(t[0].usedPct, 100);
+});
+
+check('cap：只给了月上限就只出月环', () => {
+  const t = capTiers({ monthlyQuota: 1000 }, { today: 10, month: 250 });
+  assert.deepEqual(t.map((x) => [x.name, x.remainingPct]), [['monthly', 75]]);
+});
+
+check('cap：上限非数字/<=0 视为没配（避免除零与假环）', () => {
+  assert.equal(capTiers({ dailyQuota: 0, monthlyQuota: 'x' }, { today: 1, month: 1 }), null);
+});
+
+group('CANNWork：上限来自 VK 接口，已用来自本机记账');
+// cannbot 的额度与 Kimi/智谱不同源：上限在 /cannbot/api/ai-keys/vk/my（JWT 鉴权，
+// 不是 x-api-vkey），已用站点不给，只能用网关自己的账本。
+
+check('认家数：cannwork-jwt-vk 的 provider 是 cap 型', () => {
+  assert.equal(detectQuotaKind({ id: 'c', baseUrl: 'https://cannbot.hicann.cn/gateway/compatible-mode',
+    auth: { type: 'cannwork-jwt-vk' } }), 'cannwork');
+});
+check('认家数：显式 quota.kind=none 仍然压过 auth.type（用户想关就能关）', () => {
+  assert.equal(detectQuotaKind({ id: 'c', baseUrl: 'https://x.dev',
+    auth: { type: 'cannwork-jwt-vk' }, quota: { kind: 'none' } }), null);
+});
+
+await checkAsync('cap 型：查上限成功 → ok，tiers 是日/月两环', async () => {
+  _resetQuotaCache();
+  const p = { id: 'cannbot', baseUrl: 'https://cannbot.hicann.cn/gateway/compatible-mode',
+    auth: { type: 'cannwork-jwt-vk' } };
+  const q = await queryQuota(p, {
+    now: () => 0,
+    capsOf: async () => ({ dailyQuota: 100, monthlyQuota: 1000 }),
+    usedOf: () => ({ today: 40, month: 250 }),
+  });
+  assert.equal(q.state, 'ok');
+  assert.deepEqual(q.tiers.map((t) => [t.name, t.remainingPct]), [['daily', 60], ['monthly', 75]]);
+});
+
+await checkAsync('cap 型：没有上限 → state:none（不编一个环出来）', async () => {
+  _resetQuotaCache();
+  const p = { id: 'cannbot', baseUrl: 'https://cannbot.hicann.cn/gateway/compatible-mode',
+    auth: { type: 'cannwork-jwt-vk' } };
+  const q = await queryQuota(p, { now: () => 0, capsOf: async () => null, usedOf: () => ({ today: 1, month: 2 }) });
+  assert.equal(q.state, 'none');
+  assert.deepEqual(q.tiers, []);
+});
+
+await checkAsync('cap 型：上限接口挂了 → error（不拿已用猜上限）', async () => {
+  _resetQuotaCache();
+  const p = { id: 'cannbot', baseUrl: 'https://cannbot.hicann.cn/gateway/compatible-mode',
+    auth: { type: 'cannwork-jwt-vk' } };
+  const q = await queryQuota(p, {
+    now: () => 0,
+    capsOf: async () => { throw new Error('JWT 过期'); },
+    usedOf: () => ({ today: 1, month: 2 }),
+  });
+  assert.equal(q.state, 'error');
+  assert.match(q.error, /JWT/);
+});
+
+await checkAsync('cap 型：已用越多剩余越少（方向不能反）', async () => {
+  _resetQuotaCache();
+  const mk = async (used) => {
+    _resetQuotaCache();
+    const p = { id: 'cannbot', baseUrl: 'https://cannbot.hicann.cn/x', auth: { type: 'cannwork-jwt-vk' } };
+    return queryQuota(p, { now: () => 0, capsOf: async () => ({ dailyQuota: 100 }), usedOf: () => used });
+  };
+  const light = await mk({ today: 10, month: 0 });
+  const heavy = await mk({ today: 90, month: 0 });
+  assert.ok(light.tiers[0].remainingPct > heavy.tiers[0].remainingPct,
+    `用了 10 的环（${light.tiers[0].remainingPct}%）应高于用了 90 的（${heavy.tiers[0].remainingPct}%）`);
 });
 
 group('配置：quota 白名单');

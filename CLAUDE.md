@@ -47,11 +47,19 @@ lib/tv-server.mjs     电视 LAN 监听（gateway.tv，默认关闭；同进程�
                       白名单 GET /tv/v1/snapshot|health，其余 404；Host 反 rebinding → 来源
                       allowedCidrs → 白名单 → X-Aerial-Token（timingSafeEqual）→ 30 次/分钟/token
                       （日志只记 token 名/前缀 + IP + 状态码）
-lib/quota.mjs          编码套餐额度查询（Kimi / 智谱）：按 baseUrl 的 **host** 认家数（不按路径），
-                      额度 URL = 该 provider 的 origin + 该家固定路径（两家都与对话接口同源），
+lib/quota.mjs          编码套餐额度查询（Kimi / 智谱 / CANNWork 三种）：
+                      Kimi、智谱按 baseUrl 的 **host** 认家数（不按路径），额度 URL = 该
+                      provider 的 origin + 该家固定路径（两家都与对话接口同源），
                       60 秒缓存 + 并发去重；失败**不清空**上次值（15 分钟内 stale、之后 error）。
                       **智谱 percentage 是「已用」**，对外契约是 remainingPct，适配器做 100-x。
-                      Kimi 的窗口类型在 limits[].window（不是数组位置，也没有顶层 usage）
+                      Kimi 的窗口类型在 limits[].window（不是数组位置，也没有顶层 usage）。
+                      **CANNWork 是「cap 型」**（按 auth.type=cannwork-jwt-vk 认，不是 host）：
+                      站点只给上限不给已用（/cannbot/api/ai-keys/vk/my 的 dailyQuota/monthlyQuota），
+                      且没有用量接口（2026-10-31 实测 7 个候选路径全 403），所以已用取网关
+                      自己的账本 providerTokens()。口径＝**tin + tout**（缓存读已含在 tin 里，
+                      不另扣）。**这个限额是软上限、会超出**：已用超上限时 remainingPct 钳在 0、
+                      usedPct 保留真实倍数、`over: true`，前端把弧画满并写「已超」——
+                      空环配 `0%` 会读成「没额度了」，而「用超了还能继续用」是另一回事
 lib/home.mjs           首屏数据组装（纯函数可注入）：待办裁剪（进行中全收 / 待办前 8 / 今天完成
                      前 3，超出给 hidden 数）+ 每订阅花费与额度。标题数「所有未完成」，
                       措辞不用「今天」——积压几天的也在里面。额度失败降级不拖垮整页
@@ -87,7 +95,9 @@ lib/translate/openai2anth.mjs   OpenAI→Anthropic：请求翻译（智谱 web_s
                       还原为总输入并带 prompt_tokens_details.cached_tokens）
 lib/translate/searchtool.mjs    搜索工具跨方言映射：searchDialect（按 baseUrl 推断 zhipu/kimi/null）、
                       zhipuSearchTool / kimiSearchTool / zhipuResultBlocks / formatSearchAsText
-lib/stats.mjs         流量/性能/费用统计（v2：days[].providers[pid].models[model] 分桶，含 cost 字段；v1 自动迁移）
+lib/stats.mjs         流量/性能/费用统计（v2：days[].providers[pid].models[model] 分桶，含 cost 字段；v1 自动迁移）。
+                      providerSpend（等效费用，今日 + 近 30 天）与 providerTokens（token 用量，
+                      今日 + **自然月**）都必须走 statsSnapshot()，与「统计」页同一份数
 lib/pricing.mjs       模型单价表与费用折算（内置 OpenRouter 量级参考价；providers.json pricing 节可按
                       模型名或 pid/模型名 覆盖；费用=按牌价折算的等效成本，记账时点单价入账）
 lib/monitors.mjs      显示器输入源切换（m1ddc/DDC-CI over USB-C，串行队列 + 5s 状态缓存；

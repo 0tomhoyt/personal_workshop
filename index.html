@@ -280,6 +280,8 @@
   .hring svg { display: block; }
   .hpct { font: 600 13px var(--mono); fill: var(--ink); }
   .hring.low .hpct { fill: var(--red); }
+  /* 超额时文字是「已超」两个字，13px 的等宽数字排不下，缩一档 */
+  .hring .hpct.xh { font-size: 11px; }
   .hcap { font: 10px var(--mono); color: var(--faint); margin-top: 5px; letter-spacing: .04em; white-space: nowrap; }
   .hstale { font: 10px var(--mono); color: var(--faint); margin-top: 6px; text-align: right; }
   .hqerr { font: 10.5px var(--mono); color: var(--faint); margin-left: auto; text-align: right;
@@ -880,21 +882,33 @@ function scheduleHomePoll() {
 
 const HOME_URG = { urgent: '紧急', normal: '', someday: '不急' };
 
+// 环下面的标签。daily/monthly 是 CANNWork 那种「本机记账折算」的档位
+// （站点只给上限、不给已用，见 lib/quota.mjs 的 capTiers）。
+const HOME_TIER_NAME = { five_hour: '5 小时', weekly_limit: '周', daily: '今日', monthly: '本月' };
+
 function homeRing(tier) {
   const pct = Math.max(0, Math.min(100, Number(tier.remainingPct) || 0));
-  // 剩余越少越该被看见：>=50 绿、>=20 琥珀、其余红
-  const color = pct >= 50 ? 'var(--green)' : pct >= 20 ? 'var(--amber)' : 'var(--red)';
+  // 超额（只用在本机记账的 cap 档）：环画满 + 红色，文字改说「已超」。
+  // 不能还写 remainingPct —— 那是 0%，一个空环读起来是「没额度了」，
+  // 而「用超了、还能继续用」是完全不同的事。真实倍数放 title。
+  const over = tier.over === true;
+  const color = over ? 'var(--red)'
+    : pct >= 50 ? 'var(--green)' : pct >= 20 ? 'var(--amber)' : 'var(--red)';
   const r = 20;
   const c = 2 * Math.PI * r;
-  const dash = c * (1 - pct / 100);
-  return `<div class="hring${pct < 20 ? ' low' : ''}">
+  const dash = over ? 0 : c * (1 - pct / 100);
+  const text = over ? '已超' : `${pct}%`;
+  const tip = over && tier.usedPct != null
+    ? `${HOME_TIER_NAME[tier.name] || tier.name}已用 ${tier.usedPct}%（${fmtTok(tier.used)} / ${fmtTok(tier.limit)}）`
+    : '';
+  return `<div class="hring${over || pct < 20 ? ' low' : ''}"${tip ? ` title="${esc(tip)}"` : ''}>
     <svg width="50" height="50" viewBox="0 0 50 50" aria-hidden="true">
       <circle cx="25" cy="25" r="${r}" fill="none" stroke="var(--line)" stroke-width="4"/>
       <circle cx="25" cy="25" r="${r}" fill="none" stroke="${color}" stroke-width="4" stroke-linecap="round"
               stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${dash.toFixed(1)}" transform="rotate(-90 25 25)"/>
-      <text x="25" y="29" text-anchor="middle" class="hpct">${pct}%</text>
+      <text x="25" y="29" text-anchor="middle" class="hpct${over ? ' xh' : ''}">${esc(text)}</text>
     </svg>
-    <div class="hcap">${tier.name === 'five_hour' ? '5 小时' : tier.name === 'weekly_limit' ? '周' : esc(tier.name)}</div>
+    <div class="hcap">${HOME_TIER_NAME[tier.name] || esc(tier.name)}</div>
   </div>`;
 }
 

@@ -88,7 +88,8 @@
 | host 是 `api.kimi.com` / `api.kimi.ai` | Kimi | `https://api.kimi.com/coding/v1/usages` |
 | host 含 `bigmodel.cn` | 智谱（国内） | `https://open.bigmodel.cn/api/monitor/usage/quota/limit` |
 | host 是 `api.z.ai` | 智谱（国际） | `https://api.z.ai/api/monitor/usage/quota/limit` |
-| `provider.quota.kind` 显式指定 | `kimi` / `zhipu` / `none` | 覆盖自动识别 |
+| `provider.quota.kind` 显式指定 | `kimi` / `zhipu` / `cannwork` / `none` | 覆盖自动识别 |
+| `auth.type` 是 `cannwork-jwt-vk` | CANNWork（cap 型） | 上限 `https://cannbot.hicann.cn/cannbot/api/ai-keys/vk/my` |
 | 其余 | 不查额度 | 卡片只显示花费 |
 
 **额度地址不拼 baseUrl**，理由（已实测）：
@@ -118,6 +119,31 @@
 > ⚠️ **`percentage` 是「已用百分比」，不是剩余。** 契约字段是 `remainingPct`，适配器必须
 > 做 `100 - percentage`。弄反的话环会在额度耗尽时显示满格——这是最难被发现的错，必须单测。
 
+#### CANNWork：cap 型（上限来自站点，已用来自本机账本）
+
+CANNWork 与前两家形态不同：它的 `dailyQuota` / `monthlyQuota` 是**账号级上限**（2026-10-31
+实测：`dailyQuota=100000000`、`monthlyQuota=2000000000`），**站点不提供已用量**，也没有任何
+用量接口（试过 `/ai-keys/vk/usage`、`/ai-keys/usage`、`/usage`、`/quota` 等 7 个候选路径，全 403）。
+
+所以已用只能取网关自己的账本 `stats.mjs: providerTokens(pid)`。这有一个必须写明的后果：
+**只统计经过本网关的流量**，CANNWork 扩展里直接对话的那部分不在内。卡片上的金额本来就是
+这个口径（等效花费也只算网关流量），两者一致，不会出现「花了 $0 但额度用掉一半」的假矛盾。
+
+口径＝**tin + tout**，即全量输入 + 输出：
+
+- cannbot 走 openai 协议，`tin = prompt_tokens` **本身就包含缓存命中部分**，`cread` 是为
+  单独计价拆出来的项，不是 tin 之外的增量。所以不扣 cread——扣了就是少算。
+- 日环用今天的量，月环用**自然月**的量（不是滚动 30 天——月度上限问的是「本月用了多少」）。
+
+**这个限额是软上限，会超出。** 实测本机日均在 250% 上下。超额时：
+
+- `remainingPct` 钳在 0（剩余不能是负数），`usedPct` **不钳**（真实倍数得留着）
+- 附 `over: true` 标记，前端把弧**画满**、文字写「**已超**」，`title` 给 `已用 / 上限`
+- 不能只留空环 + `0%`：那读起来是「没额度了」，而「用超了、还能继续用」是另一回事
+
+档位名是 `daily` / `monthly`，与 Kimi/智谱的 `five_hour` / `weekly_limit` 共用同一套环渲染。
+上限接口读不到（CANNWork 扩展没登录）时降级成 `error`，**不拿已用量猜分母**。
+
 **凭证**：复用 `lib/auth/static.mjs` 的 token 解析（需导出 `resolveToken`）。假设 Kimi 的
 额度接口与对话接口用**同一枚订阅 key**（cc-switch 的 OAuth 与 API key 两条路都这么用）；
 若实际不通，卡上会显示查询失败，不影响花费数字。
@@ -136,6 +162,9 @@
 
 Kimi `/usages` 只给 `usage`（周）与 `limits`（5 小时）；智谱 `limits[]` 只有 `unit:3`/`unit:6`。
 两家都不提供月档，cc-switch 也未实现。**按用户决定：查不了就不显示，不伪造。**
+
+CANNWork 的月档是另一种情况：站点给了 `monthlyQuota` 上限，只是没给已用。它走 cap 型
+（见 §4.2），已用由本机记账折算，所以 cannbot 卡片上会同时出现「今日」「本月」两个环。
 
 ## 六、金额口径（关键）
 
