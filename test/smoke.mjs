@@ -2067,9 +2067,22 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       /\.railm \.lb \{[^}]*white-space:\s*nowrap[^}]*text-overflow:\s*ellipsis/.test(themeCssText)
       && /data-mdisp[\s\S]{0,240}title=/.test(idxHtml));
     // 两台屏一个按钮：点一下轮换到它的下一个输入源（不再按输入源列出整机同切）
-    check('左栏一台屏一个按钮（按 monitors 渲染，带 data-mdisp/data-mnext）',
-      /railMons\.innerHTML = all\.map\(\(m\)/.test(idxHtml)
+    // 渲染源是 readable 而非 all：左栏只画读得出的屏（拔掉的屏那几行切不动也点不出东西）
+    check('左栏一台屏一个按钮（按可读屏渲染，带 data-mdisp/data-mnext）',
+      /railMons\.innerHTML = readable\.map\(\(m\)/.test(idxHtml)
       && idxHtml.includes('data-mdisp=') && idxHtml.includes('data-mnext='));
+    // 连续两次读失败才从侧栏隐藏：一次抖动就让按钮消失又会冒回来，比常驻更烦
+    check('左栏连续两次读失败才隐藏（阈值常量 + 计数清零）',
+      /const MON_RAIL_HIDE_AFTER = 2;/.test(idxHtml)
+      && /if \(m\.ok\) monRailFails\.delete\(m\.uuid\);\s*\n\s*else monRailFails\.set\(m\.uuid, \(monRailFails\.get\(m\.uuid\) \|\| 0\) \+ 1\);/.test(idxHtml)
+      && /const readable = all\.filter\(\(m\) => \(monRailFails\.get\(m\.uuid\) \|\| 0\) < MON_RAIL_HIDE_AFTER\);/.test(idxHtml));
+    // 计数按服务端快照去重：同一次数据被重绘两遍不该算两次失败
+    check('左栏失败计数按服务端 at 去重（重绘不重复计数）',
+      /if \(d\.at !== monRailSeenAt\) \{\s*\n\s*monRailSeenAt = d\.at;/.test(idxHtml));
+    // 「全部 → x」的分母只算可读屏，否则有屏读不到时高亮永远亮不起来
+    check('左栏全切选中态只按可读屏计（读失败的屏不进分母）',
+      /const n = readable\.filter\(\(m\) => m\.input === i\.value\)\.length;/.test(idxHtml)
+      && /const atAll = n && n === readable\.length;/.test(idxHtml));
     // 一键全切与按屏轮换是互补的两件事：前者显式指定目标（各屏当前源可能不一致，
     // 「下一个」对它们不是同一个值），后者管单台。两者必须同时在左栏，各自渲染到自己的容器。
     check('左栏一键全切按钮（每个输入源一个，data-mminput 渲染进 #railAll）',
