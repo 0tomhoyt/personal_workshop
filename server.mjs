@@ -37,6 +37,7 @@ import { listTodos, createTodo, updateTodo, deleteTodo, createTodoItem, updateTo
 import { startReportJob, getReportJob, listReports, getReport, deleteReport } from './lib/report/generate.mjs';
 import { httpError, sendJson, extractModel } from './lib/util.mjs';
 import { startTvServer } from './lib/tv-server.mjs';
+import { startSyncServer } from './lib/sync-server.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOST = '127.0.0.1';
@@ -461,16 +462,20 @@ server.listen(PORT, HOST, () => {
     + (config.gateway?.clientToken ? '；客户端鉴权已启用' : '；未配置客户端鉴权'));
   // 电视工作台：同进程第二监听（gateway.tv，默认关闭）。主监听上面的 HOST/PORT 不动。
   tvReady = startTvServer();
+  // Mac↔Mac 同步：同进程另一监听（gateway.sync，默认关闭）。不挂 /admin、/v1。
+  syncReady = startSyncServer();
 });
 
-/** 电视监听（未启用时为 null）：退出时一起关。 */
+/** 电视 / 同步监听（未启用时为 null）：退出时一起关。 */
 let tvReady = null;
+let syncReady = null;
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, () => {
     log(`收到 ${sig}，退出`);
     flushStats();
     Promise.resolve(tvReady).then((tv) => { try { tv?.server.close(); } catch {} });
+    Promise.resolve(syncReady).then((s) => { try { s?.server.close(); } catch {} });
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000).unref();
   });

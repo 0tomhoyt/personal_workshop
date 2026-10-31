@@ -9,9 +9,31 @@
       "port": 8490,
       "bind": "0.0.0.0",
       "tokens": [],
-      "allowedCidrs": ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "127.0.0.1/32", "::1/128"],
+      "allowedCidrs": [
+        "192.168.0.0/16",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "127.0.0.1/32",
+        "::1/128"
+      ],
       "cacheSeconds": 5,
       "maxPerMinute": 30
+    },
+    "sync": {
+      "_说明": "可选：Mac↔Mac 同步监听（默认关闭）。枢纽机（建议 Mac mini）启用；客户机用同一 token 拉 /sync/v1/*。enabled 不为 true 或 tokens 为空就不监听；改 enabled/port/bind 需重启。token 每台客户机一枚，与 clientToken / TV token 互不复用，绝不写进仓库——这里留空，到运行时 providers.json 填。默认 allowedCidrs 含私网、回环与 Tailscale CGNAT (100.64.0.0/10)。",
+      "enabled": false,
+      "port": 8491,
+      "bind": "0.0.0.0",
+      "tokens": [],
+      "allowedCidrs": [
+        "192.168.0.0/16",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "100.64.0.0/10",
+        "127.0.0.1/32",
+        "::1/128"
+      ],
+      "maxPerMinute": 120
     }
   },
   "providers": [
@@ -20,8 +42,14 @@
       "name": "CANNWork",
       "baseUrl": "https://cannbot.hicann.cn/gateway/compatible-mode",
       "protocol": "openai",
-      "auth": { "type": "cannwork-jwt-vk" },
-      "models": { "source": "api", "list": [], "exclude": [] },
+      "auth": {
+        "type": "cannwork-jwt-vk"
+      },
+      "models": {
+        "source": "api",
+        "list": [],
+        "exclude": []
+      },
       "streamUsage": true
     },
     {
@@ -29,8 +57,19 @@
       "name": "Kimi For Coding",
       "baseUrl": "https://api.kimi.com/anthropic",
       "protocol": "anthropic",
-      "auth": { "type": "static-token", "tokenEnv": "KIMI_API_KEY" },
-      "models": { "source": "static", "list": [{ "id": "kimi-k2-thinking", "title": "Kimi K2 Thinking" }] },
+      "auth": {
+        "type": "static-token",
+        "tokenEnv": "KIMI_API_KEY"
+      },
+      "models": {
+        "source": "static",
+        "list": [
+          {
+            "id": "kimi-k2-thinking",
+            "title": "Kimi K2 Thinking"
+          }
+        ]
+      },
       "enabled": false
     },
     {
@@ -38,8 +77,18 @@
       "name": "GLM Coding Plan",
       "baseUrl": "https://api.z.ai/api/anthropic",
       "protocol": "anthropic",
-      "auth": { "type": "static-token", "tokenEnv": "ZAI_API_KEY" },
-      "models": { "source": "static", "list": [{ "id": "glm-4.7" }] },
+      "auth": {
+        "type": "static-token",
+        "tokenEnv": "ZAI_API_KEY"
+      },
+      "models": {
+        "source": "static",
+        "list": [
+          {
+            "id": "glm-4.7"
+          }
+        ]
+      },
       "enabled": false
     }
   ],
@@ -50,17 +99,32 @@
   "monitors": {
     "_说明": "可选：显示器输入源切换（m1ddc/DDC over USB-C）。网关只认硬件事实——屏的 System UUID 与输入的 VCP60 值；name 是你自己起的名字，留空则界面显示编号（屏=UUID 前 8 位、输入=「输入 15」）。改完热生效，不用重启。",
     "inputs": [
-      { "value": 15, "name": "" },
-      { "value": 21, "name": "" }
+      {
+        "value": 15,
+        "name": ""
+      },
+      {
+        "value": 21,
+        "name": ""
+      }
     ],
     "list": [
-      { "uuid": "A016429F-BCEC-4FAF-BD7D-23128391F7F1", "name": "" },
-      { "uuid": "F2F948D6-2F40-4DEC-8EF8-2E158BFF4328", "name": "" }
+      {
+        "uuid": "A016429F-BCEC-4FAF-BD7D-23128391F7F1",
+        "name": ""
+      },
+      {
+        "uuid": "F2F948D6-2F40-4DEC-8EF8-2E158BFF4328",
+        "name": ""
+      }
     ]
   },
   "pricing": {
     "_说明": "可选：模型单价覆盖，美元 / 1M tokens。键为模型名或 pid/模型名（后者优先）；未列出的模型用内置参考价（lib/pricing.mjs，参考 OpenRouter 公开牌价量级）。费用为按牌价折算的等效成本，订阅制上游不代表真实扣费。",
-    "glm-5.3": { "input": 1.2, "output": 4.5 }
+    "glm-5.3": {
+      "input": 1.2,
+      "output": 4.5
+    }
   },
   "workbench": {
     "_说明": "可选：工作台「时间段工作总结」生成报告用的模型。reportProvider 填 providers 里的 id，reportModel 填该订阅的模型名；都不配则自动用默认上游的第一个可用模型。改完热生效。",
@@ -88,6 +152,9 @@
     "monitors.list": "显示器列表，uuid 为屏的 System UUID（m1ddc display list 可见），name 可空；标识由 UUID 前 8 位推导，与枚举顺序无关",
     "pricing": "可选：模型单价覆盖（美元/1M tokens），键为模型名或 pid/模型名，如 { \"glm-5.3\": { \"input\": 1.2, \"output\": 4.5 } }；供费用统计折算，未列出用内置参考价",
     "workbench.reportProvider": "工作台生成报告用的订阅 id（providers 里的 id）；不配则用默认上游",
-    "workbench.reportModel": "工作台生成报告用的模型名；不配则取该订阅目录第一个可用模型"
+    "workbench.reportModel": "工作台生成报告用的模型名；不配则取该订阅目录第一个可用模型",
+    "gateway.sync": "Mac↔Mac 同步监听：只认 /sync/v1/health、/sync/v1/snapshot 与待办 CRUD；来源须命中 allowedCidrs（默认私网+回环+Tailscale），Host 须为 IP 或 .local；Authorization: Bearer 或 X-Workshop-Token（timingSafeEqual）。其余路径（含 /admin/*、/v1/*）一律 404。默认关闭。",
+    "gateway.sync.tokens[]": "每台客户机一枚独立 token：{ \"name\": \"macbook\", \"token\": \"<随机长串>\" }。吊销 = 从数组删掉。",
+    "gateway.sync.allowedCidrs": "来源白名单；默认含 Tailscale CGNAT。填了就完全按这里匹配。"
   }
 }
