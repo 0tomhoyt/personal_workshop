@@ -96,7 +96,9 @@ if [ -z "$VK" ]; then
   fi
 fi
 if [ -z "$VK" ] && [ -n "$LEGACY_RESP" ]; then
-  VK=$(echo "$LEGACY_RESP" | jq -r '[.data.personalModels[], .data.builtinModels[]][] | select(.apiKey) | .apiKey' | head -1)
+  # first() 而不是 | head -1：`jq ... | head -1` 在 jq 还没写完输出时 head 就关管道，
+  # jq 收到 SIGPIPE 会以非零退出——在 set -o pipefail 下整条命令失败，脚本直接 die。
+  VK=$(echo "$LEGACY_RESP" | jq -r 'first([.data.personalModels[], .data.builtinModels[]][] | select(.apiKey) | .apiKey // empty) // empty')
   VK_SRC="legacy apiKey"
 fi
 [ -n "$VK" ] || die "没有取到 VK（auth.json / ai-keys 接口 / 遗留接口均未取到）"

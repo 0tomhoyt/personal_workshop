@@ -33,6 +33,18 @@ HOTKEY_BIN="$RUNTIME_DIR/monitor-hotkeys"
 msg()  { printf '[install] %s\n' "$*"; }
 die()  { printf '[install] 错误: %s\n' "$*" >&2; exit 1; }
 
+# 0) 端口参数校验（放在 die 定义之后，否则报错路径自己就崩了）
+#    只接受 1-65535 的整数：`./install.sh 80a` 这种会让后面 plist 与 port 文件都带上
+#    非法值，直到 launchd 启动失败才发现。
+case "$PORT" in
+  ''|*[!0-9]*) die "端口必须是 1-65535 的整数，收到: $PORT" ;;
+esac
+if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  die "端口必须是 1-65535 的整数，收到: $PORT"
+fi
+# LaunchAgents 目录不一定存在（新机器/精简系统），写 plist 前先建
+mkdir -p "$LAUNCH_DIR"
+
 # 1) 找 node（≥18，需要内置 fetch）
 NODE_BIN="$(command -v node || true)"
 [ -z "$NODE_BIN" ] && [ -x "$HOME/.hermes/node/bin/node" ] && NODE_BIN="$HOME/.hermes/node/bin/node"
