@@ -223,11 +223,17 @@ check('TV token 不得与 clientToken 相同', () => {
 });
 
 group('Host 反 rebinding');
-check('IP 字面量 / .local / localhost 放行', () => {
+check('IP 字面量 / .local / localhost / Tailscale MagicDNS 放行', () => {
   assert.equal(hostAllowed('192.168.1.9:8490'), true);
   assert.equal(hostAllowed('[::1]:8490'), true);
   assert.equal(hostAllowed('mac-mini.local:8490'), true);
   assert.equal(hostAllowed('localhost:8490'), true);
+  assert.equal(hostAllowed('tomhoytmac-mini.tail76ab40.ts.net:8491'), true);
+  assert.equal(hostAllowed('Foo.TS.NET'), true);
+});
+check('假冒 ts.net 后缀域名拒绝', () => {
+  assert.equal(hostAllowed('evil.ts.net.example.com'), false);
+  assert.equal(hostAllowed('ts.net.evil.com'), false);
 });
 check('nip.io 风格的解析回环域名也拒绝（只看 Host 字面量）', () => {
   assert.equal(hostAllowed('1.2.3.4.nip.io'), false);

@@ -1,8 +1,10 @@
 // gateway.sync 纯函数单测：normalizeSync / buildSyncSnapshot / matchSyncToken
 // 运行: node test/sync-unit.mjs
 import assert from 'node:assert/strict';
-import { normalizeSync, SYNC_DEFAULT_CIDRS, normalizeTv } from '../lib/config.mjs';
+import { normalizeSync, normalizeSyncClient, SYNC_DEFAULT_CIDRS, normalizeTv } from '../lib/config.mjs';
 import { buildSyncSnapshot, toSyncTodo } from '../lib/sync-snapshot.mjs';
+import { planRemoteMerges } from '../lib/sync-client.mjs';
+import { remoteTodoWins } from '../lib/todos.mjs';
 import { matchSyncToken } from '../lib/sync-server.mjs';
 import { safeEqual } from '../lib/gwauth.mjs';
 
@@ -84,6 +86,51 @@ check('safeEqual 口径', () => {
 // TV 默认仍独立（回归）
 check('normalizeTv 默认不含 Tailscale CGNAT（sync 才有）', () => {
   assert.equal(normalizeTv(undefined).allowedCidrs.includes('100.64.0.0/10'), false);
+});
+
+group('normalizeSyncClient');
+check('默认关闭 + 空 url/token + 15s', () => {
+  const c = normalizeSyncClient(undefined);
+  assert.equal(c.enabled, false);
+  assert.equal(c.url, '');
+  assert.equal(c.token, '');
+  assert.equal(c.intervalSec, 15);
+});
+check('enabled 只认严格 true；剥尾斜杠；interval 边界', () => {
+  assert.equal(normalizeSyncClient({ enabled: 'true' }).enabled, false);
+  const c = normalizeSyncClient({
+    enabled: true,
+    url: 'http://100.1.2.3:8491/',
+    token: ' tok ',
+    intervalSec: 3,
+  });
+  assert.equal(c.enabled, true);
+  assert.equal(c.url, 'http://100.1.2.3:8491');
+  assert.equal(c.token, 'tok');
+  assert.equal(c.intervalSec, 15); // <5 回落
+  assert.equal(normalizeSyncClient({ intervalSec: 30 }).intervalSec, 30);
+});
+
+group('merge rev');
+check('remoteTodoWins 严格大于', () => {
+  assert.equal(remoteTodoWins(100, 101), true);
+  assert.equal(remoteTodoWins(100, 100), false);
+  assert.equal(remoteTodoWins(100, 99), false);
+  assert.equal(remoteTodoWins(undefined, 1), true);
+});
+check('planRemoteMerges：新 id / 更新 / 跳过', () => {
+  const local = [
+    { id: 'a', updated_at: 100 },
+    { id: 'b', updated_at: 200 },
+  ];
+  const remote = [
+    { id: 'a', rev: 150, title: '新' },
+    { id: 'b', rev: 200, title: '同' },
+    { id: 'c', rev: 1, title: '全新' },
+  ];
+  const { apply, skip } = planRemoteMerges(local, remote);
+  assert.deepEqual(apply.map((t) => t.id), ['a', 'c']);
+  assert.deepEqual(skip, ['b']);
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

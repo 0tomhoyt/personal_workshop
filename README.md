@@ -404,6 +404,19 @@ Aerial（`0tomhoyt/aerial-tv`）的 `Workbench` 屏保在客厅电视上显示�
   curl -s -H "X-Workshop-Token: <token>" http://<枢纽局域网IP>:8491/sync/v1/snapshot | head -c 600
   curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer <token>" http://127.0.0.1:8491/admin/stats  # 期望 404
   ```
+- **Host**：IP 字面量、`localhost`、`*.local`，以及 Tailscale MagicDNS（`*.ts.net`）。
+- **客户机（spoke，`gateway.syncClient`，默认关闭）**：同进程轮询枢纽，不另起监听。
+  ```jsonc
+  "gateway": {
+    "syncClient": {
+      "enabled": false,
+      "url": "http://100.100.115.66:8491",   // 或 http://tomhoytmac-mini.tail….ts.net:8491
+      "token": "<与枢纽 tokens 中本机那枚相同>",
+      "intervalSec": 15
+    }
+  }
+  ```
+  合并规则：按 id，远端 `rev`（= `updated_at`）严格更新才覆盖；本机独有 id 暂不删（无墓碑）。改 enabled/url 需重启。
 - **测试**：`node test/sync-unit.mjs`（纯函数）、`node test/sync.mjs`（临时目录起网关，不碰 8484）。
 - **桌面 iCloud**：两台 Mac 若同步 Desktop，源码 worktree / 枢纽数据不要放在会互踩的桌面路径。
 
