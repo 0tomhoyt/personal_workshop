@@ -27,7 +27,10 @@ PERSONAL_API="https://cannbot.hicann.cn/cannbot/api/models/personal"
 GATEWAY_BASE="https://cannbot.hicann.cn/gateway/compatible-mode/v1"
 # 本地代理常驻地址（launchd: cn.hicann.cannbot-gateway-proxy），
 # 自行注入 JWT+VK；zcode 配置一律指向代理，不再烘真实凭证。
-PROXY_URL="${CANNBOT_PROXY_URL:-http://127.0.0.1:8484/v1}"
+# 端口以 install.sh 写的运行时 port 文件为准：装到非 8484 时硬编码会把 zcode 指空。
+_RUNTIME_PORT_FILE="$HOME/.local/share/cannbot-gateway-proxy/port"
+_LOCAL_PORT="$(cat "$_RUNTIME_PORT_FILE" 2>/dev/null || true)"
+PROXY_URL="${CANNBOT_PROXY_URL:-http://127.0.0.1:${_LOCAL_PORT:-8484}/v1}"
 # creds.json 含实时 JWT+VK，默认写到运行时目录（不进桌面源目录/版本库/同步盘）；
 # 需要落在别处时：CANNBOT_CREDS_FILE=/path/to/creds.json ./cannbot-creds.sh
 CREDS_DIR="${CANNBOT_CREDS_DIR:-$HOME/.local/share/cannbot-gateway-proxy}"
@@ -114,7 +117,15 @@ msg "凭证有效 → ${CREDS}（${COUNT} 个模型，来源 ${MODELS_SRC}；VK 
 
 if [ "${1:-}" = "--sync-zcode" ]; then
   [ -f "$ZCODE_CONFIG" ] || die "未找到 $ZCODE_CONFIG"
-  cp "$ZCODE_CONFIG" "$ZCODE_CONFIG.bak-cannbot"
+  # 备份**只在没有备份时做**：二次 `--sync-zcode` 时现场已经是网关版配置，
+  # 再 cp 一次会拿它覆盖原始备份 → uninstall --revert-configs 回滚出一份指向
+  # 已经卸掉的网关的死配置（真实发生过）。
+  if [ -f "$ZCODE_CONFIG.bak-cannbot" ]; then
+    msg "保留已有备份: $ZCODE_CONFIG.bak-cannbot（首次同步时的原配置）"
+  else
+    cp "$ZCODE_CONFIG" "$ZCODE_CONFIG.bak-cannbot"
+    msg "已备份原配置: $ZCODE_CONFIG.bak-cannbot"
+  fi
 
   # 网关 token：优先读运行时 providers.json；没有则维持旧的免鉴权占位
   RUNTIME_PROVIDERS="$HOME/.local/share/cannbot-gateway-proxy/providers.json"

@@ -114,6 +114,33 @@ check('pipe 不转发错误、pipeline 会（对照组：说明这条修复不�
   src.destroy();
 });
 
+// ── ②b 超长响应尾部 usage 提取（>4MB 走 tail 窗口）────────────────────────────
+group('extractUsageBalanced（尾部窗口取 usage）');
+{
+  const { extractUsageBalanced } = await import('../lib/util.mjs');
+  check('嵌套 usage（prompt_tokens_details）不被截断', () => {
+    const tail = '"usage":{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":3}}';
+    // 旧实现的正则完全匹配不上（嵌套对象它抓不到）——这正是修复点
+    assert.equal(tail.match(/"usage"\s*:\s*(\{[^{}]*\})/)?.[1], undefined, '旧正则应失败（对照）');
+    assert.deepEqual(extractUsageBalanced(tail), {
+      prompt_tokens: 10, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 3 },
+    });
+  });
+  check('字符串值里的花括号不干扰配平', () => {
+    assert.deepEqual(extractUsageBalanced('"usage":{"note":"a}b{c","tin":1}'), { note: 'a}b{c', tin: 1 });
+  });
+  check('窗口截断在半截对象时返回 null（不返回半个 usage）', () => {
+    assert.equal(extractUsageBalanced('"usage":{"a":{"b":1'), null);
+  });
+  check('没有 usage 时返回 null', () => {
+    assert.equal(extractUsageBalanced('{"foo":1}'), null);
+  });
+  check('多个 usage 时取最后一个（末尾窗口里最近的那个才完整）', () => {
+    const tail = '"usage":{"tin":1},"x":0,"usage":{"tin":9}';
+    assert.deepEqual(extractUsageBalanced(tail), { tin: 9 });
+  });
+}
+
 // ── ③ stats 原型污染 ────────────────────────────────────────────────────────
 group('stats 原型污染（"__proto__" 作为 model/provider）');
 {
