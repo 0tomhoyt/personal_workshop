@@ -29,7 +29,7 @@ C = lambda code: f"\033[{code}m" if color else ""
 GREEN, RED, YELLOW, DIM, BOLD, RESET = C("32"), C("31"), C("33"), C("2"), C("1"), C("0")
 
 W = 46
-print(f"{BOLD}统一订阅网关{RESET}  " + DIM + "─" * W + RESET)
+print(f"{BOLD}个人工作台{RESET}  " + DIM + "─" * W + RESET)
 
 # ---- 服务 ----
 pid = None

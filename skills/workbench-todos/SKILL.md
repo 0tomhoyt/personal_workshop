@@ -42,12 +42,45 @@ curl -s -X POST "$BASE/v1/todos" \
 | `source` | ≤60 字 | 来源标识，用自己的名字（如 `claude-code`、`zcode`） |
 | `note` | agent 来源 **≤300 字** | 详情/背景。**这是硬上限**，超了返回 400 |
 | `items` | `[{title, done?}]` | 初始子项清单，≤50 条，每条标题 ≤200 字 |
+| `spans` | `[{id?, start, end?}]` | 时段（epoch 毫秒，`end` 省略/null = 进行中）。**每段是一条日历事件**，见下 |
 
-**`source` 必须填你自己的名字，不要留空、不要写 `user`。** 留空会算成用户手动建的；
-写了 `user` 会让用户以为是自己记的。来源徽标在网页上就是靠这个字段区分的。
+`spans` 是**给日历同步用的**：用户有个程序按段往日历里写事件。所以只有你**确实知道**
+这段时间在干什么时才写（比如用户说「刚才一小时在弄 XX」）；不知道就别写——编出来的时段
+会变成日历里的假事件。进行中的段传 `end: null`。
+
+通常不需要你手动管 spans：用户点「开始/完成」时服务端会自己开闭段。需要精确写入时才用下面这些。
+
+```bash
+# 补一段（start/end 都是 epoch 毫秒；end 传 null = 还在进行）
+curl -s -X POST "$BASE/v1/todos/$ID/spans" -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"start":1793200000000,"end":1793203600000}'
+
+# 改一段（只传要改的字段；end:null 表示改回进行中）
+curl -s -X PATCH "$BASE/v1/todos/$ID/spans/$SPAN_ID" -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"end":1793207200000}'
+
+# 删一段
+curl -s -X DELETE "$BASE/v1/todos/$ID/spans/$SPAN_ID" -H "Authorization: Bearer $TOKEN"
+
+# 开一段 / 闭所有未闭合段（两个都不改 status）
+curl -s -X POST "$BASE/v1/todos/$ID/spans/open"  -H "Authorization: Bearer $TOKEN"
+curl -s -X POST "$BASE/v1/todos/$ID/spans/close" -H "Authorization: Bearer $TOKEN"
+```
+
+**`open`/`close` 不改 `status`——「暂停」不等于「完成」。** 用户干一半去开会，该
+`close` 那段，但状态仍应留在 `in_progress`。反过来，想标完成就直接 `PATCH {"status":"done"}`，
+服务端会自动闭段（`PATCH {"status":"in_progress"}` 会自动开一段），不必再单独调 open/close。
+
+一次要写多个段、或要保住段 `id`（日历事件拿它做幂等键）时，用整组替换：
+`PATCH /v1/todos/:id` 带 `{"spans":[{id?,start,end},...]}`——带 `id` 的段原样保留锚点，
+不带的新派。**显式传了 spans 就不会自动开闭段**，时间线完全以你给的为准。
 
 **`note` 的 300 字上限按 `source` 分级**：`source` 为空或 `user` 时上限是 2000，其他来源是
 300。想写长背景时不要改 `source` 骗额度——精简，或者把细节放在你自己的输出里，待办只留结论。
+
+`note` 是**用户给自己看的备忘**（上下文、待核对的事），但生成时间段汇报时它会被交给模型
+过滤改写：能对上级讲的进展提炼出来，私人提醒略去。所以写 note 时**别写入不该出现在给上级
+汇报里的内容**，也别指望它被原样引用。
 
 新建的待办**状态恒为 `pending`**，`POST` 带 `status` 会被忽略。要直接置为进行中，创建后
 再 PATCH 一次。

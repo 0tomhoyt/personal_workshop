@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 统一订阅 API 网关（前 cannbot-gateway-proxy）—— 集中管理多个订阅上游，
+// 个人工作台 / personal_workshop（统一订阅 API 网关；运行时目录仍为 cannbot-gateway-proxy）—— 集中管理多个订阅上游，
 // 供本机所有 Agent（Zcode / Claude Code / opencode / 任意 OpenAI 或 Anthropic 客户端）统一调用。
 //
 //   OpenAI 客户端    → http://127.0.0.1:<PORT>/v1/chat/completions
@@ -26,14 +26,17 @@ import { log, tailLog } from './lib/log.mjs';
 import { getConfig, tryGetConfig, getProvider, bindInboundEndpoint } from './lib/config.mjs';
 import { statsSnapshot, flushStats } from './lib/stats.mjs';
 import { listModels, resolveModelRoute, defaultProvider, peekModelsKnown, checkProviderCatalog } from './lib/models.mjs';
-import { providersView, createProvider, updateProvider, deleteProvider } from './lib/providers-admin.mjs';
+import { providersView, createProvider, updateProvider, deleteProvider, saveRemoteProjects } from './lib/providers-admin.mjs';
 import { forward, readRequestBody, withUpstreamModel } from './lib/proxy-openai.mjs';
 import { handleAnthropicInbound, handleOpenAIToAnthropic } from './lib/proxy-anthropic.mjs';
 import { checkClientAuth } from './lib/gwauth.mjs';
 import { authStatus } from './lib/upstream.mjs';
 import { monitorsStatus, switchMonitors } from './lib/monitors.mjs';
 import { renameMonitors } from './lib/monitors-admin.mjs';
-import { listTodos, createTodo, updateTodo, deleteTodo, createTodoItem, updateTodoItem, deleteTodoItem } from './lib/todos.mjs';
+import {
+  listTodos, createTodo, updateTodo, deleteTodo, createTodoItem, updateTodoItem, deleteTodoItem,
+  addTodoSpan, updateTodoSpan, deleteTodoSpan, openTodoSpan, closeTodoSpans,
+} from './lib/todos.mjs';
 import { startReportJob, getReportJob, listReports, getReport, deleteReport } from './lib/report/generate.mjs';
 import { httpError, sendJson, extractModel } from './lib/util.mjs';
 import { startTvServer } from './lib/tv-server.mjs';
@@ -219,6 +222,27 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, renameMonitors(payload));
     }
 
+    // 工作台「远程项目」标签：写 providers.json 的 workbench.remoteProjects。
+    // 与 providers/monitors 写操作同一威胁模型（回环 + JSON，跨站表单伪造不出）。
+    if (url === '/admin/workbench/remote-projects') {
+      if (req.method !== 'POST') {
+        return sendJson(res, 405, { error: { message: '此端点仅接受 POST', type: 'method_not_allowed' } });
+      }
+      if (!isLocalHost(req)) {
+        return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
+      }
+      if (!(req.headers['content-type'] || '').includes('application/json')) {
+        return sendJson(res, 415, { error: { message: '请求体需为 application/json', type: 'unsupported_media_type' } });
+      }
+      const bodyBuf = await readRequestBody(req, 8192);
+      let payload = null;
+      try { payload = JSON.parse(bodyBuf.toString('utf8') || '{}'); } catch {}
+      if (!payload || typeof payload !== 'object' || !Array.isArray(payload.remoteProjects)) {
+        return sendJson(res, 400, { error: { message: '请求体需为 {"remoteProjects": ["标签", ...]}', type: 'bad_request' } });
+      }
+      return sendJson(res, 200, { ok: true, ...saveRemoteProjects(payload.remoteProjects, { port: PORT }) });
+    }
+
     // 工作台 · 时间段工作总结：生成走「POST + 回环 + JSON」三件套（生成耗时长，
     // 异步执行、POST 立即返回 jobId，前端轮询 job 进度）；查询/历史只回环即可。
     if (url === '/admin/report/generate') {
@@ -362,8 +386,49 @@ const server = http.createServer(async (req, res) => {
         }
         return sendJson(res, 405, { error: { message: '此端点仅支持 POST/PATCH/PUT/DELETE', type: 'method_not_allowed' } });
       }
+      // 时段（spans）：日历同步的数据源——每段对应一条日历事件 start~end。
+      // 单段粒度与整组替换并存：整组替换走 PATCH /v1/todos/:id {spans}，
+      // 这里的三件套给「只补一段/只改结束时间」用，避免并发整组覆盖。
+      // 另有两个动作端点（不传 body）：open 开一段（end=null）、close 闭所有未闭合段。
+      if (id && parts[1] === 'spans') {
+        let spanId = null;
+        if (parts[2]) { try { spanId = decodeURIComponent(parts[2]); } catch { spanId = parts[2]; } }
+        const readSpanBody = async () => {
+          const bodyBuf = await readRequestBody(req, 64 * 1024);
+          try {
+            const payload = JSON.parse(bodyBuf.toString('utf8') || '{}');
+            if (payload && typeof payload === 'object' && !Array.isArray(payload)) return payload;
+          } catch {}
+          return null;
+        };
+        // 动作端点：/spans/open、/spans/close（不需要 body）
+        if (parts.length === 3 && (parts[2] === 'open' || parts[2] === 'close')) {
+          if (req.method !== 'POST') return sendJson(res, 405, { error: { message: `/${parts[2]} 仅支持 POST`, type: 'method_not_allowed' } });
+          const todo = parts[2] === 'open' ? openTodoSpan(id) : closeTodoSpans(id);
+          return sendJson(res, 200, { ok: true, todo });
+        }
+        if (parts.length === 2 && req.method === 'POST') {
+          const payload = await readSpanBody();
+          if (!payload) return sendJson(res, 400, { error: { message: '请求体不是合法 JSON 对象', type: 'bad_request' } });
+          return sendJson(res, 201, { ok: true, todo: addTodoSpan(id, payload) });
+        }
+        if (spanId && parts.length === 3 && (req.method === 'PUT' || req.method === 'PATCH')) {
+          const payload = await readSpanBody();
+          if (!payload) return sendJson(res, 400, { error: { message: '请求体不是合法 JSON 对象', type: 'bad_request' } });
+          return sendJson(res, 200, { ok: true, todo: updateTodoSpan(id, spanId, payload) });
+        }
+        if (spanId && parts.length === 3 && req.method === 'DELETE') {
+          deleteTodoSpan(id, spanId);
+          res.writeHead(204);
+          return res.end();
+        }
+        if (parts.length > 3 || (parts.length === 3 && !spanId)) {
+          return sendJson(res, 404, { error: { message: `未知的时段端点 ${url}`, type: 'not_found' } });
+        }
+        return sendJson(res, 405, { error: { message: '此端点仅支持 POST/PATCH/PUT/DELETE', type: 'method_not_allowed' } });
+      }
       if (id && parts[1]) {
-        return sendJson(res, 404, { error: { message: `未知的待办子资源 ${url}；可用: /v1/todos/:id、/v1/todos/:id/items(/:itemId)`, type: 'not_found' } });
+        return sendJson(res, 404, { error: { message: `未知的待办子资源 ${url}；可用: /v1/todos/:id、/:id/items(/:itemId)、/:id/spans(/:spanId|open|close)`, type: 'not_found' } });
       }
       if (req.method === 'GET' && !id) {
         // query string 在入口已被剥掉，过滤参数从 req.url 原文取

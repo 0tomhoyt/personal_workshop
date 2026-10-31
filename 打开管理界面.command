@@ -5,7 +5,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 RECORDED_PORT="$(cat "$HOME/.local/share/cannbot-gateway-proxy/port" 2>/dev/null || true)"
 PORT="${CANNBOT_PROXY_PORT:-${RECORDED_PORT:-8484}}"
 
-echo "正在检查 CANNBot 网关代理…"
+echo "正在检查个人工作台…"
 if curl -fsS -m 3 "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1; then
   echo "代理已在运行。"
 else
@@ -13,6 +13,6 @@ else
   "$DIR/install.sh" "$PORT"
 fi
 
-echo "打开管理台：http://127.0.0.1:$PORT/"
+echo "打开个人工作台：http://127.0.0.1:$PORT/"
 open "http://127.0.0.1:$PORT/"
 sleep 2

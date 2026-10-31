@@ -1,5 +1,5 @@
 #!/bin/bash
-# uninstall.sh — 停用 cannbot-gateway-proxy
+# uninstall.sh — 停用个人工作台（personal_workshop；运行时目录/label 仍为 cannbot-gateway-proxy）
 #
 # 用法:
 #   ./uninstall.sh                 停止服务、移除 launchd 配置与运行时副本（保留 zcode 配置指向）

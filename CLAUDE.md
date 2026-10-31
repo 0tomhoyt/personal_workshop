@@ -25,7 +25,7 @@ curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
 
 ## ⚠️ 双目录设计（改代码必读）
 
-本目录（桌面）是**项目源**；launchd 实际运行的是 `install.sh` 拷贝到 `~/.local/share/cannbot-gateway-proxy/` 的**运行时副本**（macOS TCC 限制 launchd 读不了桌面）。
+本目录是**项目源**（仓库名 `personal_workshop`）；launchd 实际运行的是 `install.sh` 拷贝到 `~/.local/share/cannbot-gateway-proxy/` 的**运行时副本**（运行时目录名暂未改）（macOS TCC 限制 launchd 读不了桌面）。
 
 **改动 `server.mjs`、`lib/`、`index.html`、`theme.css` 后必须重跑 `./install.sh` 才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、todos.json、reports.json、logs/proxy.err.log、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。运行时文件位置可用 `CANNBOT_CONFIG_FILE` / `CANNBOT_LOG_FILE` / `CANNBOT_STATS_FILE` / `CANNBOT_TODOS_FILE` / `CANNBOT_REPORTS_FILE` 覆盖；报告数据源根路径可用 `CANNBOT_CC_DIR` / `CANNBOT_ZCODE_DB` / `CANNBOT_OPENCODE_DB` / `CANNBOT_CURSOR_DIR` 覆盖（test/smoke.mjs 即用它们把产物与数据源全部隔离到临时目录）。
 
@@ -108,8 +108,7 @@ lib/report/sources/   四个 agent 会话源适配器（统一 listSessions({sta
    opencode.mjs       opencode.db 双路（session/message/part 主路 + event 事件溯源补路，
                       part 全量快照取最终态、多 agent 合成注入过滤）
    cursor.mjs         ~/.cursor/projects agent-transcripts（浅层排除 subagents、user 标签
-                      锚点时间归因、无窗口标签回退 mtime+tailOnly；tailOnly 另给 attrTime=mtime，
-                      tailOnly 会话另给 attrTime=mtime，供归属时参考其真实活跃时间）
+                      锚点时间归因、无窗口标签回退 mtime+tailOnly）
 lib/report/attribute.mjs 会话→待办归属（**交给模型做内容判断**，不是时间重叠）：把「待办清单
                       （标题+项目+状态+子项进度，**不含 note**——私人备忘不为归属外发）」和按项目
                       归并的会话素材一起给模型，让它输出「项目 | 待办序号 | 说明」。

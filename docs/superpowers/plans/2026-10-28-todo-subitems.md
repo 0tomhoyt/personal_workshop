@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 工作目录 `~/Desktop/project/cannbot-gateway-proxy/.claude/worktrees/workbench`；**禁止碰 8484 / 正式配置 / 合 main / launchctl**；隔离实例用 6399。
+- 工作目录 `~/Desktop/project/personal_workshop/.claude/worktrees/workbench`；**禁止碰 8484 / 正式配置 / 合 main / launchctl**；隔离实例用 6399。
 - 零依赖；注释、文档、commit message 中文。
 - 子项变更后派生规则（spec §三表格）逐条进 smoke；`completed_at` 原有值不重盖。
 - agent（source ≠ 'user'）note ≤ 300 码位、子项标题 ≤ 200、每待办 ≤ 50 子项、父 note 2000、标题 500 不变。

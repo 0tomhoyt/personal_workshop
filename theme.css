@@ -41,6 +41,10 @@ html[data-theme="light"] {
   --noise-op: .04;
 }
 * { box-sizing: border-box; margin: 0; }
+/* [hidden] 的 UA 规则是 display:none，但任何作者样式里的 display（如 .rail-foot 的
+   display:flex）都能压过它 —— 于是 el.hidden = true 静默失效，元素照样占位。
+   统一提权，让「隐藏」这件事在全部组件上一致。 */
+[hidden] { display: none !important; }
 html { scrollbar-color: var(--line) transparent; }
 body {
   font-family: var(--sans); color: var(--ink);
@@ -103,7 +107,13 @@ body::after {
 /* 遥测行同样守单行契约：超长整段省略，全文留在 title */
 .statline { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; white-space: nowrap; }
 .statline > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.rail-theme { flex: none; margin-left: auto; padding: 3px 9px; font-size: 12px; }
+/* 主题按钮：☀ / ☾ 是两种字形的同一颗按钮，字宽与基线各不相同（实测 32×26 对 27.23×25，
+   切一次主题按钮就缩一圈）。定死方形盒子并居中字形，两态几何完全一致。 */
+.rail-theme {
+  flex: none; margin-left: auto; padding: 0; width: 28px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; line-height: 1;
+}
 .statline .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 /* ---- 左栏底部：显示器快速切换（常驻，使用频率高）----------------------
@@ -140,6 +150,13 @@ body::after {
 .railm:disabled { opacity: .45; cursor: default; }
 /* 切屏进行中：整块略微降透明度，重复点不再响应 */
 .rail-mons.is-busy { opacity: .6; }
+/* 一键全切：与上面「一台屏一个按钮」是两件事，用一道虚线把它们分开，
+   否则「左 win / 右 mac / 全部→win / 全部→mac」四行读起来像一个列表的四种状态。 */
+.rail-all { margin-top: 6px; padding-top: 8px; border-top: 1px dashed var(--line-soft); }
+.rail-all .railm.all { color: var(--dim); }
+.rail-all .railm.all:hover { color: var(--ink); }
+.rail-all .railm.all.on { color: var(--amber); }
+.rail-all .railm.all.on:hover { color: var(--amber-hi); }
 
 /* 状态灯：运行中带雷达扩散环 */
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); position: relative; flex: none; }
@@ -349,5 +366,7 @@ code { background: var(--inset); border: 1px solid var(--line-soft); border-radi
   .rail-foot .sub { flex: none; padding: 0; }
   .rail-mons { flex-direction: row; gap: 4px; flex: none; }
   .railm { width: auto; flex: none; white-space: nowrap; padding: 6px 12px; }
+  /* 顶栏横排时「全切」组跟着并排，分隔线由上方虚线改为左侧虚线 */
+  .rail-all { margin-top: 0; padding-top: 0; border-top: none; border-left: 1px dashed var(--line-soft); padding-left: 8px; }
   .main { padding: 20px 20px 48px; }
 }

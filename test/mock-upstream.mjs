@@ -6,7 +6,8 @@
 //             走智谱真实形态（非流式顶层 web_search 数组 / 流式 delta.content 数组传闻形态）
 //   /z.ai/*   智谱方言变体端点（处理同 /zhipu），模型 glm-zai：验证 z.ai 域名同样命中方言推断
 //   /kimi/*   Kimi 方言 openai 上游（Bearer mock-token-kimi），模型 kimi-mock：builtin_function
-//             $web_search 走「tool_calls → 回传 role:tool(arguments 原样) → 终轮」循环
+//             $web_search 走「tool_calls → 回传 role:tool(arguments 原样) → 终轮」循环；
+//             模型 kimi-500 一律回 500（搜索循环错误分支的回归）
 // 未知块回归：请求 messages 里含标记 'UNKNOWN-BLOCK-TEST' 时，/oai 与 /anth 的流式分支会
 // 额外发出未知 delta 键 / 未知 content 块，验证两个翻译状态机跳过未知形态、不中断流。
 // 非流式响应把收到的请求体回显在 content 文本里（前缀 ECHO:），供测试断言翻译/直通的
@@ -184,6 +185,9 @@ const server = http.createServer(async (req, res) => {
 
   if (url === '/kimi/v1/chat/completions') {
     if (auth !== `Bearer ${KIMI_TOKEN}`) return json(res, 401, { error: { message: 'bad token', type: 'authentication_error' } });
+    // 失败口径演练：kimi-500 一律 500——验证搜索循环的错误分支不把网关自己的
+    // ReferenceError 当成上游错误回给客户端（曾有 clientTag(req) 丢 req 的 bug）
+    if (body.model === 'kimi-500') return json(res, 500, { error: { message: 'kimi 搜索额度不足（mock 500）' } });
     const hasSearch = Array.isArray(body.tools) && body.tools.some((t) => t?.type === 'builtin_function' && t?.function?.name === '$web_search');
     const toolMsg = Array.isArray(body.messages) ? [...body.messages].reverse().find((m) => m?.role === 'tool') : null;
     if (hasSearch && !toolMsg) {

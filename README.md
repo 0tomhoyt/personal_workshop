@@ -1,4 +1,4 @@
-# 个人工作台 · 统一订阅 API 网关（cannbot-gateway-proxy）
+# 个人工作台 · 统一订阅 API 网关（personal_workshop）
 
 **统一订阅网关**：把**多个订阅服务**（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，
 本机所有 Agent（zcode CLI、Claude Code、opencode、任意 OpenAI/Anthropic 客户端）统一从这里调用。
@@ -412,7 +412,7 @@ node test/smoke.mjs               # 端到端回归（不依赖真实订阅）
 
 ```bash
 ./uninstall.sh --revert-configs   # 停服务 + 回滚 zcode 两处配置
-rm -rf ~/Desktop/cannbot-gateway-proxy
+rm -rf ~/Desktop/project/personal_workshop
 ```
 
 卸载会先把 `providers.json` / `todos.json` / `reports.json` 与坏文件自愈的 `*.bad` 现场备份

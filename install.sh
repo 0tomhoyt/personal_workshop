@@ -5,8 +5,8 @@
 # 停用: ./uninstall.sh
 #
 # 目录设计（重要）:
-#   本文件夹（桌面）= 项目源，server.mjs / lib/ 在这里维护；
-#   ~/.local/share/cannbot-gateway-proxy/ = 运行时安装目录，
+#   本文件夹 = 项目源 personal_workshop，server.mjs / lib/ 在这里维护；
+#   ~/.local/share/cannbot-gateway-proxy/ = 运行时安装目录（暂未改名，与 launchd label 一致），
 #   install.sh 会把 server.mjs + lib/ + index.html + theme.css 拷贝过去供 launchd 运行——
 #   因为 macOS 对桌面等目录有 TCC 保护，launchd 后台进程无权直接读取。
 #   因此改动代码后需重跑 ./install.sh 才生效。

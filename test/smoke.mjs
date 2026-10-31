@@ -150,7 +150,24 @@ try {
     const c = await (await fetch(`${GW}/admin/config`)).json();
     check('/admin/config 返回网关 token', c.clientToken === TOKEN && c.providers?.length === 6);
     const html = await (await fetch(`${GW}/`)).text();
-    check('管理台页面可访问', html.includes('统一订阅网关'));
+    check('管理台页面可访问', html.includes('个人工作台'));
+    // 日志必须带调用方标识：原先只有 provider/model/耗时，查「这几次调用是谁发的」
+    // 只能靠时间戳反推（provider id 是上游订阅名，不是调用方）
+    check('请求日志带调用方 UA 标识（各 CLI 可区分）',
+      /clientTag\(req\)/.test(fs.readFileSync(path.join(ROOT, 'lib/proxy-anthropic.mjs'), 'utf8'))
+      && /clientTag\(req\)/.test(fs.readFileSync(path.join(ROOT, 'lib/proxy-openai.mjs'), 'utf8')), '');
+    {
+      const { clientTag } = await import(path.join(ROOT, 'lib/util.mjs') + '?ct=' + Date.now());
+      const tag = (ua) => clientTag({ headers: ua ? { 'user-agent': ua } : {} });
+      check('clientTag：只取产品名/版本，剥掉 OS 注释与括号',
+        tag('claude-cli/2.1.310 (external, cli)') === 'ua=claude-cli/2.1.310'
+        && tag('opencode/1.18.31') === 'ua=opencode/1.18.31'
+        && tag('zcode-cli/0.17.0') === 'ua=zcode-cli/0.17.0', '');
+      check('clientTag：缺 UA 时给占位而不是崩（本机某些探活请求不带）',
+        tag('') === 'ua=-' && tag(undefined) === 'ua=-', '');
+      check('clientTag：超长 UA 截断（防止畸形头把日志撑爆）',
+        Array.from(tag('x'.repeat(200))).length <= 45, '');
+    }
   }
 
   console.log('— ① openai 客户端 → openai 上游（透传） —');
@@ -439,6 +456,22 @@ try {
     check('Kimi 流式: 终轮正文逐字', (() => { try { return parseEcho(text)?.final === '搜索完成：杭州晴[1]'; } catch { return false; } })(), text.slice(0, 80));
     check('Kimi 流式: message_delta usage 透传', lastDelta?.usage?.input_tokens === 30, JSON.stringify(lastDelta?.usage));
   }
+  {
+    // 搜索循环的上游错误分支：网关必须把**上游**的错回给客户端，而不是自己的
+    // ReferenceError。曾经 clientTag(req) 被加进 kimiSearchLoop 的日志，而那个函数
+    // 作用域里没有 req → 上游一报错就回 "req is not defined"，真实原因（限流/额度）被吞。
+    // 显式 pid/model：kimi-500 不在 mock 目录里，裸名会回落到默认上游（mock-oai），
+    // 那就走不到 Kimi 方言的搜索循环了——错误分支正是要测那条路。
+    const r = await post('/v1/messages', {
+      model: 'mock-kimi/kimi-500', max_tokens: 64,
+      messages: [{ role: 'user', content: '杭州天气' }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+    });
+    const j = await r.json();
+    check('Kimi 循环上游错误：透传上游文案与状态码（不回网关自身的 ReferenceError）',
+      r.status === 500 && j.error?.message === 'kimi 搜索额度不足（mock 500）' && !/is not defined/.test(JSON.stringify(j)),
+      JSON.stringify({ status: r.status, j }));
+  }
 
   console.log('— 路由：显式前缀 / 默认上游兜底 —');
   {
@@ -704,6 +737,138 @@ try {
     check('清理循环：未完成项原样保留、done 不残留', keep.every((k) => afterIds.has(k.id) && afterClear.todos.find((t) => t.id === k.id).title === k.title) && !doneIds.some((id) => afterIds.has(id)), JSON.stringify(afterClear.todos.map((t) => t.title)));
     for (const k of keep) await fetch(`${GW}/v1/todos/${k.id}`, { method: 'DELETE', headers: todosHeaders });
 
+    // ── 待办时段（spans）：日历同步的数据源，每段 → 一条日历事件 ──
+    {
+      const mk = async (title) => (await (await post('/v1/todos', { title })).json()).todo;
+      const t1 = await mk('时段测试 1');
+      const t2 = await mk('时段测试 2');
+
+      // 状态切换自动开段/闭段（与页面「▸ 开始 / ✓ 完成」一致，也适用于纯 API 调用方）
+      const p1 = await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ status: 'in_progress' }) });
+      const started = await p1.json();
+      check('时段：状态转 in_progress 自动开一段（end=null）',
+        started.todo?.spans?.length === 1 && started.todo.spans[0].end === null && started.todo.spans[0].id,
+        JSON.stringify(started.todo?.spans));
+      // 重复置 in_progress（状态没变）不应多开段
+      const again = await (await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ status: 'in_progress' }) })).json();
+      check('时段：状态没变化不重复开段', again.todo?.spans?.length === 1, JSON.stringify(again.todo?.spans));
+      const p2 = await (await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ status: 'done' }) })).json();
+      check('时段：状态转 done 自动闭合所有未闭合段',
+        p2.todo?.spans?.every((sp) => sp.end !== null && sp.end >= sp.start), JSON.stringify(p2.todo?.spans));
+      // 重开 → 第二段（用户「干了又停再开」）
+      const p3 = await (await fetch(`${GW}/v1/todos/${t1.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ status: 'in_progress' }) })).json();
+      check('时段：重开产生第二段（多段并存）',
+        p3.todo?.spans?.length === 2 && p3.todo.spans[1].end === null, JSON.stringify(p3.todo?.spans));
+
+      // 显式传 spans 时不被状态切换改写（调用方给了时间线就该照它写）
+      const explicit = await (await fetch(`${GW}/v1/todos/${t1.id}`, {
+        method: 'PATCH', headers: authHeaders,
+        body: JSON.stringify({ status: 'done', spans: [{ start: 1000, end: 2000 }, { start: 3000, end: 4000 }] }),
+      })).json();
+      check('时段：PATCH 显式带 spans 时以它为准、不自动开闭',
+        explicit.todo?.spans?.length === 2 && explicit.todo.spans.every((sp) => sp.end !== null),
+        JSON.stringify(explicit.todo?.spans));
+      check('时段：整组替换保留传入的 id（外部同步靠它认事件）', (() => {
+        const withId = explicit.todo.spans.map((sp) => ({ id: sp.id, start: sp.start, end: sp.end }));
+        return withId.length === 2 && withId.every((x) => typeof x.id === 'string' && x.id.length > 0);
+      })(), JSON.stringify(explicit.todo?.spans));
+
+      // 动作端点：open / close（不改状态——暂停 ≠ 完成）
+      const op = await fetch(`${GW}/v1/todos/${t2.id}/spans/open`, { method: 'POST', headers: todosHeaders });
+      const opJ = await op.json();
+      check('POST /:id/spans/open 开一段且不改状态',
+        op.status === 200 && opJ.todo?.status === 'pending' && opJ.todo?.spans?.some((sp) => sp.end === null),
+        JSON.stringify({ s: opJ.todo?.status, sp: opJ.todo?.spans }));
+      const opDup = await (await fetch(`${GW}/v1/todos/${t2.id}/spans/open`, { method: 'POST', headers: todosHeaders })).json();
+      check('spans/open 幂等：已有未闭合段时不重复开', opDup.todo?.spans?.length === 1, JSON.stringify(opDup.todo?.spans));
+      const cl = await fetch(`${GW}/v1/todos/${t2.id}/spans/close`, { method: 'POST', headers: todosHeaders });
+      const clJ = await cl.json();
+      check('POST /:id/spans/close 闭段且状态仍不变',
+        cl.status === 200 && clJ.todo?.status === 'pending' && clJ.todo?.spans?.every((sp) => sp.end !== null),
+        JSON.stringify({ s: clJ.todo?.status, sp: clJ.todo?.spans }));
+
+      // 单段三件套
+      const aR = await fetch(`${GW}/v1/todos/${t2.id}/spans`, { method: 'POST', headers: authHeaders, body: JSON.stringify({ start: 10000, end: 20000 }) });
+      const aJ = await aR.json();
+      check('POST /:id/spans 加一段 → 201', aR.status === 201 && aJ.todo?.spans?.length === 2, JSON.stringify(aJ.todo?.spans));
+      const sid = aJ.todo.spans.find((sp) => sp.start === 10000)?.id;
+      const uR = await fetch(`${GW}/v1/todos/${t2.id}/spans/${sid}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ end: 25000 }) });
+      check('PATCH /:id/spans/:sid 改结束时间', (await uR.json()).todo?.spans?.find((sp) => sp.id === sid)?.end === 25000);
+      const openR = await fetch(`${GW}/v1/todos/${t2.id}/spans/${sid}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ end: null }) });
+      check('PATCH 把某段改回进行中（end=null）', (await openR.json()).todo?.spans?.find((sp) => sp.id === sid)?.end === null);
+      const dR = await fetch(`${GW}/v1/todos/${t2.id}/spans/${sid}`, { method: 'DELETE', headers: todosHeaders });
+      check('DELETE /:id/spans/:sid → 204', dR.status === 204);
+      check('DELETE 不存在的时段 → 404', (await fetch(`${GW}/v1/todos/${t2.id}/spans/${sid}`, { method: 'DELETE', headers: todosHeaders })).status === 404);
+
+      // 校验：非法输入一律 400
+      const bads = [
+        { end: 2000 },                       // 缺 start
+        { start: 'abc' },                    // start 非数字
+        { start: 5000, end: 1000 },          // end < start
+        { start: -1 },                       // start 非正
+      ];
+      let badOk = 0;
+      for (const b of bads) {
+        const r = await fetch(`${GW}/v1/todos/${t2.id}/spans`, { method: 'POST', headers: authHeaders, body: JSON.stringify(b) });
+        if (r.status === 400) badOk++;
+      }
+      check('时段非法输入全部 400（缺 start / 非数字 / end<start / 非正）', badOk === bads.length, `${badOk}/${bads.length}`);
+      const notArr = await fetch(`${GW}/v1/todos/${t2.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ spans: 'x' }) });
+      check('PATCH spans 非数组 → 400', notArr.status === 400);
+      check('时段端点 GET 单段 → 405', (await fetch(`${GW}/v1/todos/${t2.id}/spans/${sid}`, { headers: todosHeaders })).status === 405);
+
+      // 落盘：日历同步程序重启后能读到同样的段
+      const fileSpans = JSON.parse(fs.readFileSync(path.join(tmp, 'todos.json'), 'utf8')).todos.find((t) => t.id === t1.id)?.spans;
+      check('时段随 todos.json 落盘（同步程序重启可读）', Array.isArray(fileSpans) && fileSpans.length === 2, JSON.stringify(fileSpans));
+      // GET 列表带 spans（日历同步的主读路径）
+      const listNow = await (await fetch(`${GW}/v1/todos`, { headers: todosHeaders })).json();
+      check('GET /v1/todos 每条的 spans 随父返回',
+        Array.isArray(listNow.todos.find((t) => t.id === t1.id)?.spans), '');
+      // 子项派生出的 done 同样要闭段：勾完最后一个子项会让父变 done，若只给
+      // 「显式 PATCH status=done」闭段，日历里会留一条永不结束的事件（实测端到端
+      // 勾子项后 status=done 而 spans[0].end 仍是 null）
+      {
+        const td = await mk('子项派生完成');
+        await fetch(`${GW}/v1/todos/${td.id}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ status: 'in_progress' }) });
+        const i1 = (await (await post(`/v1/todos/${td.id}/items`, { title: '步骤一' })).json()).todo.items[0].id;
+        const i2 = (await (await post(`/v1/todos/${td.id}/items`, { title: '步骤二' })).json()).todo.items[1].id;
+        const d1 = await (await fetch(`${GW}/v1/todos/${td.id}/items/${i1}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: true }) })).json();
+        check('子项派生：勾一个未全 done 时状态不变、段仍进行中',
+          d1.todo?.status === 'in_progress' && d1.todo?.spans?.some((sp) => sp.end === null),
+          JSON.stringify({ s: d1.todo?.status, sp: d1.todo?.spans }));
+        const d2 = await (await fetch(`${GW}/v1/todos/${td.id}/items/${i2}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: true }) })).json();
+        check('子项派生 done 时自动闭段（日历里不留永不结束的事件）',
+          d2.todo?.status === 'done' && Boolean(d2.todo?.completed_at)
+          && Array.isArray(d2.todo?.spans) && d2.todo.spans.length > 0
+          && d2.todo.spans.every((sp) => sp.end !== null && sp.end >= sp.start),
+          JSON.stringify({ s: d2.todo?.status, sp: d2.todo?.spans }));
+        // 取消勾选：父退回 in_progress → 自动重开一段（与显式 PATCH status 同语义）
+        const d3 = await (await fetch(`${GW}/v1/todos/${td.id}/items/${i2}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ done: false }) })).json();
+        check('子项派生退回 in_progress 时自动重开一段',
+          d3.todo?.status === 'in_progress' && d3.todo?.spans?.filter((sp) => sp.end === null).length === 1,
+          JSON.stringify({ s: d3.todo?.status, sp: d3.todo?.spans }));
+        // 整组替换 items 走的是同一条派生路径
+        const d4 = await (await fetch(`${GW}/v1/todos/${td.id}`, {
+          method: 'PATCH', headers: authHeaders,
+          body: JSON.stringify({ items: [{ id: i1, title: '步骤一', done: true }, { id: i2, title: '步骤二', done: true }] }),
+        })).json();
+        check('整组替换 items 派生 done 时也闭段',
+          d4.todo?.status === 'done' && Array.isArray(d4.todo?.spans)
+          && d4.todo.spans.length > 0 && d4.todo.spans.every((sp) => sp.end !== null),
+          JSON.stringify({ s: d4.todo?.status, sp: d4.todo?.spans }));
+        await fetch(`${GW}/v1/todos/${td.id}`, { method: 'DELETE', headers: todosHeaders });
+      }
+
+      // 未设时段的老待办：不带 spans 字段（零迁移，不写空数组污染）
+      const bare = await mk('无时段待办');
+      const bareList = await (await fetch(`${GW}/v1/todos`, { headers: todosHeaders })).json();
+      check('未设时段的待办不凭空多出 spans 字段（旧数据零迁移）',
+        bareList.todos.find((t) => t.id === bare.id)?.spans === undefined,
+        JSON.stringify(bareList.todos.find((t) => t.id === bare.id)?.spans));
+
+      for (const id of [t1.id, t2.id, bare.id]) await fetch(`${GW}/v1/todos/${id}`, { method: 'DELETE', headers: todosHeaders });
+    }
+
     // 坏文件自愈：另起实例指向损坏的 todos.json / reports.json → 空列表起步、主业务不崩、
     // 坏文件留 .bad 备份（不静默清掉用户数据）
     fs.writeFileSync(path.join(tmp, 'todos-bad.json'), '{not-json');
@@ -862,6 +1027,56 @@ try {
     process.env.CANNBOT_CONFIG_FILE = prev;
     const wb = getConfig().workbench;
     check('workbench 坏值静默剔除（非字符串/空串/未知键）', wb && Object.keys(wb).length === 0, JSON.stringify(wb));
+
+    // remoteProjects：这些项目标签下的待办「不在这台机器上做」，归一化要
+    // 去空白、去重、丢掉非字符串与非数组形态
+    const rpCfg = path.join(tmp, 'providers-remote.json');
+    const writeRp = (v) => fs.writeFileSync(rpCfg, JSON.stringify({
+      gateway: { clientToken: 'x' },
+      providers: [{ id: 'p1', protocol: 'openai', baseUrl: 'https://x.example', auth: { type: 'static-token', token: 't' }, models: { source: 'static', list: [{ id: 'm1' }] } }],
+      workbench: { remoteProjects: v },
+    }));
+    const readRp = async () => {
+      process.env.CANNBOT_CONFIG_FILE = rpCfg;
+      const m = await import(path.join(ROOT, 'lib/config.mjs') + '?rp=' + Math.random());
+      process.env.CANNBOT_CONFIG_FILE = prev;
+      return m.getConfig().workbench;
+    };
+    writeRp(['黄区', ' 黄区 ', '', 123, '另一台机']);
+    let rpWb = await readRp();
+    check('remoteProjects 归一化：去空白去重、丢掉非字符串与空串',
+      JSON.stringify(rpWb.remoteProjects) === JSON.stringify(['黄区', '另一台机']), JSON.stringify(rpWb));
+    writeRp('黄区');
+    rpWb = await readRp();
+    check('remoteProjects 非数组（写成字符串）→ 整键忽略', rpWb.remoteProjects === undefined, JSON.stringify(rpWb));
+    writeRp([]);
+    rpWb = await readRp();
+    check('remoteProjects 空数组 → 整键忽略（不留空数组污染）', rpWb.remoteProjects === undefined, JSON.stringify(rpWb));
+
+    // 写入端点：POST /admin/workbench/remote-projects（回环 + JSON 三件套）
+    const rpPost = (body, headers = { 'content-type': 'application/json' }) =>
+      fetch(`${GW}/admin/workbench/remote-projects`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const cfgFile = path.join(tmp, 'providers.json');
+    const before = JSON.parse(fs.readFileSync(cfgFile, 'utf8')).workbench?.remoteProjects;
+    const okR = await rpPost({ remoteProjects: [' 黄区 ', '黄区', '另一台机'] });
+    const okJ = await okR.json();
+    check('远程项目端点：写入去重去空白 → 200', okR.status === 200 && JSON.stringify(okJ.remoteProjects) === JSON.stringify(['黄区', '另一台机']), JSON.stringify(okJ));
+    const afterCfg = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
+    check('远程项目端点：落盘到 providers.json 的 workbench.remoteProjects', JSON.stringify(afterCfg.workbench?.remoteProjects) === JSON.stringify(['黄区', '另一台机']), JSON.stringify(afterCfg.workbench));
+    check('远程项目端点：落盘文件权限仍是 0600', (fs.statSync(cfgFile).mode & 0o777) === 0o600, fs.statSync(cfgFile).mode.toString(8));
+    check('远程项目端点：写后热加载即时生效（getConfig 读到新值）',
+      (() => { const m = fs.readFileSync(cfgFile, 'utf8'); return m.includes('另一台机'); })());
+    const clearR = await rpPost({ remoteProjects: [] });
+    const clearJ = await clearR.json();
+    check('远程项目端点：空数组 = 清空且删除该键（不留空数组）',
+      clearR.status === 200 && JSON.parse(fs.readFileSync(cfgFile, 'utf8')).workbench?.remoteProjects === undefined, JSON.stringify(clearJ));
+    check('远程项目端点：非数组 → 400', (await rpPost({ remoteProjects: '黄区' })).status === 400);
+    check('远程项目端点：GET → 405', (await fetch(`${GW}/admin/workbench/remote-projects`)).status === 405);
+    check('远程项目端点：非 JSON 内容类型 → 415',
+      (await fetch(`${GW}/admin/workbench/remote-projects`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' })).status === 415);
+    check('远程项目端点：超长标签（41 字）→ 400', (await rpPost({ remoteProjects: ['标'.repeat(41)] })).status === 400);
+    // 还原测试前的值，避免影响后续用例
+    if (Array.isArray(before)) await rpPost({ remoteProjects: before }); else await rpPost({ remoteProjects: [] });
     // 进程内：配置文件缺失时的内置默认回落必须过 normalize——否则 healthz 的
     // providers 过滤（p.enabled）会把内置 cannbot 隐形，与「回落仅 cannbot」文案矛盾
     process.env.CANNBOT_CONFIG_FILE = path.join(tmp, '不存在的-providers.json');
@@ -1259,6 +1474,62 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const old = await collectMaterials({ startMs: 0, endMs: 1000 });
     check('collect: 窗口早于统计保留期 → outOfRange', old.usage.outOfRange === true && old.usage.totalRequests === 0, JSON.stringify(old.usage));
     check('collect: 1970 窗口无会话素材但流程完整', old.projects.length === 0 && old.sources['claude-code'] === 0, JSON.stringify({ p: old.projects.length, s: old.sources }));
+
+  }
+
+  console.log('— 会话→待办归属（lib/report/attribute.mjs：模型输出解析，纯函数） —');
+  {
+    const { parseAttribution, todoListBlock } = await import(path.join(ROOT, 'lib/report/attribute.mjs') + '?t=' + Date.now());
+    const projects = [{ name: 'unigemm_sme' }, { name: 'kblas' }, { name: 'gateway' }];
+    const todos = [
+      { id: 'T1', title: 'unigemm int8 性能优化', project: '黄区', status: 'in_progress' },
+      { id: 'T2', title: 'kblas 920F 合入', project: '', status: 'pending', items: [{ done: true, title: 'a' }, { done: false, title: 'b' }] },
+    ];
+
+    // 基本映射
+    let r = parseAttribution('unigemm_sme | 1 | 完成 int8 epilogue 优化\nkblas | 2 | 补了回归', projects, todos);
+    check('归属解析：项目 → 待办序号映射到 id', r.length === 2 && r[0].todoId === 'T1' && r[1].todoId === 'T2', JSON.stringify(r));
+    check('归属解析：说明文字保留（供二级参考）', r[0].note === '完成 int8 epilogue 优化', r[0].note);
+
+    // 「其他」
+    r = parseAttribution('gateway | 其他 | 排查了一次构建失败', projects, todos);
+    check('归属解析：「其他」标为 other 而非待办 id', r.length === 1 && r[0].other === true && !r[0].todoId, JSON.stringify(r));
+
+    // 容错：全角竖线 / 表格包裹 / 列表符号 / 待办前缀
+    const messy = [
+      '`unigemm_sme` ｜ 待办1 ｜ 优化了 epilogue',
+    ].join('\n');
+    r = parseAttribution(messy, projects, todos);
+    check('归属解析：容错解析（序号前缀「待办1」等写法）', r.length === 1 && r[0].todoId === 'T1', JSON.stringify(r));
+
+    // 非法输入：编造的项目名、越界序号一律丢弃（宁可漏配不可错配）
+    r = parseAttribution('不存在的项目 | 1 | x\nunigemm_sme | 99 | y\nunigemm_sme | 0 | z', projects, todos);
+    check('归属解析：编造项目名 / 越界序号一律丢弃', r.length === 0, JSON.stringify(r));
+
+    // 远程待办（workbench.remoteProjects）：不在本机做，不参与归属候选。
+    // 否则「黄区kblas int8问题单处理」会抢走本机 kblas 的会话——同名不同机器。
+    const { isRemoteTodo } = await import(path.join(ROOT, 'lib/report/attribute.mjs') + '?t=' + Date.now());
+    check('isRemoteTodo：project 命中远程标签 → true',
+      isRemoteTodo({ project: '黄区' }, ['黄区']) === true);
+    check('isRemoteTodo：project 不命中 / 为空 / 无标签配置 → false',
+      isRemoteTodo({ project: '本机' }, ['黄区']) === false
+      && isRemoteTodo({ project: '' }, ['黄区']) === false
+      && isRemoteTodo({ project: '黄区' }, []) === false
+      && isRemoteTodo({ project: '黄区' }, undefined) === false);
+    check('isRemoteTodo：标签精确匹配（不做子串，避免「黄区验证」被「黄区」误伤）',
+      isRemoteTodo({ project: '黄区验证' }, ['黄区']) === false,
+      'substring match would be wrong here');
+
+    // 空/垃圾输出不崩
+    check('归属解析：空输出 → 空数组（任务不失败）', parseAttribution('', projects, todos).length === 0
+      && parseAttribution(null, projects, todos).length === 0
+      && parseAttribution('完全不是这个格式', projects, todos).length === 0);
+
+    // 待办清单行：带项目/状态/子项进度，但不带 note（note 是私人备忘，不该为归属发出去）
+    const blk = todoListBlock([{ ...todos[0], note: '找张工要数据' }, todos[1]]);
+    check('归属 prompt 的待办清单含项目/状态/子项进度',
+      blk.includes('［黄区］') && blk.includes('进行中') && blk.includes('子项 1/2'), blk);
+    check('归属 prompt 的待办清单**不含 note**（私人备忘不外发）', !blk.includes('找张工要数据'), blk);
   }
 
   console.log('— 报告生成（/admin/report/*：生成/轮询/存档/防护） —');
@@ -1268,6 +1539,23 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     // userFinal 单元：待办行进 prompt 的形态（纯函数直测，不起 HTTP）
     {
       const { PROMPTS, LIMITS } = await import(path.join(ROOT, 'lib/report-prompts.mjs') + '?t=' + Date.now());
+      // 证据分级：不依赖 agent 的工作（发邮件/开会/评审）没有会话素材，
+      // 材料就是待办自身——它必须进正文，且备忘要标「需过滤」交给模型改写
+      const base = { rangeText: 'x', projects: [], unassigned: { sessions: 0, summaryText: '' }, todos: { created: [], updated: [], completed: [] }, usage: {}, sourcesFailed: [] };
+      const g = (o) => PROMPTS.userFinal({ ...base, todoGroups: [{ mappingNotes: [], items: [], note: '', status: 'done', hasSessions: false, summaryText: '', ...o }] });
+      check('userFinal：无会话无子项无备忘的待办也进正文（只写状态+标题，不编内容）',
+        g({ todo: { id: '1', title: '发结项邮件' } }).includes('【待办：发结项邮件】（已完成）')
+        && g({ todo: { id: '1', title: '发结项邮件' } }).includes('无会话、无子项、无备忘'),
+        g({ todo: { id: '1', title: '发结项邮件' } }).slice(0, 200));
+      check('userFinal：无会话待办带上子项清单（模型据此组织结论）',
+        g({ todo: { id: '1', title: '对接口' }, items: [{ title: '约会议', done: true }, { title: '写纪要', done: false }] })
+          .includes('子项：✓ 约会议；○ 写纪要'), '');
+      check('userFinal：备忘原文进 prompt 但明确标「需过滤」（私人备忘不能照搬进汇报）',
+        g({ todo: { id: '1', title: '对接口' }, note: '找张工要数据' }).includes('用户备忘（原文，需过滤）：找张工要数据'), '');
+      check('userFinal：有会话的待办用小结、不重复塞备忘',
+        (() => { const s = g({ todo: { id: '1', title: 'X' }, summaryText: '做了 A', note: '私人' }); return s.includes('做了 A') && !s.includes('私人'); })(), '');
+      check('userFinal：一条待办都没有时回落按项目分组',
+        PROMPTS.userFinal({ ...base, todoGroups: [], projects: [{ name: 'proj-a', summaryText: '素材 A' }] }).includes('proj-a'), '');
       const many = Array.from({ length: 40 }, (_, i) => ({ title: `待办${i}`, urgency: 'normal' }));
       const out = PROMPTS.userFinal({ rangeText: 'x', projects: [], todos: { created: many, completed: [] }, usage: {}, sourcesFailed: [] });
       check('userFinal：待办每列表最多 30 条、超出加「等 N 条」', out.includes('新增（40）') && out.includes('等 10 条') && !out.includes('待办39'), out.slice(out.indexOf('新增（'), out.indexOf('新增（') + 80));
@@ -1335,6 +1623,21 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       typeof rep.materials?.todos?.updated === 'number' && rep.materials.todos.updated === 0
       && typeof rep.materials.todos.created === 'number' && typeof rep.materials.todos.completed === 'number',
       JSON.stringify(rep.materials?.todos));
+    // 归属口径：报告素材记「进正文的待办数 / 其中有会话的 / 归到其他」三档
+    // 「其他」与「已归属」的会话数不能重复计：模型对同一项目可能既给待办行又给
+    // 「其他」行，早期实现会让同项目的会话两边都算一遍（实测 3 条待办拿到素材的同时
+    // 115 个会话全被算成「其他」，数据附注自相矛盾）
+    check('归属计数自洽：有会话的待办 + 其他 不超过总会话数',
+      (rep.materials?.sessions ?? 0) >= (rep.materials?.unassignedSessions ?? 0),
+      JSON.stringify({ sessions: rep.materials?.sessions, unassigned: rep.materials?.unassignedSessions }));
+    check('报告素材带归属计数（todoGroups / todoGroupsWithSessions / unassignedSessions）',
+      typeof rep.materials?.todoGroups === 'number'
+      && typeof rep.materials?.todoGroupsWithSessions === 'number'
+      && typeof rep.materials?.unassignedSessions === 'number',
+      JSON.stringify({ g: rep.materials?.todoGroups, w: rep.materials?.todoGroupsWithSessions, u: rep.materials?.unassignedSessions }));
+
+    check('无时段时 prompt 回落「各项目小结」（不出现呆板的「待办工作」空段）',
+      rep.report.includes('各项目小结') || rep.report.includes('ECHO:'), String(rep.report).slice(0, 160));
 
     // 空素材窗口：不调模型直接成稿（model=none、不再 failed）。
     // 主网关 zcode/opencode 指向 no-such.db（采集必失败）→ 空窗走「采集失败」口径，
@@ -1370,6 +1673,11 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('失败口径：HTTP 非 2xx（返回 HTTP <状态码>）', /上游 mock-oai 返回 HTTP 500/.test(fj.error || ''), fj.error);
     // 超时口径：requestUpstream 的 AbortError 在 callSummaryModel 换成中文——源码层断言（跑一次 120s 超时太慢）
     const genSrc = fs.readFileSync(path.join(ROOT, 'lib/report/generate.mjs'), 'utf8');
+    check('「其他」只收完全没归给待办的项目（分组代码用 assignedProjects 去重）',
+      /const assignedProjects = new Set/.test(genSrc)
+      && /if \(!assignedProjects\.has\(p\.name\)\) otherProjects\.set/.test(genSrc), '');
+    check('归属 prompt 按项目截断（避免整窗素材一次发出导致上游超时）',
+      /ATTRIBUTE_PROJECT_CHARS/.test(fs.readFileSync(path.join(ROOT, 'lib/report/attribute.mjs'), 'utf8')), '');
     check('失败口径：超时中文文案（请求超时（Ns））', genSrc.includes('请求超时（') && genSrc.includes('AbortError'));
     // 配错 reportProvider：失败文案应指出「配的不存在」，而不是误导用户去配置
     fj = await failWith((d) => { d.workbench = { reportProvider: '不存在-x' }; });
@@ -1695,11 +2003,17 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('左栏切屏按钮单行省略（名字可自填，截断要留 title）',
       /\.railm \.lb \{[^}]*white-space:\s*nowrap[^}]*text-overflow:\s*ellipsis/.test(themeCssText)
       && /data-mdisp[\s\S]{0,240}title=/.test(idxHtml));
-    // 一台屏一个按钮：点一下轮换到它的下一个输入源（不再按输入源列出整机同切）
+    // 两台屏一个按钮：点一下轮换到它的下一个输入源（不再按输入源列出整机同切）
     check('左栏一台屏一个按钮（按 monitors 渲染，带 data-mdisp/data-mnext）',
       /railMons\.innerHTML = all\.map\(\(m\)/.test(idxHtml)
-      && idxHtml.includes('data-mdisp=') && idxHtml.includes('data-mnext=')
-      && !idxHtml.includes('data-mminput'));
+      && idxHtml.includes('data-mdisp=') && idxHtml.includes('data-mnext='));
+    // 一键全切与按屏轮换是互补的两件事：前者显式指定目标（各屏当前源可能不一致，
+    // 「下一个」对它们不是同一个值），后者管单台。两者必须同时在左栏，各自渲染到自己的容器。
+    check('左栏一键全切按钮（每个输入源一个，data-mminput 渲染进 #railAll）',
+      /railAll\.innerHTML = inputs\.map\(\(i\)/.test(idxHtml)
+      && idxHtml.includes('data-mminput=')
+      && /id="railAll"/.test(idxHtml)
+      && /\$\('railAll'\)\.addEventListener\('click'[\s\S]{0,220}switchMon\(\{ input \}\)/.test(idxHtml));
     check('点按钮切到该屏下一个输入源（循环取模，非固定值）',
       /const next = inputs\.length \? inputs\[\(curIdx \+ 1\) % inputs\.length\] : null/.test(idxHtml)
       && /switchMon\(\{ input: next, display: b\.dataset\.mdisp \}\)/.test(idxHtml));
@@ -1807,6 +2121,26 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const scripts = [...idxHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
     check('主脚本以严格模式开头', /^\s*'use strict';/.test((scripts.at(-1) ?? '').trim()), scripts.at(-1)?.slice(0, 40));
     check('标识符已归并：无裸 editingId', !/\beditingId\b/.test(idxHtml) && idxHtml.includes('provEditingId') && idxHtml.includes('todoEditingId'));
+    // 顶层重名声明是整段脚本的死局：'use strict' 下 const 重复 → SyntaxError，
+    // 页面停在「加载中…」，而任何字符串断言都照样通过（真机 CDP 才抓得到）。
+    check('主脚本无顶层 const/let 重名声明（重名 = SyntaxError = 整页白屏）', (() => {
+      const src = scripts.at(-1) ?? '';
+      const seen = new Map();
+      const dups = [];
+      for (const m of src.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm)) {
+        const name = m[1];
+        if (seen.has(name)) dups.push(name);
+        seen.set(name, true);
+      }
+      return dups.length === 0;
+    })(), (() => {
+      const src = scripts.at(-1) ?? '';
+      const seen = new Map(); const dups = [];
+      for (const m of src.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm)) {
+        if (seen.has(m[1])) dups.push(m[1]); seen.set(m[1], true);
+      }
+      return dups.join(',');
+    })());
     check('esc() 转义 & < > " 四类（取工作台版）',
       /esc\s*=\s*\(s\)\s*=>[\s\S]{0,200}&gt;/.test(idxHtml) && /&quot;/.test(idxHtml));
     check('工作台页含待办/报告两区', wbText.includes('待办') && wbText.includes('报告'), '缺功能区字样');
@@ -1829,6 +2163,18 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     }
     // 清理已完成按钮：存在 + confirm 文案口径（全量范围/不可撤销/跳过编辑项）
     check('工作台页含「清理已完成」按钮', wbText.includes('id="clearDoneBtn"') && wbText.includes('清理已完成') && wbText.includes('clearDoneTodos'));
+    // 「已完成」组的展开态必须由用户决定并记住：它曾经是「没有任何进行中/待办时默认展开」
+    // 算出来的，于是任何一次重绘（切状态、轮询、另一个 agent 写入）都把它重算回收起态——
+    // 用户刚点开的已完成列表自己关上。
+    check('已完成组展开态：用户表过态就记住（localStorage），没表过态才用默认推断',
+      wbText.includes("wb-todo-done-open")
+      && wbText.includes('doneGroupOpen ??')
+      && /setDoneGroupOpen/.test(wbText),
+      '');
+    check('已完成组展开态：点击 summary 时写回选择（否则重绘就丢）',
+      /data-donegroup/.test(wbText)
+      && /details\[data-donegroup\] > summary/.test(wbText)
+      && /setDoneGroupOpen\(det\.open\)/.test(wbText), '');
     check('清理已完成：confirm 含全量范围与不可撤销、跳过编辑项口径', wbText.includes('此操作不可撤销') && wbText.includes('不受当前筛选影响') && wbText.includes('跳过编辑中的'));
     // feature-3：/ 聚焦搜索框快捷键（排除口径）+ Esc 清空 + 空清理提示
     check('工作台页含 / 聚焦搜索框快捷键（输入类控件/修饰键/IME/编辑中均排除）',
@@ -1860,8 +2206,11 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       `force: true ×${(wbText.match(/force: true/g) ?? []).length}`);
     check('重渲染快照还原未保存输入（编辑表单/详情/加子项框的值与焦点选区）',
       wbText.includes('form[data-noteform] textarea') && wbText.includes('selectionStart') && wbText.includes('skipDraftKey'));
-    check('子项勾选走 click 委托（另一条编辑中的重渲染不吞勾选；键盘空格同样触发 click；不再用 change）',
-      /document\.addEventListener\('click'[\s\S]*?type=["']checkbox["']\]\[data-itemid\]/.test(wbText) && !wbText.includes("document.addEventListener('change'"));
+    // 子项勾选必须走 click：change 事件在节点摘树后不再冒泡（另一条编辑中的重渲染会把
+    // 行换掉），勾选会丢。change 监听本身合法——但只允许用于 datetime 时段输入，不能用于 checkbox。
+    check('子项勾选走 click 委托（另一条编辑中的重渲染不吞勾选；键盘空格同样触发 click；不用 change）',
+      /document\.addEventListener\('click'[\s\S]*?type=["']checkbox["']\]\[data-itemid\]/.test(wbText)
+      && !/addEventListener\('change'[\s\S]{0,400}?checkbox/.test(wbText));
     const togSrc = wbText.match(/async function toggleItem[\s\S]*?\n\}/)?.[0] ?? '';
     check('子项勾选失败回同步（并发删除 404 后界面不与服务器背离）', togSrc.includes('force: true') && togSrc.includes('!r.ok'), togSrc.slice(0, 160));
   }

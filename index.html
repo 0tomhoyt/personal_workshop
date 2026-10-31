@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
-<title>统一订阅网关 · 管理台</title>
+<title>个人工作台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231a1410'/%3E%3Ccircle cx='8' cy='8' r='4.5' fill='none' stroke='%23d97706' stroke-width='2'/%3E%3Ccircle cx='8' cy='8' r='1.5' fill='%23d97706'/%3E%3C/svg%3E">
 <script>
 // 首屏先定主题（localStorage 覆盖 > 跟随系统），避免渲染后闪色
@@ -213,6 +213,27 @@
   .tnote { font-size: 12.5px; line-height: 1.7; color: var(--dim); white-space: pre-wrap; word-break: break-word; background: var(--inset); border-radius: 6px; padding: 8px 11px; margin-top: 5px; }
   .tnote-form textarea { width: 100%; font: 12.5px/1.7 var(--sans); padding: 8px 11px; border-radius: 6px; border: 1px solid var(--line); background: var(--inset); color: var(--ink); resize: vertical; margin-top: 5px; }
   .tnote-form .row { display: flex; gap: 7px; margin-top: 7px; }
+  /* ---- 待办：时段表（日历事件的来源）-------------------------------------- */
+  .tmeta .tspan { color: var(--faint); font-variant-numeric: tabular-nums; }
+  .tmeta .tspan.run { color: var(--amber); }
+  .tspanwrap { gap: 6px; }
+  .spanrow { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font: 11.5px var(--mono); color: var(--dim); }
+  .spanrow .sn { flex: none; width: 26px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .spanrow .dash { flex: none; color: var(--faint); }
+  .spanrow input[type="datetime-local"] {
+    flex: 1 1 150px; min-width: 0; font: 11.5px var(--mono); padding: 4px 7px; border-radius: 5px;
+    border: 1px solid var(--line); background: var(--inset); color: var(--ink);
+  }
+  .spanrow.run input[type="datetime-local"] { border-color: rgba(var(--amber-rgb), .5); }
+  .spanrow .sdur { flex: none; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .spanrow .srun { flex: none; color: var(--amber); }
+  .spanadd { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .spanadd > input { flex: 1 1 150px; min-width: 0; font: 11.5px var(--mono); padding: 4px 7px; border-radius: 5px; border: 1px solid var(--line); background: var(--inset); color: var(--ink); }
+  .spanadd > button { padding: 3px 10px; font-size: 11px; }
+  .snone { font-size: 12px; color: var(--faint); line-height: 1.6; }
+  /* 「⏸ 暂停」只在有进行中时段的那一行出现，琥珀描边与普通操作区分 */
+  .tacts .pausebtn { color: var(--amber); border-color: rgba(var(--amber-rgb), .5); }
+  .tacts .pausebtn:hover { color: var(--amber-hi); border-color: var(--amber-hi); }
   .tmeta .tproj { color: var(--blue); }
   .tmeta .tagent { color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; }
   .tacts { display: flex; gap: 6px; flex: none; }
@@ -226,6 +247,17 @@
 
   /* ---- 报告：区间选择与生成 --------------------------------------------- */
   .rng { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  /* 远程项目标签行：与区间选择器同一条视觉语言（一行文字控件组），
+     放生成按钮下面，因为它影响的是「生成时怎么归属」而不是「生成哪个区间」 */
+  .remoteproj { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin: -4px 0 12px; }
+  .remoteproj > label { font: 500 12px var(--mono); color: var(--dim); letter-spacing: .03em; flex: none; }
+  .remoteproj > input {
+    flex: 1 1 190px; min-width: 0; font: 12.5px var(--mono); padding: 6px 10px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--inset); color: var(--ink);
+  }
+  .remoteproj > input::placeholder { color: var(--faint); }
+  .remoteproj > button { padding: 6px 12px; font-size: 12px; }
+  .remoteproj .rp-hint { font-size: 11.5px; color: var(--faint); }
   .rng input[type="datetime-local"] {
     font: 12.5px var(--mono); padding: 6px 9px; border-radius: 7px;
     border: 1px solid var(--line); background: var(--inset); color: var(--ink);
@@ -351,8 +383,8 @@
   <!-- 左通道栏：品牌 + 遥测状态 + 视图页签 + 服务控制 -->
   <aside class="rail">
     <div class="brand">
-      <h1><span class="zh-mark">◈</span>统一订阅网关</h1>
-      <div class="sub">Gateway Console</div>
+      <h1><span class="zh-mark">◈</span>个人工作台</h1>
+      <div class="sub">Workbench Console</div>
     </div>
     <div class="rail-rule"></div>
     <div class="rail-tel">
@@ -379,11 +411,13 @@
       </div>
     </nav>
 
-    <!-- 显示器整机同切：常驻左栏底部（使用频率高，不能藏在「管理台→总览」两步之后）。
+    <!-- 显示器切源：常驻左栏底部（使用频率高，不能藏在「管理台→总览」两步之后）。
+         两组：按屏轮换（管这一台）与一键全切（管全部），各渲染到自己的容器。
          纵向一项一行——横向并排会把每个按钮挤到约 37px 内容宽，中文逐字折断成竖排。 -->
     <div class="rail-foot" id="railFoot" hidden>
       <div class="sub">Displays</div>
       <div class="rail-mons" id="railMons"></div>
+      <div class="rail-mons rail-all" id="railAll"></div>
     </div>
 
   </aside>
@@ -668,6 +702,13 @@
         </div>
         <div class="rprog" id="rprog">
           <div class="rline"><span id="rphase">提取会话素材…</span><span class="rbar"></span></div>
+        </div>
+        <!-- 远程项目标签：打这些标签的待办不在这台机器上做，不参与会话归属 -->
+        <div class="remoteproj">
+          <label for="remoteProjects" title="打这些项目标签的待办不在这台机器上进行：不参与会话归属，但仍按子项/备忘写进汇报。逗号或空格分隔。">远程项目</label>
+          <input type="text" id="remoteProjects" placeholder="如：黄区（留空=本机全部）" maxlength="200">
+          <button id="remoteSave" title="写入 providers.json 的 workbench.remoteProjects（热生效）">保存</button>
+          <span class="rp-hint" id="remoteHint"></span>
         </div>
         <div class="rout" id="rout">
           <div class="rmeta">
@@ -1630,11 +1671,13 @@ function monBadge(m) {
 function renderMonitors(d) {
   const box = $('monList');
   const railMons = $('railMons');
+  const railAll = $('railAll');
   const railFoot = $('railFoot');
   // 左栏切屏区：m1ddc 不可用/状态取不到时整块收起，不占地方也不给假按钮
   const hideRail = () => {
     if (railFoot) railFoot.hidden = true;
     if (railMons) { railMons.innerHTML = ''; railMons.classList.remove('is-busy'); }
+    if (railAll) { railAll.innerHTML = ''; railAll.classList.remove('is-busy'); }
   };
   if (!d) {
     box.innerHTML = '<span class="dim">状态获取失败（服务无响应）</span>';
@@ -1675,6 +1718,24 @@ function renderMonitors(d) {
     }).join('');
   }
 
+  // 一键全切：**每个输入源一个按钮**，点哪个所有屏一起切到哪（显式目标，不用轮换——
+  // 全切时各屏当前源可能不一致，「下一个」对它们不是同一个值）。与上面按屏轮换是
+  // 互补的两件事：按屏管「这一台」，这里管「全部」。纵向一项一行，遵守左栏布局契约。
+  // 输入源一条都没有时整块不渲染，不留空行。
+  if (railAll) {
+    railAll.hidden = !inputs.length; // 空块不占位（.rail-foot 有 6px gap，空 div 会留一道缝）
+    railAll.classList.toggle('is-busy', monBusy);
+    railAll.innerHTML = inputs.map((i) => {
+      const n = all.filter((m) => m.ok && m.input === i.value).length;
+      const atAll = n && n === all.length;
+      const title = atAll
+        ? `所有屏都已经在「${i.label}」，点击保持不变`
+        : `${n ? `${n}/${all.length} 台屏在「${i.label}」` : '所有屏都没在这个输入源'}；点击全部切到「${i.label}」`;
+      return `<button class="railm all${atAll ? ' on' : ''}" data-mminput="${i.value}"`
+        + `${monBusy ? ' disabled' : ''} title="${esc(title)}">`
+        + `<span class="lb">全部 → ${esc(i.label)}</span></button>`;
+    }).join('');
+  }
 
   box.innerHTML = (d.monitors || []).map((m) => {
     const err = m.error ? ` <span class="bad" style="font-size:11px">${esc(m.error)}</span>` : '';
@@ -1734,6 +1795,15 @@ $('railMons').addEventListener('click', (e) => {
   const next = Number(b.dataset.mnext);
   if (!Number.isFinite(next)) return;
   switchMon({ input: next, display: b.dataset.mdisp });
+});
+
+// 左栏底部：一键全切——不带 display 即切全部（服务端 resolveDisplays 缺省返回 cfg.list）
+$('railAll').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-mminput]');
+  if (!b || monBusy) return;
+  const input = Number(b.dataset.mminput);
+  if (!Number.isFinite(input)) return;
+  switchMon({ input });
 });
 
 // 单屏轮换切换 + 输入源改名下拉（事件委托在容器上）
@@ -1821,6 +1891,10 @@ async function switchMon(body) {
     }
   } catch (e) { setMonMsg(`请求异常：${e}`); }
   monBusy = false;
+  // 必须有这一次重绘：切之前那次 renderMonitors 是按 monBusy=true 画的（按钮 disabled），
+  // 只把 monBusy 置回 false 不会让 DOM 复活 → 按钮在下面那 4.5s 强刷之前一直是灰的，
+  // 用户点第二下没反应也没解释。
+  if (monState) renderMonitors(monState);
   setTimeout(() => loadMonitors(true), 4500); // 等过渡态（读回 0）过去再强刷
 }
 
@@ -2123,8 +2197,24 @@ let todoFilters = { project: '', source: '', urgency: '', q: '' };
 try { todoFilters = { ...todoFilters, ...JSON.parse(localStorage.getItem('wb-todo-filters') || '{}') }; } catch {}
 const saveFilters = () => { try { localStorage.setItem('wb-todo-filters', JSON.stringify(todoFilters)); } catch {} };
 let todoEditingId = null; // 就地编辑中的待办 id
-const expandedIds = new Set(); // 展开中的待办（子项清单 + 详情）；会话内状态，收起即弃
+const expandedIds = new Set(); // 展开中的待办（子项清单 + 详情 + 时段）；会话内状态，收起即弃
 let noteEditId = null; // 详情编辑中的待办 id（textarea 表单态）
+
+// 「已完成」组的展开状态：**用户手动开合过就听用户的**，记住并跨会话保留。
+// 曾经它是由「没有任何进行中/待办时默认展开」算出来的——任何一次重绘（切状态、
+// 轮询、另一个 agent 写入）都会重算，于是用户刚点开的已完成列表自己收回去。
+// 只有「用户从没表过态」时才用那个推断当初始值。
+const DONE_OPEN_KEY = 'wb-todo-done-open';
+let doneGroupOpen = (() => {
+  try {
+    const v = localStorage.getItem(DONE_OPEN_KEY);
+    return v === null ? null : v === '1'; // null = 用户没表过态
+  } catch { return null; }
+})();
+const setDoneGroupOpen = (open) => {
+  doneGroupOpen = open;
+  try { localStorage.setItem(DONE_OPEN_KEY, open ? '1' : '0'); } catch {}
+};
 
 // 在线状态灯随真实请求结果走（写死会与列表区的加载失败自相矛盾）
 // 在线状态统一由 render(h) 维护（dot / sState）；这里只作为「待办请求失败」的旁路提示，
@@ -2159,6 +2249,54 @@ async function refreshTodos({ force = false, skipDraftKey } = {}) {
   }
 }
 
+// ── 待办时段（spans）的显示与录入辅助 ──────────────────────────────────────
+// 时长格式化（毫秒）：1h20m / 45m / 3h。与文件靠前的 fmtDur 区分——那个是秒级运行时长
+// （「1时20分」），同名会让整段脚本 SyntaxError、页面停在「加载中…」。
+const fmtSpanDur = (ms) => {
+  const min = Math.round(ms / 60000);
+  if (min < 1) return '0m';
+  const h = Math.floor(min / 60); const m = min % 60;
+  return h ? `${h}h${m ? `${m}m` : ''}` : `${m}m`;
+};
+// epoch ↔ datetime-local 字符串（本地时区；toISOString 是 UTC，会整体偏 8 小时）。
+// toLocalInput 复用下方报告区间选择器那一份；这里只要反方向的解析。
+const fromLocalInput = (v) => {
+  if (!v) return null;
+  const ms = new Date(v).getTime();
+  return Number.isFinite(ms) ? ms : null;
+};
+
+// 展开区的时段表：每段一行可改起止、可删；末尾「＋ 加一段」与「开始/暂停」。
+// 每一段就是日历里的一条事件，所以时间必须能手改（点按钮记的时间经常不准）。
+function spansBlock(t) {
+  const spans = Array.isArray(t.spans) ? t.spans : [];
+  const running = spans.some((s) => s.end == null);
+  const rows = spans.map((s, i) => {
+    const isOpen = s.end == null;
+    return `<div class="spanrow${isOpen ? ' run' : ''}">
+      <span class="sn">${i + 1}</span>
+      <input type="datetime-local" data-spanstart="${esc(s.id)}" data-todo="${esc(t.id)}" value="${esc(toLocalInput(s.start))}" title="开始时间">
+      <span class="dash">→</span>
+      <input type="datetime-local" data-spanend="${esc(s.id)}" data-todo="${esc(t.id)}" value="${isOpen ? '' : esc(toLocalInput(s.end))}" title="${isOpen ? '进行中：留空表示还在继续' : '结束时间'}">
+      ${isOpen ? '<span class="srun">进行中</span>' : `<span class="sdur">${esc(fmtSpanDur(Math.max(0, s.end - s.start)))}</span>`}
+      <button type="button" class="ckdel" data-spandel="${esc(s.id)}" data-todo="${esc(t.id)}" title="删除该时段">✕</button>
+    </div>`;
+  }).join('');
+  const now = Date.now();
+  const addStart = toLocalInput(Math.floor((now - 30 * 60000) / 60000) * 60000);
+  return `<div class="tdetail tspanwrap">
+    <div class="tdh">时段<button type="button" data-spanopen="${esc(t.id)}"${running ? ' hidden' : ''}>▸ 开始一段</button><button type="button" data-spanclose="${esc(t.id)}"${running ? '' : ' hidden'}>⏸ 暂停</button><button type="button" data-spanadd="${esc(t.id)}">＋ 补一段</button></div>
+    ${rows || '<div class="snone">还没有时段。点「▸ 开始」记录，或「＋ 补一段」手填——每段会同步成日历里的一条事件。</div>'}
+    <div class="spanadd" data-spanaddform="${esc(t.id)}" hidden>
+      <input type="datetime-local" name="start" value="${esc(addStart)}" title="开始时间">
+      <span class="dash">→</span>
+      <input type="datetime-local" name="end" title="结束时间（留空=进行中）">
+      <button type="button" data-spanaddok="${esc(t.id)}">确定</button>
+      <button type="button" data-spanaddcancel="${esc(t.id)}">取消</button>
+    </div>
+  </div>`;
+}
+
 function renderTodos({ skipDraftKey } = {}) {
   // 重建前快照所有未保存输入（标题编辑表单 / 详情 textarea / 加子项框），重建后按
   // 表单键还原值与焦点选区——动作型强制重渲染（勾子项、切状态等）不再丢正在打的字；
@@ -2168,6 +2306,15 @@ function renderTodos({ skipDraftKey } = {}) {
     const f = el.closest('form');
     const key = f.dataset.editform || f.dataset.noteform || f.dataset.itemform;
     if (key !== skipDraftKey) draft.push({ key, name: el.name, value: el.value, focused: el === document.activeElement, s: el.selectionStart, e: el.selectionEnd });
+  });
+  // datetime 输入不属于任何 form（时段表是裸输入 + 委托 change），单独快照：
+  // 重建时正在挑日期的那一格不能被抹掉
+  const draftDt = [];
+  $('todoList').querySelectorAll('input[type="datetime-local"]').forEach((el) => {
+    const d = el.dataset;
+    const key = d.spanstart || d.spanend || el.closest('[data-spanaddform]')?.dataset.spanaddform;
+    const field = d.spanstart ? 'start' : d.spanend ? 'end' : el.name;
+    if (key) draftDt.push({ key, field, value: el.value, focused: el === document.activeElement });
   });
   // 筛选选项从现有数据动态生成；已失效的筛选值自动清除
   const projects = [...new Set(allTodos.map((t) => t.project).filter(Boolean))].sort();
@@ -2223,17 +2370,32 @@ function renderTodos({ skipDraftKey } = {}) {
     if (todoEditingId === t.id) return editForm(t);
     const agent = t.source && t.source !== 'user' ? `<span class="tagent">${esc(String(t.source).replace(/^agent:/, ''))}</span>` : '';
     const proj = t.project ? `<span class="tproj">${esc(t.project)}</span>` : '';
-    const next = t.status === 'pending' ? ['in_progress', '▸ 开始'] : t.status === 'in_progress' ? ['done', '✓ 完成'] : ['pending', '↺ 重开'];
+    const next = t.status === 'pending' ? ['in_progress', '▸ 开始']
+      : t.status === 'in_progress' ? ['done', '✓ 完成']
+        : ['pending', '↺ 重开'];
     const items = Array.isArray(t.items) ? t.items : [];
     const doneCnt = items.filter((x) => x.done).length;
     const prog = items.length ? `<span class="tiprog">子项 ${doneCnt}/${items.length}</span>` : '';
     const hint = t.note ? '<span class="tinhint">详情</span>' : '';
-    const expandable = items.length > 0 || Boolean(t.note);
+    // 时段摘要：进行中优先显示（那是用户唯一会盯着看的信息），否则显示「N 段 · 总时长」。
+    // 时段是日历事件的来源——收起行能看到它，用户才知道日历会同步出什么。
+    const spans = Array.isArray(t.spans) ? t.spans : [];
+    const runningSpan = spans.find((s) => s.end == null);
+    const spanInfo = (() => {
+      if (!spans.length) return '';
+      const now = Date.now();
+      const total = spans.reduce((n, s) => n + Math.max(0, (s.end ?? now) - s.start), 0);
+      return runningSpan
+        ? `<span class="tspan run" title="进行中（日历会同步为「开始到现在」）">进行中 ${fmtSpanDur(now - runningSpan.start)}</span>`
+        : `<span class="tspan" title="日历同步为 ${spans.filter((s) => s.end != null).length} 条事件">${spans.length} 段 · ${fmtSpanDur(total)}</span>`;
+    })();
+    // 展开箭头恒显示：它曾经是「有子项或详情才显示」，而子项/详情只能在展开区里添加——
+    // 于是干净待办永远没有入口加第一条，功能等于只有 agent 走 REST 才用得着。
     const open = expandedIds.has(t.id);
     // 展开区：子项清单（勾选/删除/添加走单操作端点，父状态由服务端派生）+ 详情
     // （长文只在展开后可见——收起行永不显示 note 正文，即「默认折叠长文」）
     let tx = '';
-    if (open && expandable) {
+    if (open) {
       const ck = items.map((it) => `<label class="ckitem${it.done ? ' done' : ''}">
           <input type="checkbox" data-itemid="${esc(it.id)}" data-todo="${esc(t.id)}"${it.done ? ' checked' : ''}>
           <span class="ttl">${esc(it.title)}</span>
@@ -2247,16 +2409,20 @@ function renderTodos({ skipDraftKey } = {}) {
         ? `<div class="tdetail"><div class="tdh">详情<button type="button" data-noteedit="${esc(t.id)}">编辑</button></div><div class="tnote">${esc(t.note)}</div></div>`
         : `<div class="tdetail"><button type="button" data-noteedit="${esc(t.id)}">＋ 添加详情</button></div>`;
       const detail = noteEditId === t.id ? noteEditForm(t) : noteView;
-      tx = `<div class="tx">${items.length ? `<div class="cklist">${ck}${ckAdd}</div>` : ''}${detail}</div>`;
+      // ckAdd 必须无条件渲染：它曾经包在 `items.length ? … : ''` 里，于是没有子项的待办
+      // 既看不到自己的清单、也没有输入框——而输入框正是加第一条的唯一入口。
+      // 与展开箭头同一个死角（有内容才显示入口，而入口是产生内容的唯一途径）。
+      tx = `<div class="tx"><div class="cklist">${ck}${ckAdd}</div>${detail}${spansBlock(t)}</div>`;
     }
     return `<div class="titem ${t.status === 'done' ? 'done' : ''}${t.status === 'in_progress' ? ' ip' : ''}">
       <span class="turg ${esc(t.urgency)}" title="${esc(URG_LABEL[t.urgency] || t.urgency)}"></span>
-      ${expandable ? `<button type="button" class="texp${open ? ' open' : ''}" data-expand="${esc(t.id)}" title="${open ? '收起子项与详情' : '展开子项与详情'}">${open ? '▾' : '▸'}</button>` : ''}
+      <button type="button" class="texp${open ? ' open' : ''}" data-expand="${esc(t.id)}" title="${open ? '收起子项与详情' : '展开子项与详情'}">${open ? '▾' : '▸'}</button>
       <div class="tmain">
         <div class="ttitle editable" data-edit="${esc(t.id)}" title="点击编辑">${esc(t.title)}</div>
-        <div class="tmeta">${proj}${agent}${prog}${hint}<span>${t.completed_at ? '完成于 ' + fmtTime(t.completed_at) : '建于 ' + fmtTime(t.created_at)}</span></div>
+        <div class="tmeta">${proj}${agent}${prog}${hint}${spanInfo}<span>${t.completed_at ? '完成于 ' + fmtTime(t.completed_at) : '建于 ' + fmtTime(t.created_at)}</span></div>
       </div>
       <div class="tacts">
+        ${runningSpan ? `<button class="pausebtn" data-act="pause" data-id="${esc(t.id)}" title="暂停：闭合当前时段，状态不变">⏸ 暂停</button>` : ''}
         <button data-act="cycle" data-id="${esc(t.id)}" data-next="${next[0]}">${next[1]}</button>
         <button class="danger" data-act="del" data-id="${esc(t.id)}">删除</button>
       </div>
@@ -2267,7 +2433,13 @@ function renderTodos({ skipDraftKey } = {}) {
   let html = '';
   if (doing.length) html += `<div class="tgroup"><div class="tgroup-label">进行中 <span class="cnt">${doing.length}</span></div>${doing.map(item).join('')}</div>`;
   if (pending.length) html += `<div class="tgroup"><div class="tgroup-label">待办 <span class="cnt">${pending.length}</span></div>${pending.map(item).join('')}</div>`;
-  if (done.length) html += `<details class="tdone-group" ${done.length && !doing.length && !pending.length ? 'open' : ''}><summary>已完成 · ${done.length} 项（点击展开）</summary>${done.slice().reverse().map(item).join('')}</details>`;
+  if (done.length) {
+    // 展开态：用户表过态就照它（跨重绘、跨会话都不变）；没表过态才用「没有别的活时默认展开」
+    const doneOpen = doneGroupOpen ?? (done.length > 0 && !doing.length && !pending.length);
+    html += `<details class="tdone-group" data-donegroup${doneOpen ? ' open' : ''}>`
+      + `<summary>已完成 · ${done.length} 项（${doneOpen ? '点击收起' : '点击展开'}）</summary>`
+      + `${done.slice().reverse().map(item).join('')}</details>`;
+  }
   const filtered = !!(todoFilters.project || todoFilters.source || todoFilters.urgency || q);
   $('todoList').innerHTML = html
     || (filtered ? '<div class="empty">筛选下没有待办。</div>'
@@ -2295,6 +2467,16 @@ function renderTodos({ skipDraftKey } = {}) {
     if (!el) continue;
     el.value = d.value;
     if (d.focused) { el.focus(); try { el.setSelectionRange(d.s, d.e); } catch {} }
+  }
+  // datetime 只还原「此刻有焦点」的那一格：其余按服务端新值渲染，
+  // 刚提交过的时段不该被旧值盖回去
+  for (const d of draftDt) {
+    if (!d.focused) continue;
+    const sel = d.field === 'start' ? `[data-spanstart="${d.key}"]`
+      : d.field === 'end' ? `[data-spanend="${d.key}"]`
+        : `[data-spanaddform="${d.key}"] input[name="${d.field}"]`;
+    const el = document.querySelector(sel);
+    if (el) { el.value = d.value; el.focus(); }
   }
 
   renderRailStats();
@@ -2378,12 +2560,52 @@ async function addTodo() {
   } else showErr((await r.json().catch(() => ({}))).error?.message || `添加失败（HTTP ${r.status}）`);
 }
 
+// 状态推进：时段的开/闭由服务端跟着状态自动做（进 in_progress 开一段、进 done 闭段），
+// 与直接调 API 的外部同步程序同一语义——前端不必再单独发时段请求。
 async function cycleTodo(id, next) {
   const r = await apiFetch(`/v1/todos/${encodeURIComponent(id)}`, {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: next }),
   });
   if (r.ok) refreshTodos({ force: true }); else showErr(`状态更新失败（HTTP ${r.status}）`);
 }
+
+// ── 时段动作（日历同步的数据源）──
+// 暂停只闭段、不动状态：用户「先停一下」不等于「这件事做完了」。
+async function pauseTodo(id) {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(id)}/spans/close`, { method: 'POST' });
+  if (r.ok) refreshTodos({ force: true }); else showErr(`暂停失败（HTTP ${r.status}）`);
+}
+
+async function openSpanOf(id) {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(id)}/spans/open`, { method: 'POST' });
+  if (r.ok) refreshTodos({ force: true }); else showErr(`开始时段失败（HTTP ${r.status}）`);
+}
+
+async function addSpan(todoId, start, end) {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(todoId)}/spans`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ start, end }),
+  });
+  if (r.status === 201) refreshTodos({ force: true });
+  else showErr((await r.json().catch(() => ({}))).error?.message || `时段添加失败（HTTP ${r.status}）`);
+}
+
+async function delSpan(todoId, spanId) {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(todoId)}/spans/${encodeURIComponent(spanId)}`, { method: 'DELETE' });
+  if (r.status === 204) refreshTodos({ force: true }); else showErr(`时段删除失败（HTTP ${r.status}）`);
+}
+
+// 起止分开传：只发改了的那个字段，服务端不必猜「另一个没传是清空还是不动」
+const patchSpan = async (todoId, spanId, patch, label) => {
+  const r = await apiFetch(`/v1/todos/${encodeURIComponent(todoId)}/spans/${encodeURIComponent(spanId)}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch),
+  });
+  if (r.ok) refreshTodos({ force: true });
+  else showErr((await r.json().catch(() => ({}))).error?.message || `${label}失败（HTTP ${r.status}）`);
+};
+const saveSpanStart = (todoId, spanId, start) => (start == null
+  ? Promise.resolve(showErr('开始时间无效')) : patchSpan(todoId, spanId, { start }, '时段开始时间保存'));
+// 结束框清空 = 把这段改回「进行中」（语义直白：留空就是还没结束）
+const saveSpanEnd = (todoId, spanId, end) => patchSpan(todoId, spanId, { end }, '时段结束时间保存');
 
 async function delTodo(id) {
   const r = await apiFetch(`/v1/todos/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -2478,7 +2700,9 @@ function currentRange() {
   return presetRange(document.querySelector('#rngSeg button.active')?.dataset.rng || 'today');
 }
 
-const PHASE_TEXT = { collect: '提取会话素材…', summarize: '分项目总结', final: '汇总成稿…' };
+// 进度文案：attribute 是新增的一步（把会话对到待办上），耗时可能不短，不能显示成
+// 「生成中…」这种不知道在等什么的话
+const PHASE_TEXT = { collect: '提取会话素材…', attribute: '匹配待办…', summarize: '分待办总结', final: '汇总成稿…' };
 let genTimer = null;
 let viewingReportId = null; // 历史表当前查看的报告 id（行高亮用）
 
@@ -2511,9 +2735,14 @@ function pollJob() {
       const j = await (await fetch('/admin/report/job')).json();
       if (j.state === 'running') {
         const p = j.progress || {};
-        $('rphase').textContent = p.phase === 'summarize'
+        // 加已耗时：归属和二级汇总是单次长调用（可达一两分钟），只显示阶段名
+        // 会让用户以为卡死——尤其上游超时重试时，页面十几分钟不动一个字
+        const elapsed = j.startedAt ? Date.now() - j.startedAt : 0;
+        // 秒级：等待中的用户关心的是「还在动」，1m / 2m 的粒度变化太慢
+        const elText = elapsed > 5000 ? ` · 已 ${Math.round(elapsed / 1000)}s` : '';
+        $('rphase').textContent = (p.phase === 'summarize'
           ? `${PHASE_TEXT.summarize}（${p.projectsDone ?? 0}/${p.projectsTotal ?? '?'}）`
-          : (PHASE_TEXT[p.phase] || '生成中…');
+          : (PHASE_TEXT[p.phase] || '生成中…')) + elText;
         setGenerating(true);
         $('rprog').style.display = 'block';
         return;
@@ -2685,6 +2914,36 @@ async function copyReport() {
   setTimeout(() => { $('copyBtn').textContent = '复制 Markdown'; }, 1600);
 }
 
+// ── 远程项目标签（workbench.remoteProjects）────────────────────────────────
+// 打这些项目标签的待办不在这台机器上做：不参与会话归属，但照常写进汇报正文。
+// 输入框用「逗号或空格分隔」——比让用户在页面上增删多行更省事，标签一般只有一两个。
+async function loadRemoteProjects() {
+  try {
+    const cfg = await (await fetch('/admin/config')).json();
+    const list = cfg.workbench?.remoteProjects ?? [];
+    $('remoteProjects').value = list.join('、');
+    $('remoteHint').textContent = list.length ? '' : '（本机全部）';
+  } catch (e) { $('remoteHint').textContent = `读取失败：${e?.message || e}`; }
+}
+
+async function saveRemoteProjects() {
+  // 中英文逗号、顿号、空格都当分隔符（用户不会记得只许用哪个）
+  const raw = $('remoteProjects').value;
+  const list = raw.split(/[,，、\s]+/).map((s) => s.trim()).filter(Boolean);
+  const r = await apiFetch('/admin/workbench/remote-projects', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ remoteProjects: list }),
+  });
+  if (r.ok) {
+    const j = await r.json().catch(() => ({}));
+    $('remoteProjects').value = (j.remoteProjects ?? []).join('、');
+    $('remoteHint').textContent = (j.remoteProjects ?? []).length ? '已保存' : '已保存（本机全部）';
+    setTimeout(() => { $('remoteHint').textContent = (j.remoteProjects ?? []).length ? '' : '（本机全部）'; }, 2000);
+  } else {
+    showErr((await r.json().catch(() => ({}))).error?.message || `保存失败（HTTP ${r.status}）`);
+  }
+}
+
 async function refreshHistory() {
   try {
     const r = await fetch('/admin/report/list');
@@ -2749,6 +3008,8 @@ function syncPresetFromInputs() {
   });
 });
 $('genBtn').addEventListener('click', safe(generateReport));
+$('remoteSave').addEventListener('click', safe(saveRemoteProjects));
+loadRemoteProjects(); // 远程项目标签：进页面即回填（报告页可见时才有意义，代价极小）
 $('copyBtn').addEventListener('click', safe(copyReport));
 $('dlBtn').addEventListener('click', downloadReport);
 $('dlBtn').disabled = true; // 初始无成稿，与复制按钮的空提示口径不同：直接禁用
@@ -2779,6 +3040,18 @@ document.addEventListener('click', (e) => {
   if (todoEditingId && !e.target.closest('form[data-editform]') && !e.target.closest('.ttitle.editable') && !e.target.closest('#clearDoneBtn')) {
     todoEditingId = null;
     renderTodos();
+  }
+  // 「已完成」组展开态：用户点开/收起就记住（<details> 自己翻转 open，这里读回结果）
+  const dgSummary = e.target.closest('details[data-donegroup] > summary');
+  if (dgSummary) {
+    // 原生 toggle 发生在 click 之后，用 microtask 读回翻转后的值
+    const det = dgSummary.parentElement;
+    queueMicrotask(() => {
+      setDoneGroupOpen(det.open);
+      const s = det.querySelector('summary');
+      if (s) s.textContent = s.textContent.replace(/点击(展开|收起)/, det.open ? '点击收起' : '点击展开');
+    });
+    return;
   }
   // 点标题进入就地编辑
   const et = e.target.closest('.ttitle.editable');
@@ -2830,6 +3103,32 @@ document.addEventListener('click', (e) => {
   // 勾选不丢事件（change 事件在节点摘树后不再冒泡到 document，故不用 change）
   const cb = e.target.closest('input[type="checkbox"][data-itemid]');
   if (cb) { safe(toggleItem)(cb.dataset.todo, cb.dataset.itemid, cb.checked); return; }
+  // ── 时段：开 / 暂停 / 补一段 / 删 ──
+  const spOpen = e.target.closest('button[data-spanopen]');
+  if (spOpen) { safe(openSpanOf)(spOpen.dataset.spanopen); return; }
+  const spClose = e.target.closest('button[data-spanclose]');
+  if (spClose) { safe(pauseTodo)(spClose.dataset.spanclose); return; }
+  const spAdd = e.target.closest('button[data-spanadd]');
+  if (spAdd) {
+    const f = spAdd.closest('.tspanwrap').querySelector('[data-spanaddform]');
+    f.hidden = false;
+    f.querySelector('input[name="start"]').focus();
+    return;
+  }
+  const spAddCancel = e.target.closest('button[data-spanaddcancel]');
+  if (spAddCancel) { spAddCancel.closest('[data-spanaddform]').hidden = true; return; }
+  const spAddOk = e.target.closest('button[data-spanaddok]');
+  if (spAddOk) {
+    const f = spAddOk.closest('[data-spanaddform]');
+    const start = fromLocalInput(f.querySelector('input[name="start"]').value);
+    const end = fromLocalInput(f.querySelector('input[name="end"]').value);
+    if (start == null) { showErr('时段开始时间无效'); return; }
+    if (end != null && end < start) { showErr('时段结束不能早于开始'); return; }
+    safe(addSpan)(spAddOk.dataset.spanaddok, start, end);
+    return;
+  }
+  const spDel = e.target.closest('button[data-spandel]');
+  if (spDel) { safe(delSpan)(spDel.dataset.todo, spDel.dataset.spandel); return; }
   // 删除子项（轻量操作，不 confirm——标题删除才有 confirm）
   const idel = e.target.closest('button[data-itemdel]');
   if (idel) { safe(delItem)(idel.dataset.todo, idel.dataset.itemid); return; }
@@ -2840,6 +3139,7 @@ document.addEventListener('click', (e) => {
   if (b.closest('#provTbl')) return;
   const id = b.dataset.id;
   if (b.dataset.act === 'cycle') safe(cycleTodo)(id, b.dataset.next);
+  else if (b.dataset.act === 'pause') safe(pauseTodo)(id);
   else if (b.dataset.act === 'del') { if (confirm('删除这条待办？')) safe(delTodo)(id); }
   else if (b.dataset.act === 'editcancel') { todoEditingId = null; renderTodos(); }
   else if (b.dataset.act === 'view') safe(showReport)(id);
@@ -2854,6 +3154,15 @@ document.addEventListener('click', (e) => {
     }).catch((e) => showErr(`请求失败：${e?.message || e}`));
   }
 });
+// datetime-local 就地改（时段起止）：change 而非 input——用键盘调数字时 input 会
+// 每按一下就发一次 PATCH，change 只在确认后发一次
+document.addEventListener('change', (e) => {
+  const se = e.target.closest('input[data-spanend][data-todo]');
+  if (se) { safe(saveSpanEnd)(se.dataset.todo, se.dataset.spanend, fromLocalInput(se.value)); return; }
+  const ss = e.target.closest('input[data-spanstart][data-todo]');
+  if (ss) { safe(saveSpanStart)(ss.dataset.todo, ss.dataset.spanstart, fromLocalInput(ss.value)); return; }
+});
+
 // 编辑表单提交（回车或「保存」）：空标题不放行
 document.addEventListener('submit', (e) => {
   const f = e.target.closest('form[data-editform]');
