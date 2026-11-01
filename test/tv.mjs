@@ -176,7 +176,7 @@ try {
     check('snapshot → 200', r.status === 200, String(r.status));
     check('快照带 ETag', /^"[^"]+"$/.test(r.headers.get('etag') || ''), r.headers.get('etag'));
     check('快照体积不超 6 KB（字节数；2 KB 是满工作量的下限，此夹具待办较少）', Buffer.byteLength(raw) <= 6144, `${Buffer.byteLength(raw)} bytes`);
-    check('顶层字段齐全', snap.version === 1 && typeof snap.now === 'number' && snap.online === true && snap.health && snap.todos && snap.usage,
+    check('顶层字段齐全', snap.version === 2 && typeof snap.now === 'number' && snap.online === true && snap.health && snap.todos && snap.usage,
       Object.keys(snap).join(','));
     check('最多 6 条待办', snap.todos.items.length === 6, String(snap.todos.items.length));
     check('完成项不进列表', !snap.todos.items.some((t) => t.status === 'done'));
@@ -207,6 +207,15 @@ try {
     check('usage 今日请求/tokens/费用', snap.usage && typeof snap.usage.requests === 'number'
       && typeof snap.usage.tokens === 'number' && typeof snap.usage.costUsd === 'number', JSON.stringify(snap.usage));
     check('usage 24 小时柱', Array.isArray(snap.usage.hours) && snap.usage.hours.length === 24, String(snap.usage.hours?.length));
+
+    // 订阅脉搏：夹具那家 mock provider 的 baseUrl 是 127.0.0.1，认不出额度家数 →
+    // state 'none'，但卡片形状必须在（name + spend + quota），端点不因额度查询失败而倒。
+    check('providers 节：每张卡带 name/spend/quota', Array.isArray(snap.providers) && snap.providers.length === 1
+      && snap.providers[0].name === 'MockOAI'
+      && typeof snap.providers[0].spend.today === 'number' && typeof snap.providers[0].spend.days30 === 'number'
+      && ['ok', 'stale', 'error', 'none'].includes(snap.providers[0].quota.state)
+      && Array.isArray(snap.providers[0].quota.tiers), JSON.stringify(snap.providers));
+    check('providers 不含凭证字段', !raw.includes('"token"') && !raw.includes('"baseUrl"') && !raw.includes('"auth"'));
 
     console.log('— 体积上限（真实工作量） —');
     {

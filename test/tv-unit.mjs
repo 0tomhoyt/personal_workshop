@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import {
   clip, runningMs, orderTodos, usageToday, buildSnapshot, etagOf, etagMatches,
-  startOfLocalDay, fitToLimit, MAX_BYTES,
+  startOfLocalDay, fitToLimit, MAX_BYTES, providerCard,
 } from '../lib/tv-snapshot.mjs';
 import { inCidrs, hostAllowed, normalizeAddress, matchTvToken, createRateLimiter, bucketKey } from '../lib/tv-server.mjs';
 import { normalizeTv, TV_DEFAULT_CIDRS } from '../lib/config.mjs';
@@ -74,6 +74,45 @@ check('空统计不炸', () => {
   assert.deepEqual(u.topModels, []);
 });
 
+group('providerCard');
+check('裁剪与钳制：名字 24、tier 名 16、remainingPct 收进 0–100', () => {
+  const c = providerCard(
+    { id: 'p1', name: 'N'.repeat(30) },
+    { today: 1.234, days30: 9.876 },
+    { state: 'ok', tiers: [
+      { name: 'T'.repeat(20), remainingPct: 150 },
+      { name: 'monthly', remainingPct: -5, over: true, used: 9, limit: 1, usedPct: 900 },
+    ] },
+  );
+  assert.equal(c.name, 'N'.repeat(24) + '…');
+  assert.deepEqual(c.spend, { today: 1.23, days30: 9.88 });
+  assert.equal(c.quota.state, 'ok');
+  assert.equal(c.quota.tiers[0].name, 'T'.repeat(16) + '…');
+  assert.equal(c.quota.tiers[0].remainingPct, 100);
+  assert.equal(c.quota.tiers[1].remainingPct, 0);
+  assert.equal(c.quota.tiers[1].over, true);
+  // tier 的 used/limit/usedPct 是首屏悬浮用的细节，LAN 上不多带
+  assert.deepEqual(Object.keys(c.quota.tiers[1]).sort(), ['name', 'over', 'remainingPct']);
+  assert.equal(c.quota.error, undefined);
+});
+check('at 只在 stale 时下发（其余状态带 at 会毁掉 304 的 ETag 语义）', () => {
+  const ok = providerCard({ name: 'a' }, {}, { state: 'ok', at: 123, tiers: [] });
+  const stale = providerCard({ name: 'a' }, {}, { state: 'stale', at: 123, tiers: [] });
+  const err = providerCard({ name: 'a' }, {}, { state: 'error', at: 123, error: 'E'.repeat(100), tiers: [] });
+  assert.equal(ok.quota.at, undefined);
+  assert.equal(stale.quota.at, 123);
+  assert.equal(err.quota.error, 'E'.repeat(80) + '…');
+  assert.equal(err.quota.at, undefined);
+});
+check('未知 state / 坏 quota 按 error；name 缺失回落 id；spend 缺失补 0', () => {
+  const c = providerCard({ id: 'xyz' }, undefined, { state: 'weird', tiers: 'nope' });
+  assert.equal(c.name, 'xyz');
+  assert.equal(c.quota.state, 'error');
+  assert.deepEqual(c.quota.tiers, []);
+  assert.deepEqual(c.spend, { today: 0, days30: 0 });
+  assert.deepEqual(providerCard({ name: 'a' }, {}, null).quota.state, 'error');
+});
+
 group('buildSnapshot');
 const now = new Date(2026, 9, 30, 15, 0, 0).getTime();
 const todos = [
@@ -84,7 +123,7 @@ const todos = [
 ];
 check('形状与派生字段', () => {
   const s = buildSnapshot({ todos, stats: {}, now });
-  assert.equal(s.version, 1);
+  assert.equal(s.version, 2);
   assert.equal(s.now, now);
   assert.equal(s.online, true);
   assert.equal(s.todos.inProgress, 1);
@@ -98,6 +137,13 @@ check('形状与派生字段', () => {
 check('最多 6 条', () => {
   const many = Array.from({ length: 9 }, (_, i) => ({ id: `x${i}`, title: `t${i}`, status: 'pending', urgency: 'normal', updated_at: i }));
   assert.equal(buildSnapshot({ todos: many, stats: {}, now }).todos.items.length, 6);
+});
+check('providers 节：透传卡片、剔除非对象、缺省为空数组', () => {
+  const card = providerCard({ name: 'a' }, {}, { state: 'ok', tiers: [] });
+  const s = buildSnapshot({ todos, stats: {}, providers: [card, 'junk', null], now });
+  assert.equal(s.providers.length, 1);
+  assert.equal(s.providers[0].name, 'a');
+  assert.deepEqual(buildSnapshot({ todos, stats: {}, now }).providers, []);
 });
 check('startOfLocalDay 按本地零点', () => {
   assert.equal(new Date(startOfLocalDay(now)).getHours(), 0);
@@ -117,6 +163,47 @@ check('最坏情况体积仍 ≤ 6 KB（超长标题/备注/项目/模型名 + 2
   };
   const bytes = Buffer.byteLength(JSON.stringify(buildSnapshot({ todos: worst, stats, now })));
   assert.ok(bytes <= 6144, `${bytes} bytes`);
+});
+
+check('fitToLimit：订阅脉搏逐级瘦身（error/at → tiers → 整卡），待办活着', () => {
+  const longTodos = Array.from({ length: 6 }, (_, i) => ({
+    id: `x${i}`, title: '待'.repeat(499), note: '注'.repeat(300), project: '项'.repeat(59),
+    status: 'pending', urgency: 'normal', updated_at: i,
+  }));
+  // 注入的是未经 providerCard 裁剪的原始卡（模拟上游给的极端形状），各级都要被压到：
+  const fatCards = Array.from({ length: 4 }, () => ({
+    name: 'N'.repeat(24) + '…',
+    spend: { today: 0, days30: 0 },
+    quota: {
+      state: 'error',
+      error: 'E'.repeat(300),
+      tiers: Array.from({ length: 40 }, () => ({ name: 'T'.repeat(16) + '…', remainingPct: 50 })),
+    },
+  }));
+  const out = fitToLimit(buildSnapshot({ todos: longTodos, stats: {}, providers: fatCards, now }));
+  const size = Buffer.byteLength(JSON.stringify(out));
+  assert.ok(size <= MAX_BYTES, `${size} bytes`);
+  assert.ok(out.todos.items.length >= 1, '待办至少留一条');
+  for (const c of out.providers) {
+    assert.equal(c.quota.error, undefined, '超限时 error 文案先被剥掉');
+    assert.equal(c.quota.at, undefined);
+  }
+  const tiersLeft = out.providers.reduce((n, c) => n + (c.quota.tiers?.length ?? 0), 0);
+  assert.ok(tiersLeft < 4 * 40, `tiers 应该被砍掉一部分（剩 ${tiersLeft}）`);
+});
+check('fitToLimit：连名字都巨大的卡整卡从尾部丢弃，绝不超字节', () => {
+  const longTodos = Array.from({ length: 6 }, (_, i) => ({
+    id: `x${i}`, title: '待'.repeat(499), status: 'pending', urgency: 'normal', updated_at: i,
+  }));
+  const fatCards = Array.from({ length: 4 }, () => ({
+    name: 'N'.repeat(2000),
+    spend: { today: 0, days30: 0 },
+    quota: { state: 'none', tiers: [] },
+  }));
+  const out = fitToLimit(buildSnapshot({ todos: longTodos, stats: {}, providers: fatCards, now }));
+  assert.ok(Buffer.byteLength(JSON.stringify(out)) <= MAX_BYTES);
+  assert.ok(out.providers.length < 4, `名字放不下就该丢卡（剩 ${out.providers.length}）`);
+  assert.ok(out.todos.items.length >= 1, '丢的是卡，不是待办');
 });
 
 check('doneToday 按本地零点切（跨午夜前后各一条）', () => {
@@ -139,6 +226,17 @@ check('数据变 → ETag 变', () => {
   const a = JSON.stringify(buildSnapshot({ todos, stats: {}, now }));
   const b = JSON.stringify(buildSnapshot({ todos: [...todos, { id: 'z', title: '新', status: 'pending', urgency: 'normal', updated_at: 9 }], stats: {}, now }));
   assert.notEqual(etagOf(a), etagOf(b));
+});
+check('订阅脉搏进哈希：额度/花费变了要重画，now 仍不进', () => {
+  const card = providerCard({ name: 'a' }, { today: 1, days30: 2 }, { state: 'ok', tiers: [{ name: 'daily', remainingPct: 80 }] });
+  const a = JSON.stringify(buildSnapshot({ todos, stats: {}, providers: [card], now }));
+  const same = JSON.stringify(buildSnapshot({ todos, stats: {}, providers: [card], now: now + 60_000 }));
+  assert.equal(etagOf(a), etagOf(same));
+  const changed = JSON.stringify(buildSnapshot({
+    todos, stats: {}, now,
+    providers: [providerCard({ name: 'a' }, { today: 1, days30: 2 }, { state: 'ok', tiers: [{ name: 'daily', remainingPct: 70 }] })],
+  }));
+  assert.notEqual(etagOf(a), etagOf(changed));
 });
 check('runningMs 每 10 分钟进位才换 ETag（304 仍常态化）', () => {
   const at = (ms) => etagOf(JSON.stringify(buildSnapshot({

@@ -476,6 +476,25 @@ await checkAsync('待办：counts.open = in_progress + pending', async () => {
   assert.equal(h.todos.counts.in_progress, 1);
   assert.equal(h.todos.counts.pending, 2);
 });
+await checkAsync('usage 节：与电视快照同一 usageToday 口径，注入的 stats 同源不重查', async () => {
+  const stats = {
+    today: { req: 12, tin: 300, tout: 45, cost: 0.5 },
+    hours: Array.from({ length: 24 }, (_, i) => ({ req: i })),
+    models: [{ model: 'glm', req: 10 }, { model: 'kimi', req: 2 }],
+  };
+  const h = await buildHome({ todos: [], now: 1000, providers: [], spend: noSpend, quota: noQuota, snapshot: stats });
+  assert.equal(h.usage.requests, 12);
+  assert.equal(h.usage.tokens, 345);
+  assert.equal(h.usage.costUsd, 0.5);
+  assert.equal(h.usage.hours.length, 24);
+  assert.deepEqual(h.usage.topModels.map((m) => m.model), ['glm', 'kimi']);
+});
+await checkAsync('usage 节：没有统计时给全零形状（空卡比缺卡诚实）', async () => {
+  const h = await buildHome({ todos: [], now: 1000, providers: [], spend: noSpend, quota: noQuota, snapshot: {} });
+  assert.equal(h.usage.requests, 0);
+  assert.deepEqual(h.usage.hours, Array.from({ length: 24 }, () => 0));
+  assert.deepEqual(h.usage.topModels, []);
+});
 await checkAsync('排序：进行中 → 待办（紧急在前）', async () => {
   const h = await buildHome({ todos: [
     { id: 'p2', title: '普通', status: 'pending', urgency: 'normal', created_at: 1 },
