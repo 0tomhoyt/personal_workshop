@@ -85,15 +85,21 @@ body::after {
   height: 100vh; display: flex; flex-direction: column;
   padding: 26px 16px 18px 22px;
   border-right: 1px solid var(--line-soft);
-  background: linear-gradient(180deg, rgba(var(--amber-rgb), .028), transparent 30%);
+  background: linear-gradient(180deg, rgba(var(--amber-rgb), .055), transparent 34%), var(--bg);
   overflow-y: auto;
 }
 .rail::-webkit-scrollbar { width: 0; }
 .brand h1 {
   font: 600 20px/1.2 var(--serif); letter-spacing: .05em;
-  display: flex; align-items: baseline; gap: 8px;
+  display: flex; align-items: center; gap: 9px;
 }
-.brand .zh-mark { color: var(--amber); }
+.brand .zh-mark {
+  display: inline-grid; place-items: center; flex: none; width: 27px; height: 27px;
+  border: 1px solid rgba(var(--amber-rgb), .35); border-radius: 8px;
+  background: var(--amber-dim); color: var(--amber); font-size: 14px;
+  box-shadow: inset 0 0 12px rgba(var(--amber-rgb), .08);
+  transform: rotate(-5deg);
+}
 .brand .sub {
   font: 500 9px var(--mono); color: var(--faint);
   letter-spacing: .3em; margin-top: 6px; text-transform: uppercase;
@@ -257,12 +263,13 @@ body::after {
 .sechead .spacer { flex: 1; }
 
 .card {
-  background: linear-gradient(180deg, var(--panel), var(--panel-2));
-  border: 1px solid var(--line); border-radius: 10px;
-  padding: 17px 19px;
+  background: linear-gradient(145deg, var(--panel), var(--panel-2));
+  border: 1px solid var(--line); border-radius: 14px;
+  padding: 18px 20px;
   box-shadow: var(--card-shadow);
-  transition: background-color .3s, border-color .3s;
+  transition: background-color .3s, border-color .2s, box-shadow .2s;
 }
+.card:hover { border-color: rgba(var(--amber-rgb), .2); }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
 
@@ -352,7 +359,7 @@ code { background: var(--inset); border: 1px solid var(--line-soft); border-radi
   /* 窄屏：分组与子项横排，容器横向滚动，绝不换行 */
   .views { flex-direction: row; align-items: center; gap: 10px; overflow-x: auto; margin-top: 10px; padding-bottom: 4px; }
   .navgroup { display: flex; align-items: center; gap: 4px; flex: none; }
-  .groupsub { display: flex !important; flex-direction: row; gap: 2px; margin: 0; padding-left: 0; border-left: none; }
+  .navgroup.open .groupsub, .groupsub { display: flex !important; flex-direction: row; gap: 2px; margin: 0; padding-left: 0; border-left: none; }
   .grouphead { width: auto; flex: none; padding: 6px 8px; }
   .grouphead .caret { display: none; }
   .viewbtn { white-space: nowrap; padding: 6px 12px; flex: none; }
@@ -369,4 +376,14 @@ code { background: var(--inset); border: 1px solid var(--line-soft); border-radi
   /* 顶栏横排时「全切」组跟着并排，分隔线由上方虚线改为左侧虚线 */
   .rail-all { margin-top: 0; padding-top: 0; border-top: none; border-left: 1px dashed var(--line-soft); padding-left: 8px; }
   .main { padding: 20px 20px 48px; }
+}
+
+.viewbtn:focus-visible, .home-quicklinks a:focus-visible {
+  outline: 2px solid var(--amber); outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important; transition-duration: .01ms !important;
+  }
 }
