@@ -297,6 +297,22 @@ try {
     check('主监听 /v1/todos 无 clientToken 仍 401（TV token 不通用）', v1NoAuth.status === 401, `got ${v1NoAuth.status}`);
     const v1WithTvToken = await fetch(`http://127.0.0.1:${GW_PORT}/v1/todos`, { headers: { 'x-aerial-token': TV_TOKEN } });
     check('TV token 不能访问主监听 /v1/todos', v1WithTvToken.status === 401, `got ${v1WithTvToken.status}`);
+
+    console.log('— /admin/tv-opencode 预览（含 rich 档）—');
+    const prevPlain = await fetch(`http://127.0.0.1:${GW_PORT}/admin/tv-opencode?preview=1`);
+    const prevJson = await prevPlain.json().catch(() => null);
+    check('预览 GET 200 且带 preview 帧', prevPlain.status === 200 && prevJson?.preview
+      && typeof prevJson.preview.status === 'string' && prevJson.preview.source?.kind === 'local',
+    `got ${prevPlain.status}`);
+    const prevRich = await fetch(`http://127.0.0.1:${GW_PORT}/admin/tv-opencode?preview=1&rich=1`);
+    const richJson = await prevRich.json().catch(() => null);
+    check('rich 预览 200 且带 rich 标记', prevRich.status === 200 && richJson?.rich === true
+      && richJson?.preview && typeof richJson.preview.status === 'string',
+    `got ${prevRich.status}`);
+    // 瘦帧出口仍是电视契约：本地帧会被 fit 到 6KB；rich 是超集不 413
+    check('瘦预览帧不超 6KB（电视契约不变）',
+      Buffer.byteLength(JSON.stringify(prevJson.preview)) <= 6 * 1024 + 512,
+    `${Buffer.byteLength(JSON.stringify(prevJson.preview))} bytes`);
   }
 } catch (e) {
   failures.push(`异常: ${e.message}`);

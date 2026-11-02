@@ -2108,7 +2108,21 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       && ['todos', 'report', 'overview', 'traffic', 'test', 'providers'].every((v) => idxHtml.includes(`href="#${v}"`)));
     const navHrefs = [...idxHtml.matchAll(/<a class="viewbtn" href="#([a-z]+)"/g)].map((m) => m[1]);
     check('导航链接与视图双向一致（无孤儿）',
-      navHrefs.length === 7 && navHrefs.every((v) => idxHtml.includes(`data-view="${v}"`)), navHrefs.join(','));
+      navHrefs.length === 8 && navHrefs.every((v) => idxHtml.includes(`data-view="${v}"`)), navHrefs.join(','));
+    // -- OpenCode 大屏监控（#opencode 页的 fullscreen 面板）--
+    // 面板在 main 之外（不是第 9 个视图，别把导航数又顶上去）、Esc 可退、开着时轮询走 rich 帧
+    check('大屏面板存在于 main 外（不注册为视图）',
+      /<\/main>[\s\S]{0,200}class="oc-board" id="ocBoard"/.test(idxHtml)
+        && idxHtml.includes('id="ocOpenBoard"') && idxHtml.includes('id="ocBoardClose"'),
+    idxHtml.includes('id="ocBoard"') ? 'found ocBoard' : 'no ocBoard');
+    check('大屏面板 Esc 退出（capture 阶段，早于输入框守卫）',
+      /addEventListener\('keydown', \(e\) => \{\s*\n\s*if \(e\.key === 'Escape' && ocBoardOpen\)/.test(idxHtml));
+    check('大屏开着时轮询带 rich=1（小卡与面板同吃一份数据）',
+      /\/admin\/tv-opencode\?preview=1\$\{ocBoardOpen \? '&rich=1' : ''\}/.test(idxHtml)
+        && /if \(curView !== 'opencode' && !ocBoardOpen\) return/.test(idxHtml));
+    check('大屏渲染覆盖：工具时间线 / 任务 / 会话卡三块都有容器',
+      idxHtml.includes('id="ocBoardTools"') && idxHtml.includes('id="ocBoardTasks"')
+        && idxHtml.includes('id="ocBoardSessions"') && idxHtml.includes('id="ocBoardBar"'));
     check('导航是真链接（不用 button 切视图）', !/class="viewbtn"[^>]*data-view/.test(idxHtml));
     // 禁 break-all：只认「规则里真的用了」，注释里提到这个词（作为禁令说明）不算
     const cssRulesOnly = themeCssText.replace(/\/\*[\s\S]*?\*\//g, '');

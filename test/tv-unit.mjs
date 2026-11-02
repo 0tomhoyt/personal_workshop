@@ -12,7 +12,7 @@ import { safeEqual } from '../lib/gwauth.mjs';
 import {
   buildOpenCodeSnapshot, buildDemoOpenCodeSnapshot, deriveStatus, mapToolStatus, mapTaskState,
   extractTools, extractTasks, etagOfOpenCode, fitOpenCodeToLimit, OPENCODE_MAX_BYTES,
-  buildSessionBrief, buildSessionBriefs, SESSIONS_MAX,
+  buildSessionBrief, buildSessionBriefs, SESSIONS_MAX, RICH_LIMITS, OPENCODE_RICH_MAX_BYTES,
 } from '../lib/tv-opencode.mjs';
 import {
   putSpokeOpenCodeFrame, clearSpokeOpenCodeFrames, resolveOpenCodeForTv,
@@ -673,6 +673,54 @@ check('投稿体 sanitize：sessions 只收数组、≤3 行、白名单字段�
   assert.equal('evil' in frame.sessions[0], false);
   const { frame: f2 } = sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'macbook', sessions: 'nope' });
   assert.equal('sessions' in f2, false);
+});
+
+group('rich 档（大屏监控）');
+check('rich 快照：tools/sessions/tasks 上限放宽、title 截断放宽', () => {
+  const mk = (rich) => buildOpenCodeSnapshot({
+    now: 1, rich,
+    session: { id: 's', title: '题'.repeat(200), directory: '/p/proj', time_created: 0, time_updated: 1, idle_outcome: 'succeeded', time_idle: 1 },
+    todos: Array.from({ length: 20 }, (_, i) => ({ position: i, content: `任务${i}`, status: 'pending' })),
+    messages: [{ id: 'm', time_updated: 1, data: { content: Array.from({ length: 30 }, (_, i) => ({
+      type: 'tool', id: `c${i}`, name: 'edit', state: { status: 'completed', input: { path: `a/文件${i}.mjs` } },
+    })) } }],
+    sessions: Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, status: 'idle', at: i })),
+  });
+  const thin = mk(false);
+  const rich = mk(true);
+  assert.equal(thin.tools.length, 8);
+  assert.equal(thin.plan.tasks.length, 8);
+  assert.equal(thin.sessions.length, 3);
+  assert.equal(thin.title.length, 81); // 80 + …
+  assert.equal(rich.tools.length, RICH_LIMITS.tools);
+  assert.equal(rich.plan.tasks.length, RICH_LIMITS.tasks);
+  assert.equal(rich.sessions.length, RICH_LIMITS.sessions);
+  assert.equal(rich.title.length, 161); // 160 + …
+});
+check('rich sanitize：32KB 内全收（tools 24 不被砍）；超限先砍 tools', () => {
+  const tools = Array.from({ length: 24 }, (_, i) => ({ id: `t${i}`, name: 'edit', status: 'ok', at: 1, target: 'x'.repeat(20) }));
+  const ok = sanitizeSpokeOpenCodePayload({ online: true, status: 'running', deviceId: 'mb', now: 1, tools }, { rich: true });
+  assert.equal(ok.frame.tools.length, 24);
+  // 32KB 以上的 fat 帧：逐级砍 tools（24 → 12 → 6），还不行才 413
+  const fat = { online: true, status: 'running', deviceId: 'mb', now: 1,
+    tools: tools.map((t) => ({ ...t, target: '巨'.repeat(600) })) };
+  const squeezed = sanitizeSpokeOpenCodePayload(fat, { rich: true });
+  assert.ok(squeezed.frame.tools.length <= 12);
+  assert.ok(Buffer.byteLength(JSON.stringify(squeezed.frame)) <= OPENCODE_RICH_MAX_BYTES);
+  let threw = false;
+  try {
+    sanitizeSpokeOpenCodePayload({ online: true, status: 'running', deviceId: 'mb', now: 1, junk: 'x'.repeat(OPENCODE_RICH_MAX_BYTES) }, { rich: true });
+  } catch (e) { threw = e.status === 413; }
+  assert.equal(threw, true);
+});
+check('瘦档 sanitize 行为不变：6KB 内 fit、超限 413', () => {
+  const { frame } = sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'mb', now: 1 });
+  assert.equal(frame.status, 'idle');
+  let threw = false;
+  try {
+    sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'mb', now: 1, junk: 'x'.repeat(OPENCODE_MAX_BYTES) });
+  } catch (e) { threw = e.status === 413; }
+  assert.equal(threw, true);
 });
 
 console.log(`\n结果: ${passed} 通过, ${failures.length} 失败${failures.length ? ` — ${failures.join(' ; ')}` : ''}`);

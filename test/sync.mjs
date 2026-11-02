@@ -294,6 +294,45 @@ try {
     const cfgGet = await fetch(`${SYNC}/sync/v1/config`, { headers: syncHeaders() });
     const cgj = await cfgGet.json();
     check('GET config → 200 且无 gateway.sync 键', cfgGet.status === 200 && cgj.rev && cgj.gateway && cgj.gateway.sync === undefined && Array.isArray(cgj.providers), JSON.stringify({ rev: cgj.rev, keys: Object.keys(cgj.gateway||{}) }).slice(0, 160));
+
+    console.log('— OpenCode 投稿（瘦帧 + rich 帧）—');
+    {
+      const mkTools = (n, targetLen) => Array.from({ length: n }, (_, i) => ({
+        id: `t${i}`, name: 'edit', status: 'ok', at: 1, target: 'x'.repeat(targetLen),
+      }));
+      // 瘦帧：6KB 契约不变
+      const thinPut = await fetch(`${SYNC}/sync/v1/opencode`, {
+        method: 'PUT',
+        headers: { ...syncHeaders(), 'content-type': 'application/json' },
+        body: JSON.stringify({ online: true, status: 'running', title: '瘦帧', deviceId: 'macbook-test', now: 1, tools: mkTools(8, 20) }),
+      });
+      const tj = await thinPut.json();
+      check('PUT 瘦帧 → 200', thinPut.status === 200 && tj.ok === true && tj.deviceId === 'macbook-test', JSON.stringify(tj).slice(0, 120));
+      // rich 帧：24 个工具在 32KB 内全收
+      const richPut = await fetch(`${SYNC}/sync/v1/opencode?rich=1`, {
+        method: 'PUT',
+        headers: { ...syncHeaders(), 'content-type': 'application/json' },
+        body: JSON.stringify({ online: true, status: 'running', title: '富帧', deviceId: 'macbook-test', now: 1, tools: mkTools(24, 20) }),
+      });
+      const rj = await richPut.json();
+      check('PUT rich 帧 → 200 且缓存富帧', richPut.status === 200 && rj.ok === true, JSON.stringify(rj).slice(0, 120));
+      const listAfterRich = await fetch(`${SYNC}/sync/v1/opencode`, { headers: syncHeaders() });
+      const lj = await listAfterRich.json();
+      check('rich 投稿后 GET 列表 title=富帧', lj.spokes?.some((s) => s.deviceId === 'macbook-test' && s.title === '富帧'), JSON.stringify(lj.spokes ?? []).slice(0, 160));
+      // 瘦路径超 6KB → 413；rich 路径超 32KB → 413
+      const thinFat = await fetch(`${SYNC}/sync/v1/opencode`, {
+        method: 'PUT',
+        headers: { ...syncHeaders(), 'content-type': 'application/json' },
+        body: JSON.stringify({ online: true, status: 'idle', deviceId: 'macbook-test', now: 1, junk: 'x'.repeat(7 * 1024) }),
+      });
+      check('瘦路径超 6KB → 413', thinFat.status === 413, `got ${thinFat.status}`);
+      const richFat = await fetch(`${SYNC}/sync/v1/opencode?rich=1`, {
+        method: 'PUT',
+        headers: { ...syncHeaders(), 'content-type': 'application/json' },
+        body: JSON.stringify({ online: true, status: 'idle', deviceId: 'macbook-test', now: 1, junk: 'x'.repeat(33 * 1024) }),
+      });
+      check('rich 路径超 32KB → 413', richFat.status === 413, `got ${richFat.status}`);
+    }
   }
 
   console.log('— 默认关闭不监听 —');

@@ -360,6 +360,65 @@
   .oc-srcpill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #5ac8fa; box-shadow: 0 0 8px #5ac8fa; }
   .oc-preview-foot { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.06); font: 11px var(--mono); color: rgba(232,238,247,.4); display: flex; justify-content: space-between; gap: 8px; }
 
+  /* ---- 大屏监控模式（oc-board）：fixed 全屏暗色面板，与 #opencode 页同源数据 -------- */
+  .oc-board {
+    position: fixed; inset: 0; z-index: 90; display: none;
+    flex-direction: column; padding: 22px clamp(18px, 3vw, 44px) 20px;
+    background:
+      radial-gradient(900px 300px at 15% -10%, rgba(90,200,250,.1), transparent 55%),
+      radial-gradient(700px 260px at 92% 0%, rgba(191,139,255,.09), transparent 50%),
+      linear-gradient(180deg, #10151d, #0b0f14 60%);
+    color: #e8eef7; overflow-y: auto;
+  }
+  .oc-board.open { display: flex; }
+  .oc-board-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex: 0 0 auto; }
+  .oc-board-top .oc-srcpill { margin-top: 0; }
+  .oc-board-title { font: 500 clamp(18px, 2vw, 24px)/1.2 var(--serif); color: #f4f7fc; letter-spacing: -.01em; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .oc-board-close {
+    font: 600 11.5px var(--mono); letter-spacing: .04em; color: #e8eef7;
+    padding: 7px 14px; border-radius: 9px; border: 1px solid rgba(255,255,255,.18);
+    background: rgba(255,255,255,.06); cursor: pointer;
+  }
+  .oc-board-close:hover { background: rgba(255,255,255,.12); }
+  .oc-board-grid { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(280px, 1fr); gap: 14px; margin-top: 14px; flex: 1 1 auto; min-height: 0; }
+  @media (max-width: 980px) { .oc-board-grid { grid-template-columns: 1fr; } }
+  .oc-board-card {
+    border: 1px solid rgba(255,255,255,.08); border-radius: 14px;
+    background: rgba(255,255,255,.028);
+    padding: 15px 16px 13px; min-width: 0; display: flex; flex-direction: column;
+  }
+  .oc-board-card h4 { margin: 0 0 10px; font: 600 10.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: rgba(232,238,247,.42); }
+  .oc-board-meta { display: flex; gap: 16px; flex-wrap: wrap; font: 12px var(--mono); color: rgba(232,238,247,.62); margin-bottom: 10px; }
+  .oc-board-meta b { color: #e8eef7; font-weight: 600; }
+  .oc-bar { height: 5px; border-radius: 999px; background: rgba(255,255,255,.09); overflow: hidden; margin: 4px 0 12px; }
+  .oc-bar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #5ac8fa, #9ad8ff); transition: width .4s ease; }
+  .oc-tl { flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; min-height: 120px; }
+  .oc-tl-row { display: flex; gap: 10px; align-items: baseline; font: 12px/1.5 var(--mono); color: rgba(232,238,247,.75); padding: 4px 8px; border-radius: 8px; background: rgba(255,255,255,.025); }
+  .oc-tl-row .t { color: rgba(232,238,247,.38); font-size: 10.5px; white-space: nowrap; }
+  .oc-tl-row .n { color: #9ad8ff; white-space: nowrap; }
+  .oc-tl-row .g { color: rgba(232,238,247,.5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .oc-tl-row.failed .n { color: #ff8f8f; }
+  .oc-tl-row.running .n { color: #7ee2a8; }
+  .oc-task { display: flex; gap: 9px; align-items: baseline; font: 13px/1.55 var(--sans); color: rgba(232,238,247,.82); padding: 5px 2px; }
+  .oc-task .m { font: 11px var(--mono); white-space: nowrap; }
+  .oc-task.done { color: rgba(232,238,247,.42); text-decoration: line-through; text-decoration-color: rgba(232,238,247,.25); }
+  .oc-task.running { color: #f4f7fc; }
+  .oc-task.running .m { color: #7ee2a8; }
+  .oc-task.pending .m { color: rgba(232,238,247,.3); }
+  .oc-board-sessions { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 14px; flex: 0 0 auto; }
+  .oc-sess {
+    border: 1px solid rgba(255,255,255,.08); border-radius: 12px; background: rgba(255,255,255,.028);
+    padding: 10px 12px; min-width: 0; display: flex; flex-direction: column; gap: 4px;
+  }
+  .oc-sess-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font: 10.5px var(--mono); color: rgba(232,238,247,.45); }
+  .oc-sess .ttl { font: 500 13px/1.35 var(--sans); color: #e8eef7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .oc-sess .sub { font: 11px var(--mono); color: rgba(232,238,247,.5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .oc-sess.running { border-color: rgba(126,226,168,.35); }
+  .oc-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: rgba(232,238,247,.35); margin-right: 5px; vertical-align: 1px; }
+  .oc-sess.running .oc-dot { background: #7ee2a8; box-shadow: 0 0 8px rgba(126,226,168,.7); }
+  .oc-sess.failed .oc-dot { background: #ff8f8f; }
+  .oc-sess.done .oc-dot { background: #9ad8ff; }
+
   .home-date { font: 500 10.5px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim); }
   .home-local { display: inline-flex; align-items: center; gap: 6px; font: 600 9px var(--mono); letter-spacing: .12em; color: var(--green); }
   .home-local::before, .home-live i { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px rgba(var(--green-rgb), .65); }
@@ -1031,6 +1090,30 @@
 
   </main>
 </div>
+
+<!-- 大屏监控模式：fixed 全屏，与电视/预览同源（?rich=1 富帧），Esc 退出；在 main 之外，不算视图 -->
+<div class="oc-board" id="ocBoard" tabindex="-1">
+  <div class="oc-board-top">
+    <span class="oc-srcpill" id="ocBoardSrc">…</span>
+    <span class="oc-meta" id="ocBoardStatus" style="color:rgba(232,238,247,.55)"></span>
+    <h3 class="oc-board-title" id="ocBoardTitle">大屏监控</h3>
+    <button type="button" class="oc-board-close" id="ocBoardClose">退出 · Esc</button>
+  </div>
+  <div class="oc-board-grid">
+    <div class="oc-board-card">
+      <h4>当前会话</h4>
+      <div class="oc-board-meta" id="ocBoardMeta"></div>
+      <div class="oc-bar"><i id="ocBoardBar" style="width:0%"></i></div>
+      <h4>工具时间线</h4>
+      <div class="oc-tl" id="ocBoardTools"><span style="color:rgba(232,238,247,.4);font:12px var(--sans)">暂无工具动态</span></div>
+    </div>
+    <div class="oc-board-card">
+      <h4>计划任务</h4>
+      <div id="ocBoardTasks" style="overflow-y:auto"><span style="color:rgba(232,238,247,.4);font:12px var(--sans)">暂无任务</span></div>
+    </div>
+  </div>
+  <div class="oc-board-sessions" id="ocBoardSessions"></div>
+</div>
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
@@ -1174,22 +1257,25 @@ const HOME_SPEND_DISCLAIMER = (q, days30) => q && q.state !== 'none' && q.tiers?
 
 // ── OpenCode / 电视墙独立页（#opencode）────────────────────────────────
 let ocTimer = null;
+let ocBoardOpen = false;   // 大屏监控模式：开着时轮询带 ?rich=1，rich 帧是瘦帧超集，小卡/面板同吃一份数据
 
 function scheduleOpenCodePoll() {
   if (ocTimer) { clearTimeout(ocTimer); ocTimer = null; }
-  if (curView !== 'opencode') return;
-  ocTimer = setTimeout(() => { if (curView === 'opencode') loadOpenCodePage(); }, 5_000);
+  if (curView !== 'opencode' && !ocBoardOpen) return;
+  ocTimer = setTimeout(() => { if (curView === 'opencode' || ocBoardOpen) loadOpenCodePage(); }, 5_000);
 }
 
 document.getElementById('ocRefresh')?.addEventListener('click', () => loadOpenCodePage());
 async function loadOpenCodePage() {
   const box = $('ocControls');
-  if (!box) return;
+  if (!box && !ocBoardOpen) return;
   try {
-    const d = await jf('/admin/tv-opencode?preview=1');
-    renderOpenCodePage(d);
+    // 面板开着 → rich 帧（超集）；否则瘦帧。切视图后大屏仍继续轮询（面板盖全屏，正常用不到）
+    const d = await jf(`/admin/tv-opencode?preview=1${ocBoardOpen ? '&rich=1' : ''}`);
+    if (box) renderOpenCodePage(d);
+    if (ocBoardOpen) renderOcBoard(d);
   } catch (e) {
-    box.innerHTML = `<span class="bad">读状态失败：${esc(e.message || e)}</span>`;
+    if (box) box.innerHTML = `<span class="bad">读状态失败：${esc(e.message || e)}</span>`;
   }
   scheduleOpenCodePoll();
 }
@@ -1269,6 +1355,125 @@ function renderOpenCodeExplain(d) {
     if (el) el.innerHTML = '';
   }
 }
+
+// ── 大屏监控模式 ────────────────────────────────────────────────────────
+// 与小卡同源（面板开着时轮询 ?rich=1 富帧：tools 24 / sessions 8 / tasks 20）。
+// 相对时间全在浏览器端算（帧里带 at/now），渲染纯函数不依赖外部状态。
+
+function ocFmtDur(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m${s % 60 ? (m < 10 ? String(s % 60).padStart(2, '0') : '') + 's' : ''}`;
+  const h = Math.floor(m / 60);
+  return `${h}h${m % 60 ? String(m % 60).padStart(2, '0') + 'm' : ''}`;
+}
+function ocFmtAgo(at, now) {
+  if (!at || !now) return '';
+  return ocFmtDur(now - at) + ' 前';
+}
+function ocFmtTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e6) return (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + 'k';
+  return String(v);
+}
+const OC_STATUS_TXT = { running: '运行中', waiting: '等待', done: '完成', failed: '失败', idle: '空闲' };
+const OC_TASK_MARK = { done: '✓', running: '▸', pending: '·' };
+
+function renderOcBoard(d) {
+  const board = $('ocBoard');
+  if (!board || !d) return;
+  const f = d.preview;
+  const now = Number(f?.now) || Date.now();
+
+  const srcEl = $('ocBoardSrc');
+  if (srcEl) srcEl.textContent = ocSourceKindText(f?.source, { asSpoke: ocIsSpoke(d) }) || '未知源';
+
+  const stEl = $('ocBoardStatus');
+  if (stEl) {
+    const st = f?.status || 'idle';
+    const bits = [OC_STATUS_TXT[st] || st];
+    if (f?.elapsedMs) bits.push(ocFmtDur(f.elapsedMs));
+    if (f?.tokens) bits.push(ocFmtTokens(f.tokens) + ' tok');
+    bits.push(f?.online === false ? 'offline' : 'live');
+    if (d.rich) bits.push('rich');
+    stEl.textContent = bits.join(' · ');
+  }
+
+  const titleEl = $('ocBoardTitle');
+  if (titleEl) titleEl.textContent = f?.title || '空闲 / 无标题会话';
+
+  const metaEl = $('ocBoardMeta');
+  if (metaEl) {
+    const s = f?.session || {};
+    const row = [];
+    if (s.project) row.push(`项目 <b>${esc(s.project)}</b>`);
+    if (s.branch) row.push(`分支 <b>${esc(s.branch)}</b>`);
+    if (s.model) row.push(`模型 <b>${esc(s.model)}</b>`);
+    if (s.agent) row.push(`agent <b>${esc(s.agent)}</b>`);
+    if (f?.stepIndex != null && f?.stepTotal != null) row.push(`步骤 <b>${f.stepIndex}/${f.stepTotal}</b>`);
+    if (f?.step) row.push(`<span style="color:#9ad8ff">${esc(f.step)}</span>`);
+    metaEl.innerHTML = row.length ? row.join(' &nbsp;·&nbsp; ') : '<span style="color:rgba(232,238,247,.4)">无会话元信息</span>';
+  }
+
+  const bar = $('ocBoardBar');
+  if (bar) bar.style.width = `${Math.round(Math.max(0, Math.min(1, Number(f?.progress) || 0)) * 100)}%`;
+
+  const tlEl = $('ocBoardTools');
+  if (tlEl) {
+    const tools = Array.isArray(f?.tools) ? f.tools : [];
+    tlEl.innerHTML = tools.length
+      ? tools.map((t) => {
+          const ago = ocFmtAgo(t.at, now);
+          return `<div class="oc-tl-row ${esc(t.status || '')}">
+            <span class="t">${esc(ago)}</span><span class="n">${esc(t.name || 'tool')}</span>
+            <span class="g">${esc(t.target || '')}</span></div>`;
+        }).join('')
+      : '<span style="color:rgba(232,238,247,.4);font:12px var(--sans)">暂无工具动态</span>';
+  }
+
+  const taskEl = $('ocBoardTasks');
+  if (taskEl) {
+    const tasks = Array.isArray(f?.plan?.tasks) ? f.plan.tasks : [];
+    taskEl.innerHTML = tasks.length
+      ? tasks.map((t) => `<div class="oc-task ${esc(t.state || 'pending')}">
+          <span class="m">${OC_TASK_MARK[t.state] || '·'}</span><span>${esc(t.title || '')}</span></div>`).join('')
+      : '<span style="color:rgba(232,238,247,.4);font:12px var(--sans)">暂无任务</span>';
+  }
+
+  const sessEl = $('ocBoardSessions');
+  if (sessEl) {
+    const list = Array.isArray(f?.sessions) ? f.sessions : [];
+    sessEl.innerHTML = list.length
+      ? list.map((s) => {
+          const st = s.status || 'idle';
+          return `<div class="oc-sess ${esc(st)}">
+            <div class="oc-sess-top"><span>${esc(s.project || '')}</span><span>${esc(ocFmtAgo(s.at, now))}</span></div>
+            <div class="ttl">${esc(s.title || '无标题')}</div>
+            <div class="sub"><i class="oc-dot"></i>${esc(OC_STATUS_TXT[st] || st)}${s.step ? ' · ' + esc(s.step) : ''}</div>
+          </div>`;
+        }).join('')
+      : '<span style="color:rgba(232,238,247,.4);font:12px var(--sans);grid-column:1/-1">暂无历史会话</span>';
+  }
+}
+
+function setOcBoard(open) {
+  const board = $('ocBoard');
+  if (!board) return;
+  ocBoardOpen = !!open;
+  board.classList.toggle('open', ocBoardOpen);
+  if (ocBoardOpen) {
+    board.focus();
+    loadOpenCodePage(); // 立刻拉一次 rich 帧，不等 5s tick
+  } else {
+    scheduleOpenCodePoll(); // 回到普通节奏（视图在 opencode 则继续，否则停）
+  }
+}
+$('ocBoardClose')?.addEventListener('click', () => setOcBoard(false));
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && ocBoardOpen) { e.stopPropagation(); setOcBoard(false); }
+}, true);
 
 function renderOpenCodePage(d) {
   const box = $('ocControls');
@@ -1352,9 +1557,9 @@ function renderOpenCodePage(d) {
     const frame = d.preview;
     const wrap = (inner) => `<div class="oc-preview-inner">${inner}</div>`;
     if (d.previewError) {
-      prev.innerHTML = wrap(`<div class="oc-kicker">TV preview</div><div class="oc-empty bad">预览失败：${esc(d.previewError)}</div>`);
+      prev.innerHTML = wrap(`<div class="oc-kicker">TV preview</div><div class="oc-empty bad">预览失败：${esc(d.previewError)}</div><div class="oc-preview-foot"><span></span><button type="button" id="ocOpenBoard" style="font:inherit;color:#9ad8ff;background:none;border:none;cursor:pointer;padding:0;letter-spacing:.02em">⛶ 大屏监控</button></div>`);
     } else if (!frame) {
-      prev.innerHTML = wrap(`<div class="oc-kicker">TV preview</div><div class="oc-empty">暂无上墙帧</div>`);
+      prev.innerHTML = wrap(`<div class="oc-kicker">TV preview</div><div class="oc-empty">暂无上墙帧</div><div class="oc-preview-foot"><span></span><button type="button" id="ocOpenBoard" style="font:inherit;color:#9ad8ff;background:none;border:none;cursor:pointer;padding:0;letter-spacing:.02em">⛶ 大屏监控</button></div>`);
     } else {
       const srcTxt = ocSourceKindText(frame.source, { asSpoke: isSpoke });
       const tools = Array.isArray(frame.tools) ? frame.tools.slice(0, 5) : [];
@@ -1369,8 +1574,9 @@ function renderOpenCodePage(d) {
         <div class="oc-title">${esc(frame.title || '空闲 / 无标题会话')}</div>
         <div class="oc-step">${esc(frame.status || 'idle')}${frame.step ? ' · ' + esc(frame.step) : ''}${frame.stepIndex != null && frame.stepTotal != null ? ` · ${frame.stepIndex}/${frame.stepTotal}` : ''}</div>
         <div class="oc-tools">${toolLine}</div>
-        <div class="oc-preview-foot"><span>${footL}</span><span>${footR}</span></div>`);
+        <div class="oc-preview-foot"><span>${footL} · ${footR}</span><button type="button" id="ocOpenBoard" style="font:inherit;color:#9ad8ff;background:none;border:none;cursor:pointer;padding:0;letter-spacing:.02em">⛶ 大屏监控</button></div>`);
     }
+    $('ocOpenBoard')?.addEventListener('click', () => setOcBoard(true));
   }
 
   $('ocSaveSource')?.addEventListener('click', async () => {

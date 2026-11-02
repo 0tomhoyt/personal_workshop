@@ -277,10 +277,11 @@ const server = http.createServer(async (req, res) => {
         if (!isLocalHost(req)) {
           return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
         }
-        // ?preview=1 → 附带与电视同源的汇聚帧，供管理台监控卡
+        // ?preview=1 → 附带与电视同源的汇聚帧，供管理台监控卡；&rich=1 → 大屏监控档
         const wantPreview = /[?&]preview=1\b/.test(req.url || '');
+        const wantRich = /[?&]rich=1\b/.test(req.url || '');
         if (!wantPreview) return sendJson(res, 200, tvOpenCodeStatus());
-        return tvOpenCodePreview().then((body) => sendJson(res, 200, body));
+        return tvOpenCodePreview({ rich: wantRich }).then((body) => sendJson(res, 200, body));
       }
       if (req.method === 'POST') {
         if (!isLocalHost(req)) {

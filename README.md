@@ -41,7 +41,7 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
 |---|---|
 | `server.mjs` | 入口：HTTP 服务 + 路由分发 + healthz/admin 端点（Node ≥18 零依赖） |
 | `lib/` | 服务端模块：config（providers.json）/ models（模型目录与路由）/ upstream（统一上游请求）/ auth/（cannwork、static 凭证链）/ translate/（Anthropic↔OpenAI 双向翻译）/ proxy-openai、proxy-anthropic（两条入站管道）/ stats / log / gwauth / util / todos（工作台待办）/ report（总结管线：四源适配器 + 素材收集 + 生成状态机）/ report-prompts（总结 prompt 与阈值，调质量改这里） |
-| `index.html` | 单页应用（`http://127.0.0.1:8484/`）：左栏两级导航，七个视图——首屏 / 待办 / 汇报 / 总览 / 统计 / 诊断 / 配置 |
+| `index.html` | 单页应用（`http://127.0.0.1:8484/`）：左栏两级导航，八个视图——首屏 / OpenCode 电视墙 / 待办 / 汇报 / 总览 / 统计 / 诊断 / 配置 |
 | `theme.css` | 共享主题：令牌 / 骨架 / 左栏布局契约 / 通用组件（`/theme.css` 提供） |
 | `providers.template.json` | providers.json 模板（install.sh 首次安装时生成到运行时目录） |
 | `test/mock-upstream.mjs` `test/smoke.mjs` | 端到端冒烟测试：mock 双协议上游 + 三百余项断言（`node test/smoke.mjs`） |
@@ -350,6 +350,11 @@ Aerial（`0tomhoyt/aerial-tv`）的 `Workbench` 屏保在客厅电视上显示�
 - **只认三个路由**：`GET /tv/v1/snapshot`、`GET /tv/v1/opencode`（2–6 KB 聚合快照，ETag + `If-None-Match` → 304）、
   `GET /tv/v1/health`。其余一切路径（含 `/admin/*`、`/v1/*`、`/`）一律 **404**。
 - OpenCode 多源（枢纽汇聚）：`gateway.tv.opencodeSource` = `local`|`auto`|`spoke:<deviceId>`；spoke 经 `PUT /sync/v1/opencode` 投稿（`gateway.syncClient.publishOpenCode` 默认 false）；出口 JSON 带 `source`。管理台首屏「电视 OpenCode 源」小卡可切换。
+- **管理台大屏监控**：`#opencode` 页预览卡右下「⛶ 大屏监控」按钮 → 全屏暗色面板（Esc 退出），
+  与电视同源（`GET /admin/tv-opencode?preview=1&rich=1`，仅回环）。rich 档放宽提取上限
+  （tools 24 / sessions 8 / tasks 20 / title 160，出口 32–64KB 兜底），面板展示工具时间线、
+  计划任务进度条、最近会话卡；小卡仍按瘦帧（电视 6KB 契约不变）。spoke 也会额外投一帧
+  rich（`PUT /sync/v1/opencode?rich=1`，32KB 上限，旧 hub 拒收不影响瘦帧上墙）。
 - **四道门，顺序固定**：Host 必须是 IP 字面量或 `.local`（挡 DNS rebinding，外部域名 403）→
   来源必须命中 `allowedCidrs`（非私网 403）→ 路由白名单（其余 404）→ `X-Aerial-Token`
   （`timingSafeEqual`，缺/错 401）→ 每 token 每分钟 30 次（超限 429）；失败尝试另按来源 IP 限速，

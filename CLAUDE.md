@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-**个人工作台 = 统一订阅 API 网关 + 待办 + AI 工作总结**。网关部分：把多个订阅服务（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，本机所有 Agent（zcode CLI、Claude Code、opencode 等）统一调用。按请求体里的**模型名**路由到对应订阅（providers.json 声明），自动注入该订阅凭证；同协议**原样直通**，跨协议走**双向翻译**。工作台部分（同一页的左栏第一组）：跨 agent 的**待办事项**（`/v1/todos`，人与 agent 共用）+ **时间段 AI 工作总结**（读 Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录 → 两级总结成给上级的汇报）。**管理台与工作台是同一个页面（`index.html`）、七个视图**，左栏两级分组导航。
+**个人工作台 = 统一订阅 API 网关 + 待办 + AI 工作总结**。网关部分：把多个订阅服务（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，本机所有 Agent（zcode CLI、Claude Code、opencode 等）统一调用。按请求体里的**模型名**路由到对应订阅（providers.json 声明），自动注入该订阅凭证；同协议**原样直通**，跨协议走**双向翻译**。工作台部分（同一页的左栏第一组）：跨 agent 的**待办事项**（`/v1/todos`，人与 agent 共用）+ **时间段 AI 工作总结**（读 Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录 → 两级总结成给上级的汇报）。**管理台与工作台是同一个页面（`index.html`）、八个视图**，左栏两级分组导航（#opencode 电视墙页内含全屏大屏监控面板，非独立视图）。
 
 - **零依赖 + 模块化**：无 package.json / node_modules，只用 Node ≥ 18 内置模块 + spawn 系统 `sqlite3`，`server.mjs` 入口 + `lib/` 若干 ESM 模块。没有构建、lint；测试是 `node test/smoke.mjs`（mock 上游端到端 + fixture 数据源，不依赖真实订阅与真实 agent 数据）。
 - **语言约定**：注释、文档、commit message 全部使用中文，与现有风格保持一致。
@@ -40,7 +40,8 @@ lib/config.mjs        providers.json 加载/校验/热重载（baseUrl 归一化
 lib/providers-admin.mjs  管理台对 providers.json 的增删改（写前整体校验 + 防自环、
                       原子落盘 0600、读视图只出 token 掩码、编辑留空 token=沿用）
 lib/gwauth.mjs        客户端 Bearer token 校验（timingSafeEqual；safeEqual 与 TV token 校验共用）
-lib/tv-opencode.mjs   电视 OpenCode 战况墙（纯函数 + 读 session_v2）：idle/running/done 帧，ETag 忽略 now/elapsedMs/tools.at
+lib/tv-opencode.mjs   电视 OpenCode 战况墙（纯函数 + 读 session_v2）：idle/running/done 帧，ETag 忽略 now/elapsedMs/tools.at；
+                      rich 档（管理台大屏监控）：tools 24/sessions 8/tasks 20/title 160，出口 32KB 兜底，电视 6KB 契约不变
 lib/tv-snapshot.mjs   电视工作台快照（纯函数）：listTodos()+statsSnapshot() → 2–6 KB JSON，
                       裁掉 spans/perf/days[]/prices、note/标题截断、服务端算好 runningMs/doneToday；
                       ETag 只哈希数据本身（不含 now/runningMs，否则每分钟都 304 不命中）
@@ -69,10 +70,13 @@ lib/sync-snapshot.mjs Mac↔Mac 同步快照纯函数（rev=updated_at，支持 
 lib/sync-server.mjs   同步监听（gateway.sync，默认关闭，端口 8491）：白名单 /sync/v1/*；
                       Bearer 或 X-Workshop-Token；不挂 /admin、/v1；默认 CIDR 含 Tailscale。
                       删除幂等（再删 204）；PATCH/POST 撞墓碑：不新于墓碑 → 409 带
-                      deleted 墓碑，新于墓碑 → 复活（LWW）
+                      deleted 墓碑，新于墓碑 → 复活（LWW）；
+                      PUT /sync/v1/opencode[?rich=1] 收 spoke 的 OpenCode 投稿帧
+                      （瘦 6KB 电视契约 / rich 32KB 大屏监控档，同 deviceId 覆盖）
 lib/sync-client.mjs   同步客户端（gateway.syncClient，默认关闭）：spoke 轮询枢纽 snapshot，
                       按 id/rev 合并待办、按墓碑删除；本地删除推 DELETE（404 视为删成）；
-                      不另起监听
+                      OpenCode 投稿（publishOpenCode）每轮投两帧：瘦帧 + rich?（旧 hub
+                      拒收 rich 只记日志，不影响上墙）；不另起监听
 lib/sync-config.mjs   可同步配置的抽取/合并。**本机事实键 SYNC_LOCAL_ONLY_KEYS = ['monitors']**
                       永不进同步：显示器拓扑（哪块屏、哪个 VCP）绑的是本机硬件，两台机器
                       可以完全不同。两个方向的坏法——拉取方向：spoke 拿枢纽的屏 UUID 去
@@ -179,7 +183,7 @@ lib/report/generate.mjs 报告生成状态机：单任务串行（409）、colle
 lib/report-prompts.mjs 两级总结 prompt + 压缩/脱敏阈值**全部集中在此**——调汇报质量只改这里。
                       成稿**正文按待办分节**（每条 80-150 字，不再是每节 3 条长 bullet）、
                       未归属工作进末尾「## 其他」一行一条，整体 ≤700 字
-index.html            单页外壳：左栏两级分组导航（工作台 / 管理台）+ 七个视图
+index.html            单页外壳：左栏两级分组导航（工作台 / 管理台）+ 八个视图（#opencode 含全屏大屏监控面板）
                       （首屏 / 待办 / 汇报 / 总览 / 统计 / 诊断 / 配置）全部逻辑内联在一段脚本里。
                       首屏（#home）：左待办右订阅卡，数据走 GET /admin/home；额度 60 秒缓存，
                       切走时停轮询。
