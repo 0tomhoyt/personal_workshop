@@ -26,7 +26,7 @@ import { log, tailLog } from './lib/log.mjs';
 import { getConfig, tryGetConfig, getProvider, bindInboundEndpoint } from './lib/config.mjs';
 import { statsSnapshot, flushStats } from './lib/stats.mjs';
 import { listModels, resolveModelRoute, defaultProvider, peekModelsKnown, checkProviderCatalog } from './lib/models.mjs';
-import { providersView, createProvider, updateProvider, deleteProvider, saveRemoteProjects, tvOpenCodeStatus, saveTvOpenCodeSettings } from './lib/providers-admin.mjs';
+import { providersView, createProvider, updateProvider, deleteProvider, saveRemoteProjects, tvOpenCodeStatus, tvOpenCodePreview, saveTvOpenCodeSettings } from './lib/providers-admin.mjs';
 import { forward, readRequestBody, withUpstreamModel } from './lib/proxy-openai.mjs';
 import { handleAnthropicInbound, handleOpenAIToAnthropic } from './lib/proxy-anthropic.mjs';
 import { checkClientAuth } from './lib/gwauth.mjs';
@@ -277,7 +277,10 @@ const server = http.createServer(async (req, res) => {
         if (!isLocalHost(req)) {
           return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
         }
-        return sendJson(res, 200, tvOpenCodeStatus());
+        // ?preview=1 → 附带与电视同源的汇聚帧，供管理台监控卡
+        const wantPreview = /[?&]preview=1\b/.test(req.url || '');
+        if (!wantPreview) return sendJson(res, 200, tvOpenCodeStatus());
+        return tvOpenCodePreview().then((body) => sendJson(res, 200, body));
       }
       if (req.method === 'POST') {
         if (!isLocalHost(req)) {
