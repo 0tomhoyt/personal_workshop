@@ -1218,12 +1218,18 @@ function ocSpokeSourceLabel(src) {
 
 function ocSourceKindText(source, { asSpoke = false } = {}) {
   if (!source || typeof source !== 'object') return '未知';
+  // 角标必须跟 source 一致，禁止「Mac mini · <本机 hostname>」混称。
+  // local → 枢纽主机名（投稿端页不拼本机 host，只标 Mac mini）
+  // spoke → 投稿端 id/名
   if (source.kind === 'local') {
+    if (asSpoke) return 'Mac mini';
     const host = source.host || 'mini';
-    // 投稿端预览：说「Mac mini」，不要「本机」
-    return asSpoke ? `Mac mini · ${host}` : `本机 · ${host}`;
+    return `本机 · ${host}`;
   }
-  if (source.kind === 'spoke') return `MacBook 投稿 · ${source.id || source.host || 'spoke'}`;
+  if (source.kind === 'spoke') {
+    const id = source.id || source.host || 'macbook';
+    return asSpoke ? String(id) : `MacBook 投稿 · ${id}`;
+  }
   return JSON.stringify(source);
 }
 
