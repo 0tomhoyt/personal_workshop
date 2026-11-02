@@ -40,11 +40,12 @@ lib/config.mjs        providers.json 加载/校验/热重载（baseUrl 归一化
 lib/providers-admin.mjs  管理台对 providers.json 的增删改（写前整体校验 + 防自环、
                       原子落盘 0600、读视图只出 token 掩码、编辑留空 token=沿用）
 lib/gwauth.mjs        客户端 Bearer token 校验（timingSafeEqual；safeEqual 与 TV token 校验共用）
+lib/tv-opencode.mjs   电视 OpenCode 战况墙（纯函数 + 读 session_v2）：idle/running/done 帧，ETag 忽略 now/elapsedMs/tools.at
 lib/tv-snapshot.mjs   电视工作台快照（纯函数）：listTodos()+statsSnapshot() → 2–6 KB JSON，
                       裁掉 spans/perf/days[]/prices、note/标题截断、服务端算好 runningMs/doneToday；
                       ETag 只哈希数据本身（不含 now/runningMs，否则每分钟都 304 不命中）
 lib/tv-server.mjs     电视 LAN 监听（gateway.tv，默认关闭；同进程第二监听，8484 一行不动）：
-                      白名单 GET /tv/v1/snapshot|health，其余 404；Host 反 rebinding → 来源
+                      白名单 GET /tv/v1/snapshot|opencode|health，其余 404；Host 反 rebinding → 来源
                       allowedCidrs → 白名单 → X-Aerial-Token（timingSafeEqual）→ 30 次/分钟/token
                       （日志只记 token 名/前缀 + IP + 状态码）
 lib/quota.mjs          编码套餐额度查询（Kimi / 智谱 / CANNWork 三种）：

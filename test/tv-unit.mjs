@@ -9,6 +9,10 @@ import {
 import { inCidrs, hostAllowed, normalizeAddress, matchTvToken, createRateLimiter, bucketKey } from '../lib/tv-server.mjs';
 import { normalizeTv, TV_DEFAULT_CIDRS } from '../lib/config.mjs';
 import { safeEqual } from '../lib/gwauth.mjs';
+import {
+  buildOpenCodeSnapshot, buildDemoOpenCodeSnapshot, deriveStatus, mapToolStatus, mapTaskState,
+  extractTools, extractTasks, etagOfOpenCode, fitOpenCodeToLimit, OPENCODE_MAX_BYTES,
+} from '../lib/tv-opencode.mjs';
 
 let passed = 0;
 const failures = [];
@@ -403,6 +407,109 @@ check('cacheSeconds / maxPerMinute 边界', () => {
   assert.equal(normalizeTv({ cacheSeconds: 0 }).cacheSeconds, 0);
   assert.equal(normalizeTv({ maxPerMinute: 0 }).maxPerMinute, 30);
   assert.equal(normalizeTv({ maxPerMinute: 5 }).maxPerMinute, 5);
+});
+
+group('OpenCode status / maps');
+check('mapToolStatus pending/error', () => {
+  assert.equal(mapToolStatus('pending'), 'running');
+  assert.equal(mapToolStatus('running'), 'running');
+  assert.equal(mapToolStatus('error'), 'failed');
+  assert.equal(mapToolStatus('completed'), 'ok');
+});
+check('mapTaskState', () => {
+  assert.equal(mapTaskState('completed'), 'done');
+  assert.equal(mapTaskState('in_progress'), 'running');
+  assert.equal(mapTaskState('pending'), 'pending');
+});
+check('deriveStatus：工具 running 优先；busy>idle → running；succeeded → done', () => {
+  assert.equal(deriveStatus({ tools: [{ status: 'running' }] }), 'running');
+  assert.equal(deriveStatus({ timeBusy: 10, timeIdle: 5, now: 20 }), 'running');
+  assert.equal(deriveStatus({ timeBusy: 5, timeIdle: 10, idleOutcome: 'succeeded', now: 20 }), 'done');
+  assert.equal(deriveStatus({ idleOutcome: 'failed', now: 20 }), 'failed');
+  assert.equal(deriveStatus({ now: 20 }), 'idle');
+});
+
+group('OpenCode snapshot');
+check('无会话 → online idle', () => {
+  const s = buildOpenCodeSnapshot({ now: 1000 });
+  assert.equal(s.online, true);
+  assert.equal(s.status, 'idle');
+  assert.equal(s.demo, false);
+  assert.equal(s.now, 1000);
+  assert.equal(s.session, undefined);
+});
+check('完成会话：done + tokens + tools + plan', () => {
+  const s = buildOpenCodeSnapshot({
+    now: 10_000,
+    branch: 'feat/x',
+    session: {
+      id: 'ses_1', title: '战况墙', directory: '/Users/tom/Desktop/project/aerial-tv',
+      model: { id: 'deepseek-v4.1-flash', providerID: 'pg' }, agent: 'build',
+      time_created: 0, time_updated: 9_000, time_busy: 1_000, time_idle: 9_000,
+      idle_outcome: 'succeeded', tokens_input: 100, tokens_output: 20, tokens_reasoning: 5,
+    },
+    todos: [
+      { position: 0, content: '已做', status: 'completed' },
+      { position: 1, content: '进行中', status: 'in_progress' },
+    ],
+    messages: [{
+      id: 'm1', time_updated: 8_000,
+      data: { content: [
+        { type: 'tool', id: 'c1', name: 'edit', state: { status: 'completed', input: { path: 'a.kt' } } },
+        { type: 'tool', id: 'c2', name: 'shell', state: { status: 'pending', input: { command: 'gradlew test' } } },
+      ] },
+    }],
+  });
+  // 有 pending 工具 → running，即使 idle_outcome=succeeded
+  assert.equal(s.status, 'running');
+  assert.equal(s.session.project, 'aerial-tv');
+  assert.equal(s.session.branch, 'feat/x');
+  assert.equal(s.session.model, 'pg/deepseek-v4.1-flash');
+  assert.equal(s.session.agent, 'build');
+  assert.equal(s.tokens, 125);
+  assert.equal(s.tools[0].name, 'edit');
+  assert.equal(s.tools[1].status, 'running');
+  assert.equal(s.plan.tasks[1].state, 'running');
+  assert.equal(s.step, '进行中');
+});
+check('extractTools 截到 8；无 name 丢弃', () => {
+  const msgs = [{
+    id: 'm', time_updated: 1,
+    data: { content: [
+      { type: 'tool', id: 'x', name: '', state: { status: 'completed' } },
+      ...Array.from({ length: 10 }, (_, i) => ({ type: 'tool', id: `c${i}`, name: `t${i}`, state: { status: 'completed', input: { path: `f${i}` } } })),
+    ] },
+  }];
+  assert.equal(extractTools(msgs).length, 8);
+  assert.equal(extractTasks([{ content: 'a', status: 'pending' }, { content: '', status: 'pending' }]).length, 1);
+});
+check('演示帧带 demo=true 且同相位 ETag 稳定', () => {
+  const a = buildDemoOpenCodeSnapshot(1_000);
+  const b = buildDemoOpenCodeSnapshot(1_000 + 72_000);
+  assert.equal(a.demo, true);
+  assert.equal(a.status === 'running' || a.status === 'done', true);
+  assert.equal(a.title, b.title);
+  assert.equal(etagOfOpenCode(JSON.stringify(a)), etagOfOpenCode(JSON.stringify(b)));
+});
+check('ETag 忽略 now/elapsedMs；status 变则变', () => {
+  const base = buildOpenCodeSnapshot({
+    now: 1, session: { id: 's', title: 't', directory: '/p/x', time_created: 0, time_updated: 1, idle_outcome: 'succeeded', time_idle: 1, time_busy: 0 },
+  });
+  const later = { ...base, now: 999, elapsedMs: base.elapsedMs + 100 };
+  assert.equal(etagOfOpenCode(JSON.stringify(base)), etagOfOpenCode(JSON.stringify(later)));
+  assert.notEqual(etagOfOpenCode(JSON.stringify(base)), etagOfOpenCode(JSON.stringify({ ...base, status: 'running' })));
+});
+check('fitOpenCodeToLimit 不超 6KB', () => {
+  const fat = buildOpenCodeSnapshot({
+    now: 1,
+    session: { id: 's', title: '题'.repeat(200), directory: '/p/' + 'x'.repeat(80), time_created: 0, time_updated: 1, idle_outcome: 'succeeded', time_idle: 1 },
+    todos: Array.from({ length: 8 }, (_, i) => ({ position: i, content: '任'.repeat(100), status: 'pending' })),
+    messages: [{ id: 'm', time_updated: 1, data: { content: Array.from({ length: 8 }, (_, i) => ({
+      type: 'tool', id: `c${i}`, name: 'edit', state: { status: 'completed', input: { path: '路'.repeat(200) } },
+    })) } }],
+  });
+  const fitted = fitOpenCodeToLimit(fat);
+  assert.ok(Buffer.byteLength(JSON.stringify(fitted)) <= OPENCODE_MAX_BYTES);
 });
 
 console.log(`\n结果: ${passed} 通过, ${failures.length} 失败${failures.length ? ` — ${failures.join(' ; ')}` : ''}`);

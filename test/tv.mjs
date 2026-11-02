@@ -1,6 +1,6 @@
 // 电视工作台监听（gateway.tv）端到端测试：起一个网关实例（临时目录配置），验证
 //   - 默认关闭：不配 gateway.tv（或 enabled=false / tokens 为空）时 8490 不监听
-//   - 白名单：/tv/v1/snapshot、/tv/v1/health 之外一律 404（含 /admin/*、/v1/*）
+//   - 白名单：/tv/v1/snapshot、/tv/v1/opencode、/tv/v1/health 之外一律 404（含 /admin/*、/v1/*）
 //   - 鉴权：无 token / 错 token → 401；clientToken 不能当 TV token 用
 //   - 来源：非私网（这里用 127.0.0.2——回环但不默认在白名单里）→ 403
 //   - Host 反 rebinding：外部域名 Host → 403
@@ -139,6 +139,24 @@ try {
 
     const both = await fetch(`${TV}/tv/v1/snapshot`, { headers: { ...tvHeaders(TV_TOKEN_2), authorization: `Bearer ${TOKEN}` } });
     check('第二枚 TV token 独立可用', both.status === 200, `got ${both.status}`);
+  }
+
+  console.log('— OpenCode 战况 /tv/v1/opencode —');
+  {
+    const r = await fetch(`${TV}/tv/v1/opencode`, { headers: tvHeaders() });
+    const raw = await r.text();
+    let body = null;
+    try { body = JSON.parse(raw); } catch {}
+    check('opencode → 200', r.status === 200, String(r.status));
+    check('opencode 带 ETag', /^"[^"]+"$/.test(r.headers.get('etag') || ''), r.headers.get('etag'));
+    check('opencode online + status 合法', body && body.online === true && ['idle','running','waiting','done','failed'].includes(body.status), raw.slice(0, 200));
+    check('opencode 体积 ≤ 6 KB', Buffer.byteLength(raw) <= 6144, `${Buffer.byteLength(raw)} bytes`);
+    const etag = r.headers.get('etag');
+    const again = await fetch(`${TV}/tv/v1/opencode`, { headers: { ...tvHeaders(), 'if-none-match': etag } });
+    check('opencode If-None-Match → 304', again.status === 304, `got ${again.status}`);
+    const noTok = await fetch(`${TV}/tv/v1/opencode`);
+    // 前面的错 token 轰炸可能已把 fail:IP 桶打满，此时 429 与 401 同属「未授权被拒」
+    check('opencode 无 token → 401 或 429', noTok.status === 401 || noTok.status === 429, `got ${noTok.status}`);
   }
 
   console.log('— 快照：字段裁剪 / 排序 / 服务端算好 runningMs —');
