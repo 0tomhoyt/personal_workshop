@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 个人工作台 / personal_workshop（统一订阅 API 网关；运行时目录仍为 cannbot-gateway-proxy）—— 集中管理多个订阅上游，
+// 个人网关 / personal_gateway（统一订阅 API 网关）—— 集中管理多个订阅上游，
 // 供本机所有 Agent（Zcode / Claude Code / opencode / 任意 OpenAI 或 Anthropic 客户端）统一调用。
 //
 //   OpenAI 客户端    → http://127.0.0.1:<PORT>/v1/chat/completions
@@ -13,7 +13,7 @@
 // 客户端凭 gateway.clientToken 鉴权（未配置时不校验）。
 //
 // 运行时文件（proxy.log / vk-cache.json / stats.json）落在本脚本所在目录，随项目文件夹整体移动。
-// 端口: 8484（环境变量 CANNBOT_PROXY_PORT 优先，其次 providers.json gateway.port），只绑 127.0.0.1
+// 端口: 8484（环境变量 PGW_PROXY_PORT 优先，其次 providers.json gateway.port），只绑 127.0.0.1
 // 推荐由 launchd 托管（见 install.sh），也可前台直接 `node server.mjs` 运行。
 
 import http from 'node:http';
@@ -43,18 +43,19 @@ import { httpError, sendJson, extractModel } from './lib/util.mjs';
 import { startTvServer } from './lib/tv-server.mjs';
 import { startSyncServer } from './lib/sync-server.mjs';
 import { startSyncClient } from './lib/sync-client.mjs';
+import { envOf } from './lib/env.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOST = '127.0.0.1';
 const startupConfig = tryGetConfig();
 // 请求体上限：Anthropic 官方 Messages API 即 32MB（更大也送不出去），且翻译路径
 // parse/stringify 会瞬时多份拷贝，上限越大单请求内存尖峰越高。
-// env CANNBOT_MAX_BODY_MB > providers.json gateway.maxBodyMB > 32MB。
-const MAX_BODY = Math.max(1, Number(process.env.CANNBOT_MAX_BODY_MB)
+// env PGW_MAX_BODY_MB > providers.json gateway.maxBodyMB > 32MB。
+const MAX_BODY = Math.max(1, Number(envOf('PGW_MAX_BODY_MB'))
   || Number(startupConfig.gateway?.maxBodyMB)
   || 32) * 1024 * 1024;
 
-const PORT = Number(process.env.CANNBOT_PROXY_PORT)
+const PORT = Number(envOf('PGW_PROXY_PORT'))
   || Number(startupConfig.gateway?.port)
   || 8484;
 
@@ -78,8 +79,12 @@ function isLocalHost(req) {
 
 const INDEX_HTML = path.join(SCRIPT_DIR, 'index.html');
 const THEME_CSS = path.join(SCRIPT_DIR, 'theme.css');
-const LAUNCH_LABEL = 'cn.hicann.cannbot-gateway-proxy';
+// 2026-11 项目更名 personal_gateway：label 随之改新；旧 label 保留作重启/停止的兜底——
+// 未重跑 install.sh 的既有实例仍挂在旧 label 下，restart/stop 打新 label 会失败
+const LAUNCH_LABEL = 'cn.hicann.personal-gateway';
+const LEGACY_LAUNCH_LABEL = 'cn.hicann.cannbot-gateway-proxy';
 const LAUNCH_TARGET = `gui/${os.userInfo().uid}/${LAUNCH_LABEL}`;
+const LEGACY_LAUNCH_TARGET = `gui/${os.userInfo().uid}/${LEGACY_LAUNCH_LABEL}`;
 
 function launchctl(args) {
   execFile('/bin/launchctl', args, { timeout: 10_000 }, (e) => {
@@ -149,6 +154,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url === '/admin/log') {
+      // 与其他 /admin/* 同一威胁模型（防 DNS rebinding：日志含路径/provider/上游错误文案）
+      if (!isLocalHost(req)) {
+        return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
+      }
       return sendJson(res, 200, { lines: tailLog(80) });
     }
 
@@ -182,10 +191,20 @@ const server = http.createServer(async (req, res) => {
       const args = stopping
         ? ['bootout', LAUNCH_TARGET]
         : ['kickstart', '-k', LAUNCH_TARGET];
-      return setTimeout(() => launchctl(args), 300).unref();
+      return setTimeout(() => {
+        // 更名过渡：新 label 没装过（launchctl 报错）时补打旧 label——
+        // 未重跑 install.sh 的既有实例仍挂在旧 label 下，只打新 label 会静默无效
+        launchctl(args);
+        const legacyArgs = args.map((a) => (a === LAUNCH_TARGET ? LEGACY_LAUNCH_TARGET : a));
+        setTimeout(() => launchctl(legacyArgs), 1500).unref();
+      }, 300).unref();
     }
 
     if (url === '/admin/stats') {
+      // 与其他 /admin/* 同一威胁模型（防 DNS rebinding：流量/费用/性能统计不该被恶意页面跨源读走）
+      if (!isLocalHost(req)) {
+        return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
+      }
       return sendJson(res, 200, statsSnapshot());
     }
 
@@ -541,7 +560,15 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'Anthropic 请求缺少 model 字段' } });
       }
       const route = await routeFor(body.model);
-      return await handleAnthropicInbound(req, res, bodyBuf, body, route);
+      try {
+        return await handleAnthropicInbound(req, res, bodyBuf, body, route);
+      } catch (e) {
+        // 上游建连/凭证失败的抛错（jwt_missing / 连接失败等）要回 Anthropic 错误
+        // 形态（type:error 外壳）——外层兜底 catch 是 OpenAI 形态，官方 SDK 按
+        // error.type 分类的客户端拿到的是裸 code
+        if (res.headersSent) { try { res.end(); } catch {} return; }
+        return sendJson(res, e.status ?? 502, { type: 'error', error: { type: e.code ?? 'api_error', message: e.message } });
+      }
     }
 
     if (url.startsWith('/v1/')) {
@@ -555,8 +582,10 @@ const server = http.createServer(async (req, res) => {
         try { body = JSON.parse(bodyBuf.toString('utf8') || '{}'); } catch { body = {}; }
         return await handleOpenAIToAnthropic(req, res, url, bodyBuf, body, route);
       }
-      // 显式 pid/model 时把 body.model 改回上游真实名；裸名/默认上游保持原字节
-      if (route.explicit) {
+      // 显式 pid/model 或别名命中时把 body.model 改回上游真实名；裸名直呼且解析不变时保持原字节。
+      // 只看 explicit 会漏「alias → 裸名」：解析出的裸名 explicit=false，但原文是别名，
+      // 上游不认识，必须改写（/v1/messages 两条路径无条件用解析值，无此问题）
+      if (route.explicit || (requestedModel != null && route.model !== requestedModel)) {
         bodyBuf = withUpstreamModel(bodyBuf, route.model);
       }
       return await forward(req, res, url, bodyBuf, route);

@@ -43,7 +43,7 @@ fs.writeFileSync(path.join(tmp, 'providers.json'), JSON.stringify({
       auth: { type: 'static-token', token: 'mock-token-dual' },
       models: { source: 'static', list: [{ id: 'dual-model' }] } },
   ],
-  routing: { defaultProvider: 'mock-oai' },
+  routing: { defaultProvider: 'mock-oai', aliases: { 'mock-alias': 'mock-pro' } },
   // 工作台：报告生成用的模型（Task 8 消费；此处锁定配置透传）
   workbench: { reportProvider: 'mock-oai', reportModel: 'mock-pro' },
   pricing: { // 费用统计：mock-pro 走裸名覆盖，claude-mock 走 pid/模型名 精确覆盖
@@ -192,6 +192,16 @@ try {
     check('流式透传收到 ECHO', Boolean(echoChunk));
     check('网关注入 include_usage（mock 因此回 usage chunk）', datas.some((d) => { try { const x = JSON.parse(d); return x.usage?.completion_tokens === 12; } catch { return false; } }));
     check('流式以 [DONE] 结束', datas[datas.length - 1] === '[DONE]');
+  }
+
+  {
+    // alias → 裸名：解析值与原文不同也要改写 body.model。曾只看 explicit（pid/model
+    // 才置真），别名经裸名解析后 explicit=false，原文「mock-alias」原样发给上游必
+    // not found——而 /v1/messages 两条路径都无条件用解析值，同一个别名两协议一个能
+    // 用一个不能用（alias 此前完全无测试，漏网）
+    const j = await (await post('/v1/chat/completions', { model: 'mock-alias', max_tokens: 50, messages: [{ role: 'user', content: 'hi' }] })).json();
+    const echo = parseEcho(j.choices[0].message.content);
+    check('alias→裸名：OpenAI 直通也改写上游 model 名', echo.model === 'mock-pro', JSON.stringify(echo).slice(0, 120));
   }
 
   console.log('— ② anthropic 客户端 → openai 上游（翻译） —');
@@ -535,6 +545,16 @@ try {
       req.end();
     });
     check('/admin/home 非回环 Host → 403', offStatus === 403, String(offStatus));
+    // /admin/log 与 /admin/stats 曾是 admin 家族里仅有的两个不看 Host 的端点
+    // （DNS rebinding 下恶意页面可跨源读日志与全部流量/费用统计）
+    for (const p of ['/admin/log', '/admin/stats']) {
+      const st = await new Promise((resolve) => {
+        const req = http.request({ host: '127.0.0.1', port: GW_PORT, path: p, headers: { host: 'evil.example.com' } }, (res) => { res.resume(); resolve(res.statusCode); });
+        req.on('error', () => resolve(0));
+        req.end();
+      });
+      check(`${p} 非回环 Host → 403`, st === 403, String(st));
+    }
   }
 
   console.log('— 统计 —');
@@ -1497,6 +1517,32 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const realProj = m.projects.find((p) => p.name === 'real-proj');
     check('collect: 素材总字符数 > 0', m.chars > 0, String(m.chars));
     check('collect: 密钥脱敏（sk- → [REDACTED]）', realProj?.summaryText.includes('[REDACTED]') && !realProj.summaryText.includes('sk-abcdefghijklmnop123'), realProj?.summaryText.slice(0, 120));
+    // 脱敏模式全覆盖（此前只测 sk- 一种；JWT 是 base64url 不是 hex，长 hex 兜不住它——
+    // 而 CANNWork 恰是 JWT+VK 凭证链）。提取层 redact 是发给上游前的唯一真防线
+    {
+      const { redact } = await import(path.join(ROOT, 'lib/report-prompts.mjs') + '?t=' + Date.now());
+      const samples = [
+        ['JWT 三段式', 'token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c', 'eyJhbGciOi'],
+        ['GitHub PAT', 'key ghp_0123456789abcdefghij0123456789 done', 'ghp_0123456789'],
+        ['Google API key', 'id AIzaSyA1bC2dE3fG4hI5jK6lM7nO8pQ9rS0tU1v end', 'AIzaSyA1bC2d'],
+        ['Slack token', 'xoxb-123456789012-abcdef ', 'xoxb-123456789012'],
+        ['PEM 私钥块', '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADAN\n-----END PRIVATE KEY-----', 'MIIEvQIBADAN'],
+        ['URL 内嵌凭证', 'see https://user:sup3rs3cret@internal.example/x', 'sup3rs3cret'],
+      ];
+      for (const [name, input, secret] of samples) {
+        const out = redact(input);
+        check(`redact: ${name} → REDACTED`, out.includes('[REDACTED') && !out.includes(secret), out.slice(0, 100));
+      }
+      // env 兼容层：PGW_ 优先、旧 CANNBOT_ 兜底（2026-11 更名过渡；smoke 全程用
+      // CANNBOT_* 起 server 能跑通本身就是兜底路径的端到端证明，这里钉优先级）
+      const { envOf } = await import(path.join(ROOT, 'lib/env.mjs') + '?t=' + Date.now());
+      process.env.PGW_ENVCOMPAT_TEST = 'new';
+      process.env.CANNBOT_ENVCOMPAT_TEST = 'old';
+      check('env: PGW_ 优先于 CANNBOT_', envOf('PGW_ENVCOMPAT_TEST') === 'new');
+      delete process.env.PGW_ENVCOMPAT_TEST;
+      check('env: 仅 CANNBOT_ 时兜底生效', envOf('PGW_ENVCOMPAT_TEST') === 'old');
+      delete process.env.CANNBOT_ENVCOMPAT_TEST;
+    }
     check('collect: 超长真人输入截到 500 字（码位）', realProj?.summaryText.includes('压'.repeat(500)) && !realProj.summaryText.includes('压'.repeat(501)));
     check('collect: emoji 码位截断不劈代理对（剥合法对后无孤立代理）', !/[\uD800-\uDFFF]/.test(realProj?.summaryText?.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '') ?? '\uD800'));
     check('collect: todos 联动（窗口内新增/完成）', m.todos.created.some((t) => t.title === 'collect 测试 A') && m.todos.created.some((t) => t.title === 'collect 测试 B') && m.todos.completed.some((t) => t.title === 'collect 测试 A'), JSON.stringify({ c: m.todos.created.length, d: m.todos.completed.length }));
@@ -2095,7 +2141,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       && /switchMon\(\{ input: next, display: b\.dataset\.mdisp \}\)/.test(idxHtml));
     // 读失败的屏没有可信的当前输入源：不给「切下一个」，改为重试读取
     check('读失败时不盲切（data-mnext 空串 = 重试读取）',
-      /data-mnext="\$\{!retry \? next\.value : ''\}"/.test(idxHtml)
+      /data-mnext="\$\{esc\(!retry \? next\.value : ''\)\}"/.test(idxHtml)
       && /b\.dataset\.mnext === ''/.test(idxHtml));
     // 必须落在 providers 视图内部：从 <section class="view" data-view="providers"> 到下一个
     // view/main 边界之间（导航栏里的 data-view="providers" 是按钮，不能算数）
@@ -2123,6 +2169,13 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('大屏渲染覆盖：工具时间线 / 任务 / 会话卡三块都有容器',
       idxHtml.includes('id="ocBoardTools"') && idxHtml.includes('id="ocBoardTasks"')
         && idxHtml.includes('id="ocBoardSessions"') && idxHtml.includes('id="ocBoardBar"'));
+    check('任务列表填满右卡（flex:1，不塌在顶上一条）',
+      /\.oc-board-card \.oc-tasks \{ flex: 1 1 auto; min-height: 0; overflow-y: auto; \}/.test(idxHtml)
+        && /id="ocBoardTasks" class="oc-tasks"/.test(idxHtml));
+    check('#monitor 深链：冷启动与 hashchange 都开面板；关面板归一回 #opencode',
+      /if \(h === 'monitor'\) return 'opencode';/.test(idxHtml)
+        && /if \(h === 'monitor'\) setOcBoard\(true\);/.test(idxHtml)
+        && /if \(location\.hash === '#monitor'\) history\.replaceState\(null, '', '#opencode'\)/.test(idxHtml));
     check('导航是真链接（不用 button 切视图）', !/class="viewbtn"[^>]*data-view/.test(idxHtml));
     // 禁 break-all：只认「规则里真的用了」，注释里提到这个词（作为禁令说明）不算
     const cssRulesOnly = themeCssText.replace(/\/\*[\s\S]*?\*\//g, '');

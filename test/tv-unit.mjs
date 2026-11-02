@@ -697,30 +697,48 @@ check('rich 快照：tools/sessions/tasks 上限放宽、title 截断放宽', ()
   assert.equal(rich.sessions.length, RICH_LIMITS.sessions);
   assert.equal(rich.title.length, 161); // 160 + …
 });
-check('rich sanitize：32KB 内全收（tools 24 不被砍）；超限先砍 tools', () => {
+check('rich sanitize：32KB 内全收（tools 24 不被砍）；超长字段被截断收下', () => {
   const tools = Array.from({ length: 24 }, (_, i) => ({ id: `t${i}`, name: 'edit', status: 'ok', at: 1, target: 'x'.repeat(20) }));
   const ok = sanitizeSpokeOpenCodePayload({ online: true, status: 'running', deviceId: 'mb', now: 1, tools }, { rich: true });
   assert.equal(ok.frame.tools.length, 24);
-  // 32KB 以上的 fat 帧：逐级砍 tools（24 → 12 → 6），还不行才 413
+  // 32KB 以上的 fat 帧：白名单内字段逐项截断（target ≤200 码位），整帧收下且有界
   const fat = { online: true, status: 'running', deviceId: 'mb', now: 1,
     tools: tools.map((t) => ({ ...t, target: '巨'.repeat(600) })) };
   const squeezed = sanitizeSpokeOpenCodePayload(fat, { rich: true });
-  assert.ok(squeezed.frame.tools.length <= 12);
+  assert.equal(squeezed.frame.tools.length, 24);
+  assert.ok(squeezed.frame.tools.every((t) => Array.from(t.target).length <= 201));
   assert.ok(Buffer.byteLength(JSON.stringify(squeezed.frame)) <= OPENCODE_RICH_MAX_BYTES);
-  let threw = false;
-  try {
-    sanitizeSpokeOpenCodePayload({ online: true, status: 'running', deviceId: 'mb', now: 1, junk: 'x'.repeat(OPENCODE_RICH_MAX_BYTES) }, { rich: true });
-  } catch (e) { threw = e.status === 413; }
-  assert.equal(threw, true);
+  // 33KB junk 超长**未知键**：白名单直接剥离（曾透传到电视出口），不再 413
+  const junked = sanitizeSpokeOpenCodePayload({ online: true, status: 'running', deviceId: 'mb', now: 1, junk: 'x'.repeat(33 * 1024) }, { rich: true });
+  assert.ok(!('junk' in junked.frame));
 });
-check('瘦档 sanitize 行为不变：6KB 内 fit、超限 413', () => {
+check('瘦档 sanitize：白名单外键剥离；超长 title 截断后 fit 到 6KB 内', () => {
   const { frame } = sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'mb', now: 1 });
   assert.equal(frame.status, 'idle');
-  let threw = false;
-  try {
-    sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'mb', now: 1, junk: 'x'.repeat(OPENCODE_MAX_BYTES) });
-  } catch (e) { threw = e.status === 413; }
-  assert.equal(threw, true);
+  const junked = sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'mb', now: 1, junk: 'x'.repeat(OPENCODE_MAX_BYTES) });
+  assert.ok(!('junk' in junked.frame));
+  const { frame: fitted, } = sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'mb', now: 1, title: '标'.repeat(20_000) });
+  assert.ok(Array.from(fitted.title).length <= 161); // 160 + …
+  assert.ok(Buffer.byteLength(JSON.stringify(fitted)) <= OPENCODE_MAX_BYTES);
+});
+
+group('CIDR 空前缀笔误 / Host 裸 IPv6（fail-open 修复）');
+check('空前缀「1.2.3.4/」不再被当 /0 放行全网段', () => {
+  // Number('') === 0 曾把多敲一个斜杠的笔误解析成 /0（匹配所有 IPv4/IPv6），
+  // 来源白名单形同虚设——必须按非法配置拒绝（不入白名单）
+  assert.equal(inCidrs('8.8.8.8', ['1.2.3.4/']), false);
+  assert.equal(inCidrs('fd00::99', ['fd00::1/']), false);
+  assert.equal(inCidrs('192.168.1.5', ['192.168.0.0/']), false);
+  // 合法写法不受影响
+  assert.equal(inCidrs('192.168.1.5', ['192.168.0.0/16']), true);
+});
+check('hostAllowed 认裸 IPv6（无方括号 ::1）与 mapped v4', () => {
+  // /:\d+$/ 曾把 ::1 的「:1」当端口剥掉剩 ':'，第一道门就 403（fail-closed 但难排查）
+  assert.equal(hostAllowed('::1'), true);
+  assert.equal(hostAllowed('[::1]'), true);
+  assert.equal(hostAllowed('[::1]:8490'), true);
+  assert.equal(hostAllowed('::ffff:127.0.0.1'), true);
+  assert.equal(hostAllowed('evil.example.com'), false);
 });
 
 console.log(`\n结果: ${passed} 通过, ${failures.length} 失败${failures.length ? ` — ${failures.join(' ; ')}` : ''}`);

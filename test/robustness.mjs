@@ -262,5 +262,81 @@ await checkAsync('两个并行 tool_call 各有独立的 content_block', async (
   assert.deepEqual(parsed, [{ p: 'a.txt' }, { q: 'b.txt' }], `参数串块了: ${JSON.stringify([...frags])}`);
 });
 
+// ── ⑥ pipeOpenAIStream：多字节跨 chunk + 客户端断连 ────────────────────────
+// 反向翻译流（OpenAI 客户端 → anthropic 上游）曾漏配 StringDecoder 与 clientGone
+// （其余三个流式解码点都有），TCP 劈开中文时 delta 整段丢失或变 U+FFFD
+group('pipeOpenAIStream（反向翻译流）');
+await checkAsync('中文字符被 chunk 劈开时内容逐字保留（不丢 delta、不出 U+FFFD）', async () => {
+  const { pipeOpenAIStream } = await import('../lib/translate/openai2anth.mjs');
+  const text = '你好世界，这是一段需要跨 chunk 的中文输出 with emoji 🎉 结尾';
+  const frames = [
+    { type: 'message_start', message: { usage: { input_tokens: 1, output_tokens: 0 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } },
+    { type: 'message_stop' },
+  ];
+  const sse = frames.map((f) => `event: ${f.type}\ndata: ${JSON.stringify(f)}\n\n`).join('');
+  const buf = Buffer.from(sse, 'utf8');
+  // 在中文文本第一个字节后劈开（UTF-8 首字节落在前一段、余字节落在后一段）
+  const textStart = buf.indexOf(text, 'utf8') + 1;
+  const upBody = Readable.from([buf.subarray(0, textStart), buf.subarray(textStart)]);
+
+  const res = new PassThrough();
+  res.writeHead = () => {};
+  const out = [];
+  res.on('data', (d) => out.push(d));
+  const finished = new Promise((r) => res.on('end', r));
+  await pipeOpenAIStream(res, upBody, { providerId: 'mock', model: 'm' });
+  await finished;
+
+  const chunks = Buffer.concat(out).toString()
+    .split('\n')
+    .filter((l) => l.startsWith('data: ') && l.trim() !== 'data: [DONE]')
+    .map((l) => JSON.parse(l.slice(6)));
+  const content = chunks.map((c) => c.choices?.[0]?.delta?.content ?? '').join('');
+  assert.ok(content.includes(text), `正文被劈坏: ${JSON.stringify(content.slice(0, 60))}`);
+  assert.ok(!content.includes('\uFFFD'), '出现 U+FFFD（多字节被独立解码劈坏）');
+});
+await checkAsync('客户端断连后停拉上游（不再白烧配额）', async () => {
+  const { pipeOpenAIStream } = await import('../lib/translate/openai2anth.mjs');
+  const frame = (n) => `event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: `第${n}段` } })}\n\n`;
+  let reads = 0;
+  const pending = [];
+  const upBody = new Readable({
+    read() {
+      reads++;
+      if (pending.length) this.push(pending.shift());
+      else this.push(null); // 一次性喂完，靠 clientGone 在下一轮 break
+    },
+  });
+  pending.push(Buffer.from(frame(1)), Buffer.from(frame(2)), Buffer.from(frame(3)));
+
+  const res = new PassThrough();
+  res.writeHead = () => {};
+  res.on('data', () => {});
+  await pipeOpenAIStream(res, upBody, { providerId: 'mock', model: 'm' });
+  // res 从未 end（没销毁也没 close）→ 全量消费。这里只验证「destroy 后不再读上游」：
+  const res2 = new PassThrough();
+  res2.writeHead = () => {};
+  const out2 = [];
+  res2.on('data', (d) => out2.push(d));
+  let reads2 = 0;
+  const pending2 = [];
+  const upBody2 = new Readable({
+    read() {
+      reads2++;
+      if (pending2.length) this.push(pending2.shift());
+      else this.push(null);
+    },
+  });
+  pending2.push(Buffer.from(frame(1)), Buffer.from(frame(2)), Buffer.from(frame(3)));
+  const done2 = pipeOpenAIStream(res2, upBody2, { providerId: 'mock', model: 'm' });
+  await new Promise((r) => setTimeout(r, 20)); // 等第一段写完
+  res2.destroy(); // 触发 'close' → clientGone
+  await done2;
+  assert.ok(reads2 < 5, `断连后仍在拉上游（read ${reads2} 次）`);
+});
+
 console.log(`\n结果: ${passed} 通过${failures.length ? `, ${failures.length} 失败 — ${failures.join(' / ')}` : ', 0 失败'}`);
 process.exit(failures.length ? 1 : 0);

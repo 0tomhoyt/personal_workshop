@@ -319,19 +319,26 @@ try {
       const listAfterRich = await fetch(`${SYNC}/sync/v1/opencode`, { headers: syncHeaders() });
       const lj = await listAfterRich.json();
       check('rich 投稿后 GET 列表 title=富帧', lj.spokes?.some((s) => s.deviceId === 'macbook-test' && s.title === '富帧'), JSON.stringify(lj.spokes ?? []).slice(0, 160));
-      // 瘦路径超 6KB → 413；rich 路径超 32KB → 413
+      // 未知 junk 键：白名单剥离 → 200（曾透传到电视出口；超限 413 语义随白名单
+      // 改为「白名单内字段超长 → 截断收下」，出口仍有 6KB 终检兜底）
       const thinFat = await fetch(`${SYNC}/sync/v1/opencode`, {
         method: 'PUT',
         headers: { ...syncHeaders(), 'content-type': 'application/json' },
         body: JSON.stringify({ online: true, status: 'idle', deviceId: 'macbook-test', now: 1, junk: 'x'.repeat(7 * 1024) }),
       });
-      check('瘦路径超 6KB → 413', thinFat.status === 413, `got ${thinFat.status}`);
+      check('瘦路径 junk 键被白名单剥离 → 200', thinFat.status === 200, `got ${thinFat.status}`);
       const richFat = await fetch(`${SYNC}/sync/v1/opencode?rich=1`, {
         method: 'PUT',
         headers: { ...syncHeaders(), 'content-type': 'application/json' },
-        body: JSON.stringify({ online: true, status: 'idle', deviceId: 'macbook-test', now: 1, junk: 'x'.repeat(33 * 1024) }),
+        // 传输上限 34KB 之内：junk 剥离 + 超长 title 截断都发生在 sanitize 层
+        body: JSON.stringify({ online: true, status: 'idle', deviceId: 'macbook-test', now: 1, junk: 'x'.repeat(4 * 1024), title: '超'.repeat(2000) }),
       });
-      check('rich 路径超 32KB → 413', richFat.status === 413, `got ${richFat.status}`);
+      const rfj = await richFat.json().catch(() => ({}));
+      check('rich 路径 junk 剥离 + 超长 title 截断 → 200', richFat.status === 200 && rfj.ok === true, `got ${richFat.status}`);
+      const listAfterFat = await fetch(`${SYNC}/sync/v1/opencode`, { headers: syncHeaders() });
+      const lfj = await listAfterFat.json();
+      const fatRow = lfj.spokes?.find((s) => s.deviceId === 'macbook-test');
+      check('超长 title 入库被截到 ≤161 码位', fatRow && Array.from(String(fatRow.title || '')).length <= 161, JSON.stringify(fatRow ?? {}).slice(0, 160));
     }
   }
 
