@@ -349,6 +349,7 @@ Aerial（`0tomhoyt/aerial-tv`）的 `Workbench` 屏保在客厅电视上显示�
 
 - **只认三个路由**：`GET /tv/v1/snapshot`、`GET /tv/v1/opencode`（2–6 KB 聚合快照，ETag + `If-None-Match` → 304）、
   `GET /tv/v1/health`。其余一切路径（含 `/admin/*`、`/v1/*`、`/`）一律 **404**。
+- OpenCode 多源（枢纽汇聚）：`gateway.tv.opencodeSource` = `local`|`auto`|`spoke:<deviceId>`；spoke 经 `PUT /sync/v1/opencode` 投稿（`gateway.syncClient.publishOpenCode` 默认 false）；出口 JSON 带 `source`。管理台首屏「电视 OpenCode 源」小卡可切换。
 - **四道门，顺序固定**：Host 必须是 IP 字面量或 `.local`（挡 DNS rebinding，外部域名 403）→
   来源必须命中 `allowedCidrs`（非私网 403）→ 路由白名单（其余 404）→ `X-Aerial-Token`
   （`timingSafeEqual`，缺/错 401）→ 每 token 每分钟 30 次（超限 429）；失败尝试另按来源 IP 限速，

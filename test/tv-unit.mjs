@@ -13,6 +13,10 @@ import {
   buildOpenCodeSnapshot, buildDemoOpenCodeSnapshot, deriveStatus, mapToolStatus, mapTaskState,
   extractTools, extractTasks, etagOfOpenCode, fitOpenCodeToLimit, OPENCODE_MAX_BYTES,
 } from '../lib/tv-opencode.mjs';
+import {
+  putSpokeOpenCodeFrame, clearSpokeOpenCodeFrames, resolveOpenCodeForTv,
+  sanitizeSpokeOpenCodePayload, parseOpenCodeSource,
+} from '../lib/tv-opencode-hub.mjs';
 
 let passed = 0;
 const failures = [];
@@ -510,6 +514,75 @@ check('fitOpenCodeToLimit 不超 6KB', () => {
   });
   const fitted = fitOpenCodeToLimit(fat);
   assert.ok(Buffer.byteLength(JSON.stringify(fitted)) <= OPENCODE_MAX_BYTES);
+});
+
+
+check('parseOpenCodeSource 默认/非法 → local', () => {
+  assert.equal(parseOpenCodeSource(undefined).mode, 'local');
+  assert.equal(parseOpenCodeSource('spoke:macbook').deviceId, 'macbook');
+  assert.equal(parseOpenCodeSource('spoke:bad id!').mode, 'local');
+  assert.equal(parseOpenCodeSource('auto').mode, 'auto');
+});
+check('枢纽 resolve：local 带 source.kind=local', () => {
+  clearSpokeOpenCodeFrames();
+  const out = resolveOpenCodeForTv({
+    opencodeSource: 'local',
+    localFrame: { now: 1, online: true, status: 'idle', title: '本机' },
+    now: 1000,
+  });
+  assert.equal(out.source.kind, 'local');
+  assert.equal(out.title, '本机');
+  assert.ok(out.source.host);
+});
+check('枢纽 resolve：spoke 新鲜帧优先；过期回落本机', () => {
+  clearSpokeOpenCodeFrames();
+  putSpokeOpenCodeFrame('macbook', { now: 1, online: true, status: 'running', title: 'MB' }, { receivedAt: 900 });
+  const hit = resolveOpenCodeForTv({
+    opencodeSource: 'spoke:macbook',
+    localFrame: { now: 1, online: true, status: 'idle', title: '本机' },
+    now: 1000,
+    staleMs: 45_000,
+  });
+  assert.equal(hit.source.kind, 'spoke');
+  assert.equal(hit.source.id, 'macbook');
+  assert.equal(hit.title, 'MB');
+  const miss = resolveOpenCodeForTv({
+    opencodeSource: 'spoke:macbook',
+    localFrame: { now: 1, online: true, status: 'idle', title: '本机' },
+    now: 100_000,
+    staleMs: 45_000,
+  });
+  assert.equal(miss.source.kind, 'local');
+  assert.equal(miss.title, '本机');
+});
+check('枢纽 resolve：auto 只在 spoke running 时切', () => {
+  clearSpokeOpenCodeFrames();
+  putSpokeOpenCodeFrame('macbook', { now: 1, online: true, status: 'idle', title: 'idleMB' }, { receivedAt: 900 });
+  const idle = resolveOpenCodeForTv({
+    opencodeSource: 'auto',
+    localFrame: { now: 1, online: true, status: 'idle', title: '本机' },
+    now: 1000,
+  });
+  assert.equal(idle.source.kind, 'local');
+  putSpokeOpenCodeFrame('macbook', { now: 1, online: true, status: 'running', title: 'runMB' }, { receivedAt: 950 });
+  const run = resolveOpenCodeForTv({
+    opencodeSource: 'auto',
+    localFrame: { now: 1, online: true, status: 'idle', title: '本机' },
+    now: 1000,
+  });
+  assert.equal(run.source.kind, 'spoke');
+  assert.equal(run.title, 'runMB');
+});
+check('sanitizeSpokeOpenCodePayload 拒超大/非法', () => {
+  const { frame, deviceId } = sanitizeSpokeOpenCodePayload(
+    { online: true, status: 'running', title: 'x', deviceId: 'macbook', now: 1 },
+  );
+  assert.equal(deviceId, 'macbook');
+  assert.equal(frame.status, 'running');
+  assert.equal(frame.source, undefined);
+  let threw = false;
+  try { sanitizeSpokeOpenCodePayload(null); } catch (e) { threw = e.status === 400; }
+  assert.equal(threw, true);
 });
 
 console.log(`\n结果: ${passed} 通过, ${failures.length} 失败${failures.length ? ` — ${failures.join(' ; ')}` : ''}`);

@@ -26,7 +26,7 @@ import { log, tailLog } from './lib/log.mjs';
 import { getConfig, tryGetConfig, getProvider, bindInboundEndpoint } from './lib/config.mjs';
 import { statsSnapshot, flushStats } from './lib/stats.mjs';
 import { listModels, resolveModelRoute, defaultProvider, peekModelsKnown, checkProviderCatalog } from './lib/models.mjs';
-import { providersView, createProvider, updateProvider, deleteProvider, saveRemoteProjects } from './lib/providers-admin.mjs';
+import { providersView, createProvider, updateProvider, deleteProvider, saveRemoteProjects, tvOpenCodeStatus, saveTvOpenCodeSettings } from './lib/providers-admin.mjs';
 import { forward, readRequestBody, withUpstreamModel } from './lib/proxy-openai.mjs';
 import { handleAnthropicInbound, handleOpenAIToAnthropic } from './lib/proxy-anthropic.mjs';
 import { checkClientAuth } from './lib/gwauth.mjs';
@@ -269,6 +269,32 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { error: { message: '请求体需为 {"remoteProjects": ["标签", ...]}', type: 'bad_request' } });
       }
       return sendJson(res, 200, { ok: true, ...saveRemoteProjects(payload.remoteProjects, { port: PORT }) });
+    }
+
+    // 电视 OpenCode 多源：读枢纽源/spoke 投稿状态；写 opencodeSource / publishOpenCode（热生效）。
+    if (url === '/admin/tv-opencode') {
+      if (req.method === 'GET') {
+        if (!isLocalHost(req)) {
+          return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
+        }
+        return sendJson(res, 200, tvOpenCodeStatus());
+      }
+      if (req.method === 'POST') {
+        if (!isLocalHost(req)) {
+          return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
+        }
+        if (!(req.headers['content-type'] || '').includes('application/json')) {
+          return sendJson(res, 415, { error: { message: '请求体需为 application/json', type: 'unsupported_media_type' } });
+        }
+        const bodyBuf = await readRequestBody(req, 4096);
+        let payload = null;
+        try { payload = JSON.parse(bodyBuf.toString('utf8') || '{}'); } catch {}
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+          return sendJson(res, 400, { error: { message: '请求体须为 JSON 对象', type: 'bad_request' } });
+        }
+        return sendJson(res, 200, saveTvOpenCodeSettings(payload, { port: PORT }));
+      }
+      return sendJson(res, 405, { error: { message: '此端点仅支持 GET/POST', type: 'method_not_allowed' } });
     }
 
     // 工作台 · 时间段工作总结：生成走「POST + 回环 + JSON」三件套（生成耗时长，

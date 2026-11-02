@@ -267,6 +267,20 @@
   .home-right { padding: 23px; }
   .home-topline, .home-side-head, .home-list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .home-topline, .home-hero, .home-quicklinks, .home-list-head, #homeTodos, .home-side-head, #homeProv { position: relative; }
+  .hoc { margin: 10px 0 12px; padding: 12px 13px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); }
+  .hoc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .hoc-head .hname { margin: 0; }
+  .hoc-meta { font: 10.5px var(--mono); color: var(--muted); letter-spacing: .04em; }
+  .hoc-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
+  .hoc-row label { font: 11.5px var(--sans); color: var(--ink-2); }
+  .hoc-row select, .hoc-row button { font: 12px var(--sans); padding: 4px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--inset); color: var(--ink); }
+  .hoc-row button.primary { background: var(--amber); border-color: transparent; color: #1a1206; font-weight: 600; }
+  .hoc-spokes { margin-top: 8px; font: 11px var(--mono); color: var(--muted); line-height: 1.45; }
+  .hoc-spokes b { color: var(--ink-2); font-weight: 600; }
+  .hoc-tag { display: inline-block; padding: 1px 6px; border-radius: 999px; font: 10px var(--mono); letter-spacing: .04em; border: 1px solid var(--line); }
+  .hoc-tag.on { border-color: rgba(var(--amber-rgb), .55); color: var(--amber-hi); }
+  .hoc-tag.off { opacity: .7; }
+
   .home-date { font: 500 10.5px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim); }
   .home-local { display: inline-flex; align-items: center; gap: 6px; font: 600 9px var(--mono); letter-spacing: .12em; color: var(--green); }
   .home-local::before, .home-live i { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px rgba(var(--green-rgb), .65); }
@@ -802,6 +816,7 @@
             <span class="home-live"><i></i>LIVE</span>
           </div>
           <div class="husage" id="homeUsage"><span class="dim">加载中…</span></div>
+          <div class="hoc" id="homeOpenCode"><span class="dim">加载中…</span></div>
           <div id="homeProv"><span class="dim">加载中…</span></div>
         </div>
       </div>
@@ -977,6 +992,7 @@ async function loadHome() {
     return;
   }
   renderHome(d);
+  loadHomeOpenCode();
   scheduleHomePoll();
 }
 
@@ -1034,6 +1050,84 @@ function homeQuotaBlock(q) {
 // 额度已用 > 20% 但等效花费 < $0.5 → 明显对不上（多半是直连流量没经过网关）
 const HOME_SPEND_DISCLAIMER = (q, days30) => q && q.state !== 'none' && q.tiers?.length
   && q.tiers.some((t) => t.remainingPct < 80) && days30 < 0.5;
+
+
+// ── 电视 OpenCode 源 / 投稿小卡（枢纽汇聚）─────────────────────────────
+async function loadHomeOpenCode() {
+  const el = $('homeOpenCode');
+  if (!el) return;
+  try {
+    const d = await jf('/admin/tv-opencode');
+    renderHomeOpenCode(d);
+  } catch (e) {
+    el.innerHTML = `<div class="hname">电视 OpenCode</div><div class="hsub">读状态失败：${esc(e.message || e)}</div>`;
+  }
+}
+
+function renderHomeOpenCode(d) {
+  const el = $('homeOpenCode');
+  if (!el || !d) return;
+  const src = d.opencodeSource || 'local';
+  const spokes = Array.isArray(d.spokes) ? d.spokes : [];
+  const spokeOpts = spokes.map((s) => s.deviceId).filter(Boolean);
+  // 下拉：local / auto / 已知 spoke / 现网 MacBook deviceId（即使尚未投稿）
+  const options = new Set(['local', 'auto', 'macbook', ...spokeOpts]);
+  if (String(src).startsWith('spoke:')) options.add(src.slice(6));
+  const optHtml = [...options].map((id) => {
+    const val = (id === 'local' || id === 'auto') ? id : `spoke:${id}`;
+    const label = id === 'local' ? '本机（mini）' : id === 'auto' ? '自动（有 running spoke 则切）' : `spoke:${id}`;
+    return `<option value="${esc(val)}"${val === src ? ' selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+  const pubOn = d.publishOpenCode === true;
+  const spokeLines = spokes.length
+    ? spokes.map((s) => {
+        const age = Math.round((Number(s.ageMs) || 0) / 1000);
+        const tag = s.stale ? '过期' : (s.status || 'idle');
+        return `<div><b>${esc(s.deviceId)}</b> · ${esc(tag)} · ${age}s 前${s.title ? ' · ' + esc(s.title) : ''}</div>`;
+      }).join('')
+    : '<div>暂无 spoke 投稿（MacBook 默认关 publishOpenCode）</div>';
+  el.innerHTML = `
+    <div class="hoc-head">
+      <div class="hname">电视 OpenCode 源</div>
+      <span class="hoc-meta">${esc(d.host || '')}${d.tvEnabled ? ' · TV:8490' : ''}${d.syncClientEnabled ? ' · spoke' : ''}</span>
+    </div>
+    <div class="hsub">电视只配对 mini；源在枢纽选择，MacBook 可选投稿。</div>
+    <div class="hoc-row">
+      <label for="hocSource">信号源</label>
+      <select id="hocSource">${optHtml}</select>
+      <button type="button" class="primary" id="hocSaveSource">应用</button>
+    </div>
+    <div class="hoc-row">
+      <span class="hoc-tag ${pubOn ? 'on' : 'off'}">本机投稿 ${pubOn ? '开' : '关'}</span>
+      <button type="button" id="hocTogglePub">${pubOn ? '关闭投稿' : '打开投稿'}</button>
+      <span class="dim" style="font-size:11px">${d.syncClientEnabled ? '写 gateway.syncClient.publishOpenCode' : '本机无 syncClient 时开关仅存配置'}</span>
+    </div>
+    <div class="hoc-spokes">${spokeLines}</div>`;
+
+  $('hocSaveSource')?.addEventListener('click', async () => {
+    const v = $('hocSource')?.value || 'local';
+    try {
+      const r = await fetch('/admin/tv-opencode', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ opencodeSource: v }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error?.message || r.status);
+      renderHomeOpenCode(j);
+    } catch (e) { showErr(`切换 OpenCode 源失败：${e.message || e}`); }
+  });
+  $('hocTogglePub')?.addEventListener('click', async () => {
+    try {
+      const r = await fetch('/admin/tv-opencode', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ publishOpenCode: !pubOn }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error?.message || r.status);
+      renderHomeOpenCode(j);
+    } catch (e) { showErr(`切换投稿失败：${e.message || e}`); }
+  });
+}
 
 function renderHome(d) {
   const t = d.todos || { counts: {}, items: [], hidden: 0 };
