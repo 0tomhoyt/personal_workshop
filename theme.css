@@ -388,11 +388,12 @@ code { background: var(--inset); border: 1px solid var(--line-soft); border-radi
   }
 }
 
-/* ---- 可选皮肤「刻度」（html[data-skin="scale"]）--------------------------
-   与材质开关（data-theme 深/浅）正交的第二根轴：classic 缺省不改一字，
-   scale 下整体切换为「仪器美学」——hairline 分隔、单一信号色、直角、无阴影。
-   变量名沿用 amber 系历史命名（全页 30+ 处引用），值重调为信号橙。
-   由左栏风格切换钮（localStorage gw-skin）驱动，页面首屏脚本落 data-skin。 */
+/* ---- 可选皮肤（html[data-skin]）------------------------------------------
+   与材质开关（data-theme 深/浅）正交的第二根轴：classic 缺省不改一字。
+   左栏单钮循环切换（localStorage gw-skin）：琥珀遥测台 → 刻度 · 纸面(scale)
+   → 遥测 · 电光(fx) → 回到琥珀。结构覆盖两块皮肤共享（平面 hairline/直角/去辉光），
+   令牌各给深浅两套；变量名沿用 amber 系历史命名（全页 30+ 处引用），值按皮肤重调。
+   页面首屏脚本落 data-skin。 */
 html[data-skin="scale"] {
   --bg: #0b0c0e;
   --panel: #0e1013; --panel-2: #13151a; --inset: #08090b;
@@ -418,36 +419,65 @@ html[data-skin="scale"][data-theme="light"] {
   --noise-op: .04;
 }
 /* 纸面就是纸面：氛围渐变与蓝图网格退场（颗粒保留 = 纸的肌理） */
-html[data-skin="scale"] body { background: var(--bg); }
-html[data-skin="scale"] body::before { content: none; }
-html[data-skin="scale"] .rail { background: var(--bg); }
-html[data-skin="scale"] .rail-rule { background: var(--line); }
-html[data-skin="scale"] .brand .zh-mark { border-radius: 3px; border-color: var(--amber); box-shadow: none; }
+html[data-skin="scale"], html[data-skin="fx"] body { background: var(--bg); }
+html[data-skin="scale"], html[data-skin="fx"] body::before { content: none; }
+html[data-skin="scale"], html[data-skin="fx"] .rail { background: var(--bg); }
+html[data-skin="scale"], html[data-skin="fx"] .rail-rule { background: var(--line); }
+html[data-skin="scale"], html[data-skin="fx"] .brand .zh-mark { border-radius: 3px; border-color: var(--amber); box-shadow: none; }
 /* 直角化：控件与徽章从胶囊变刻度 */
-html[data-skin="scale"] button { border-radius: 3px; }
-html[data-skin="scale"] button.primary { color: #1a0e02; box-shadow: none; }
-html[data-skin="scale"] button.primary:hover { box-shadow: none; }
-html[data-skin="scale"] select { border-radius: 3px; }
-html[data-skin="scale"] .seg { border-radius: 3px; }
-html[data-skin="scale"] .seg button { border-radius: 2px; }
-html[data-skin="scale"] .badge { border-radius: 2px; }
-html[data-skin="scale"] .vbadge { border-radius: 2px; }
-html[data-skin="scale"] .frow input, html[data-skin="scale"] .frow textarea { border-radius: 3px; }
-html[data-skin="scale"] .banner { border-radius: 2px; }
-html[data-skin="scale"] code { border-radius: 2px; }
+html[data-skin="scale"], html[data-skin="fx"] button { border-radius: 3px; }
+html[data-skin="scale"], html[data-skin="fx"] button.primary { color: #1a0e02; box-shadow: none; }
+html[data-skin="scale"], html[data-skin="fx"] button.primary:hover { box-shadow: none; }
+html[data-skin="scale"], html[data-skin="fx"] select { border-radius: 3px; }
+html[data-skin="scale"], html[data-skin="fx"] .seg { border-radius: 3px; }
+html[data-skin="scale"], html[data-skin="fx"] .seg button { border-radius: 2px; }
+html[data-skin="scale"], html[data-skin="fx"] .badge { border-radius: 2px; }
+html[data-skin="scale"], html[data-skin="fx"] .vbadge { border-radius: 2px; }
+html[data-skin="scale"], html[data-skin="fx"] .frow input, html[data-skin="scale"], html[data-skin="fx"] .frow textarea { border-radius: 3px; }
+html[data-skin="scale"], html[data-skin="fx"] .banner { border-radius: 2px; }
+html[data-skin="scale"], html[data-skin="fx"] code { border-radius: 2px; }
 /* 卡片 → 平面 hairline 节 */
-html[data-skin="scale"] .card {
+html[data-skin="scale"], html[data-skin="fx"] .card {
   background: var(--panel); border-radius: 2px;
   box-shadow: none;
 }
 /* 分区标题：底 hairline + 编号去框（bare accent numeral） */
-html[data-skin="scale"] .sechead { padding-bottom: 9px; border-bottom: 1px solid var(--line-soft); }
-html[data-skin="scale"] .sechead .idx {
+html[data-skin="scale"], html[data-skin="fx"] .sechead { padding-bottom: 9px; border-bottom: 1px solid var(--line-soft); }
+html[data-skin="scale"], html[data-skin="fx"] .sechead .idx {
   border: none; padding: 0; background: none; border-radius: 0;
   font-size: 11px; letter-spacing: .18em;
 }
 /* 活动视图：全墨文字 + 实心直角刻度（去辉光） */
-html[data-skin="scale"] .viewbtn.active { color: var(--ink); border-color: transparent; }
-html[data-skin="scale"] .viewbtn.active::before {
+html[data-skin="scale"], html[data-skin="fx"] .viewbtn.active { color: var(--ink); border-color: transparent; }
+html[data-skin="scale"], html[data-skin="fx"] .viewbtn.active::before {
   border-radius: 0; background: var(--amber); box-shadow: none;
 }
+
+/* 遥测 · 电光（fx）：暗色本尊 = 近黑 + 电光青柠，动效身份（滚动带/粒子/活体计数）在页面层 */
+html[data-skin="fx"] {
+  --bg: #060709;
+  --panel: #0a0c10; --panel-2: #0e1116; --inset: #040507;
+  --ink: #f4f6f8; --dim: #8b93a1; --faint: #525a68;
+  --line: rgba(244, 246, 248, .12); --line-soft: rgba(244, 246, 248, .06);
+  --amber: #c8ff4d; --amber-hi: #e2ff8a; --amber-rgb: 200, 255, 77;
+  --amber-dim: rgba(200, 255, 77, .1);
+  --green: #5fbf8f;
+  --row-hover: rgba(200, 255, 77, .05);
+  --card-shadow: none;
+  --noise-op: .02;
+}
+/* 电光昼：青柠在白底不可读，信号色压深为橄榄柠——材质轴在 fx 下仍真实有效 */
+html[data-skin="fx"][data-theme="light"] {
+  --bg: #eef0e4;
+  --panel: #eef0e4; --panel-2: #e6e9da; --inset: #e7e9dc;
+  --ink: #15181c; --dim: #4e5546; --faint: #7d8272;
+  --line: rgba(21, 24, 28, .2); --line-soft: rgba(21, 24, 28, .09);
+  --amber: #5a7a00; --amber-hi: #44610a; --amber-rgb: 90, 122, 0;
+  --amber-dim: rgba(90, 122, 0, .08);
+  --green: #3d7a54;
+  --row-hover: rgba(21, 24, 28, .04);
+  --card-shadow: none;
+  --noise-op: .03;
+}
+/* fx 专属：活动刻度带一点电光辉光（克制，仅此一处） */
+html[data-skin="fx"] .viewbtn.active::before { box-shadow: 0 0 9px var(--amber); }

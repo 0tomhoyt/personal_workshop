@@ -354,9 +354,37 @@
   html[data-skin="scale"] .oc-role, html[data-skin="scale"] .oc-tag, html[data-skin="scale"] .oc-readonly { border-radius: 2px; }
   html[data-skin="scale"] .oc-row select, html[data-skin="scale"] .oc-row button { border-radius: 3px; }
   html[data-skin="scale"] .husage { border-radius: 2px; background: var(--inset); }
+  /* ---- 纸面精修：巨大等宽数字是主角，装饰退后 ---- */
+  /* 主标题里的计数字：serif → 特大等宽（tabular），「5」是整屏第一视觉 */
+  html[data-skin="scale"] .home-head em {
+    font-family: var(--mono); font-weight: 650; font-size: 1.32em;
+    color: var(--amber); letter-spacing: -.03em;
+  }
+  /* 花费/用量大数字：琥珀衬线 → 墨色等宽；信号橙只留给警示与小标注 */
+  html[data-skin="scale"] .hmoney {
+    font: 650 30px/1 var(--mono); color: var(--ink);
+    letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+  }
+  html[data-skin="scale"] .husage-num {
+    font: 650 30px/1 var(--mono); color: var(--ink);
+  }
+  html[data-skin="scale"] .hcard { border-radius: 2px; background: var(--panel); border-color: var(--line-soft); }
+  html[data-skin="scale"] .hmt { border-radius: 2px; background: none; }
+  html[data-skin="scale"] .hmt.warn { color: var(--amber); border-color: rgba(var(--amber-rgb), .35); background: none; }
+  html[data-skin="scale"] .home-quicklinks a { border-radius: 3px; background: var(--panel-2); }
+  html[data-skin="scale"] .home-quicklinks a:first-child {
+    color: var(--amber); border-color: rgba(var(--amber-rgb), .45); background: var(--amber-dim);
+  }
+  html[data-skin="scale"] .home-quicklinks a:hover { color: var(--amber); transform: none; }
+  /* 轨道环降噪：细 hairline、去光点辉光、慢速——仪器转速 */
+  html[data-skin="scale"] .orbit-track { border-color: var(--line); animation-duration: 60s; }
+  html[data-skin="scale"] .orbit-track::before { background: var(--amber); box-shadow: none; }
+  html[data-skin="scale"] .orbit-track.track-two { border-color: var(--line-soft); }
+  html[data-skin="scale"] .orbit-track.track-two::before { box-shadow: none; }
+  html[data-skin="scale"] .orbit-core { border-color: var(--line); }
   /* 刻度尺额度行：classic 的多档圆环横排，刻度下改纵向整行——每档占满一行的标尺
      （横排时每档只剩 ~100px，hscale 被压到 0 宽，标尺消失） */
-  html[data-skin="scale"] .hrings { flex-direction: column; align-items: stretch; margin-left: 0; gap: 2px; width: 100%; }
+  html[data-skin="scale"] .hrings, html[data-skin="fx"] .hrings { flex-direction: column; align-items: stretch; margin-left: 0; gap: 2px; width: 100%; }
   /* 刻度尺额度行：每格 10% 的标尺 + 平头填充；警示（超额/余量 <20%）用信号橙 */
   .hruler { display: flex; align-items: center; gap: 10px; padding: 6px 0; flex: 1; min-width: 0; }
   .hruler .hcap { flex: none; width: 44px; font: 600 11px var(--sans); color: var(--dim); white-space: nowrap; }
@@ -370,6 +398,45 @@
   .hruler .hnum { flex: none; width: 38px; text-align: right; font-style: normal; font: 600 12px var(--mono); color: var(--ink); }
   .hruler.is-warn .hscale i { background: var(--amber); }
   .hruler.is-warn .hnum { color: var(--amber-hi); }
+  /* ---- fx 燃料条：斜切平行四边形，级联注入（draft 3 的形态） ---- */
+  .hfuelf { display: flex; align-items: center; gap: 10px; padding: 6px 0; flex: 1; min-width: 0; }
+  .hfuelf .hcap { flex: none; width: 44px; font: 600 11px var(--sans); color: var(--dim); white-space: nowrap; }
+  .hfuelbar { flex: 1; height: 10px; position: relative; min-width: 0; background: var(--line-soft);
+    clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 100%, 6px 100%); }
+  .hfuelbar i { position: absolute; inset: 0 auto 0 0; width: var(--w);
+    background: linear-gradient(90deg, var(--dim), var(--amber));
+    animation: fxFillIn .9s var(--d, 0s) cubic-bezier(.2, .8, .2, 1.1) both; }
+  .hfuelf.is-warn .hfuelbar i { background: var(--amber); }
+  .hfuelf .hnum { flex: none; width: 38px; text-align: right; font-style: normal; font: 600 12px var(--mono); color: var(--ink); }
+  .hfuelf.is-warn .hnum { color: var(--amber-hi); }
+  @keyframes fxFillIn { from { width: 0; } }
+  /* ---- fx 专属：滚动带 / 粒子画布 / 计数 pop / 轨道环 ---- */
+  #fxTicker { display: none; overflow: hidden; border: 1px solid var(--line); background: var(--panel); margin: 0 0 16px; }
+  html[data-skin="fx"] #fxTicker { display: block; }
+  .fx-tk-in { display: inline-flex; gap: 38px; white-space: nowrap; width: max-content; padding: 6px 0;
+    animation: fxTickMove 30s linear infinite;
+    font: 500 10.5px var(--mono); letter-spacing: .1em; color: var(--dim); }
+  .fx-tk-in b { color: var(--ink); font-weight: 600; }
+  .fx-tk-in span::before { content: '▸ '; color: var(--amber); }
+  @keyframes fxTickMove { to { transform: translateX(-50%); } }
+  #fxBackdrop { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+  html[data-skin="fx"] .statline .mono { transition: color .2s; }
+  .fx-pop { display: inline-block; animation: fxPop .5s cubic-bezier(.2, .8, .2, 1); }
+  @keyframes fxPop { 0% { color: var(--amber); transform: translateY(-3px); } }
+  html[data-skin="fx"] .home-left::before { border-style: dashed; animation: fxSpin 40s linear infinite; }
+  @keyframes fxSpin { to { transform: rotate(360deg); } }
+  /* fx 图表：柱体青柠化（测量条逻辑同 scale，颜色不同） */
+  html[data-skin="fx"] .chart .bar { border-radius: 1px 1px 0 0; background: var(--faint); box-shadow: none; }
+  html[data-skin="fx"] .chart .bar:hover, html[data-skin="fx"] .chart .bar.hot {
+    filter: none; background: var(--amber); box-shadow: 0 0 8px rgba(var(--amber-rgb), .35); }
+  html[data-skin="fx"] .chart .bar.zero { background: var(--line-soft); box-shadow: none; }
+  html[data-skin="fx"] .hmoney, html[data-skin="fx"] .husage-num {
+    font-family: var(--mono); font-weight: 650; color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  html[data-skin="fx"] .home-head em {
+    font-family: var(--mono); font-weight: 650; letter-spacing: -.03em;
+  }
   .oc-spokes b { color: var(--dim); font-weight: 600; }
   /* 预览做成「小电视」 */
   .oc-preview {
@@ -714,7 +781,7 @@
     </div>
     <div class="rail-rule"></div>
     <div class="rail-tel">
-      <div class="statline"><span class="dot" id="dot"></span><span id="sState">…</span><span class="dim">·</span><button id="themeBtn" class="rail-theme" title="切换主题">☾</button><button id="skinBtn" class="rail-theme" title="风格：琥珀遥测台（点按切换到「刻度 · 纸面」）">琥</button></div>
+      <div class="statline"><span class="dot" id="dot"></span><span id="sState">…</span><span class="dim">·</span><button id="themeBtn" class="rail-theme" title="切换主题">☾</button><button id="skinBtn" class="rail-theme" title="切换风格">琥</button></div>
       <div class="statline dim">运行 <span class="mono" id="sUptime">…</span><span class="dim">·</span>鉴权 <span id="sAuth">…</span></div>
       <div class="statline dim">今日 <span class="mono" id="railTodayReq">–</span><span class="dim">次</span><span class="dim">·</span>上游 <span class="mono" id="railProvN">–</span></div>
     </div>
@@ -752,6 +819,7 @@
 
   <!-- 右主区：六个视图 -->
   <main class="main">
+    <div id="fxTicker" hidden aria-hidden="true"><div class="fx-tk-in" id="fxTkIn"></div></div>
 
     <!-- 三张提示条各司其职：凭证异常常驻 / 操作失败 8s 自隐 / 已停服 -->
     <div class="banner red" id="providerBanner"></div>
@@ -1267,8 +1335,21 @@ const HOME_TIER_NAME = { five_hour: '5 小时', weekly_limit: '周', daily: '今
 // 订阅脉搏的额度形态随皮肤走：classic = 琥珀圆环；scale = 刻度尺行（每格 10%）。
 // 语义完全一致（pct 钳制 / over=已超 / <20% 预警 / title 带真实倍数），只是形状不同。
 let homeData = null; // 最近一次首屏数据（applySkin 切换时重渲染用）
-function homeRing(tier) {
+function homeRing(tier, idx = 0) {
   const pct = Math.max(0, Math.min(100, Number(tier.remainingPct) || 0));
+  if (document.documentElement.dataset.skin === 'fx') {
+    const over = tier.over === true;
+    const warn = over || pct < 20;
+    const text = over ? '已超' : `${pct}%`;
+    const tip = over && tier.usedPct != null
+      ? `${HOME_TIER_NAME[tier.name] || tier.name}已用 ${tier.usedPct}%（${fmtTok(tier.used)} / ${fmtTok(tier.limit)}）`
+      : '';
+    return `<div class="hfuelf${warn ? ' is-warn' : ''}"${tip ? ` title="${esc(tip)}"` : ''}>
+      <span class="hcap">${HOME_TIER_NAME[tier.name] || esc(tier.name)}</span>
+      <div class="hfuelbar"><i style="--w:${pct}%;--d:${idx * 0.15}s"></i></div>
+      <em class="hnum">${esc(text)}</em>
+    </div>`;
+  }
   if (document.documentElement.dataset.skin === 'scale') {
     const over = tier.over === true;
     const warn = over || pct < 20;
@@ -1311,7 +1392,7 @@ function homeQuotaBlock(q) {
   if (q.state === 'error') {
     return `<div class="hqerr" title="${esc(q.error || '')}">查询失败 · ${esc(q.error || '未知原因')}</div>`;
   }
-  const rings = (q.tiers || []).map(homeRing).join('');
+  const rings = (q.tiers || []).map((t, i) => homeRing(t, i)).join('');
   // stale：环照画，但标出「这是几分钟前的数」——不把旧值伪装成当前值
   const staleNote = q.state === 'stale' && q.at
     ? `<div class="hstale">${Math.max(1, Math.round((Date.now() - q.at) / 60000))} 分钟前 · 刷新失败</div>` : '';
@@ -2035,6 +2116,24 @@ async function fetchStats() {
   if (el) el.title = `今日请求数（统计口径）· 上次刷新 ${new Date(statsFetchedAt).toLocaleTimeString('zh-CN', { hour12: false })}`;
 }
 
+// fx 皮肤的顶部遥测滚动带：内容从 healthz 现拼，字符串没变就不动 DOM
+// （无缝循环靠内容自复制两份；display 由皮肤选择器控制，非 fx 一律 hidden）
+let fxTkSig = '';
+function updateFxTicker(h) {
+  const box = $('fxTicker');
+  if (!box) return;
+  box.hidden = document.documentElement.dataset.skin !== 'fx';
+  if (box.hidden) return;
+  const up = fmtDur(h.uptimeSec || 0);
+  const provs = (h.providers || []).map((p) => `${p.id} ${p.protocol}`).join(' / ');
+  const today = $('railTodayReq')?.textContent || '–';
+  const sig = `${up}|${today}|${provs}`;
+  if (sig === fxTkSig) return;
+  fxTkSig = sig;
+  const items = `<span>运行 <b>${esc(up)}</b></span><span>今日 <b>${esc(today)}</b> 次请求</span><span>上游 <b>${esc(String((h.providers || []).length))}</b>/4 在线</span><span>鉴权 <b>${h.authRequired ? '已启用' : '未配置'}</b></span><span>${esc(provs)}</span><span>遥测 · 每 3s 校准</span>`;
+  $('fxTkIn').innerHTML = items + items;
+}
+
 // /healthz 常驻 3s：状态灯、运行时长、鉴权、上游数，以及模型目录变化自愈
 async function poll() {
   try {
@@ -2061,6 +2160,8 @@ async function poll() {
     monLastFetch = Date.now();
     loadMonitors();
   }
+  // 放在 poll 末尾：今日计数刚被 fetchStats 更新过，滚动带不再慢一拍
+  updateFxTicker(h);
 }
 
 const fmtTok = (n) => n == null ? '–' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e4 ? (n/1e3).toFixed(1)+'k' : String(n);
@@ -3148,28 +3249,84 @@ function applyTheme() {
 // classic = 原琥珀遥测台，一字不动；scale = 仪器美学（hairline/直角/信号橙/刻度尺额度）。
 // 切换后重渲染首屏——订阅脉搏在两种皮肤下是两种结构（环 ↔ 刻度尺），纯 CSS 换不了。
 const SKIN_KEY = 'gw-skin';
+const SKINS = ['classic', 'scale', 'fx'];       // 循环顺序：琥珀 → 刻度 → 遥测电光
+const SKIN_GLYPH = { classic: '琥', scale: '刻', fx: '遥' };  // 钮上显示当前所在风格
+// fx 粒子画布句柄：必须先于底部 applySkin() 的立即执行声明——skin=fx 开机时
+// applySkin → startFxBackdrop 会触碰它，声明在后就是 TDZ ReferenceError，
+// 整段启动脚本从那里死掉（数据链全不起来，2026-11-02 实测踩中）
+let fxCanvas = null, fxRafId = 0;
+function currentSkin() {
+  // localStorage 是唯一事实源：开机时 dataset 还是空的，不能反过来读它
+  try {
+    const v = localStorage.getItem(SKIN_KEY);
+    if (v === 'scale' || v === 'fx') return v;
+  } catch {}
+  return 'classic';
+}
 function applySkin() {
-  let skin = 'classic';
-  try { skin = localStorage.getItem(SKIN_KEY) === 'scale' ? 'scale' : 'classic'; } catch {}
-  if (skin === 'scale') document.documentElement.dataset.skin = 'scale';
-  else delete document.documentElement.dataset.skin;
-  const sc = skin === 'scale';
+  const skin = currentSkin();
+  if (skin === 'classic') delete document.documentElement.dataset.skin;
+  else document.documentElement.dataset.skin = skin;
   const btn = $('skinBtn');
   if (btn) {
-    btn.textContent = sc ? '刻' : '琥';
-    btn.title = sc
-      ? '风格：刻度 · 纸面（点按切回「琥珀遥测台」）'
-      : '风格：琥珀遥测台（点按切换到「刻度 · 纸面」）';
+    btn.textContent = SKIN_GLYPH[skin];
+    btn.title = '切换风格';  // 盲盒式循环：不预告下一站，点了才知道
   }
+  if (skin === 'fx') startFxBackdrop(); else stopFxBackdrop();
+  if (skin !== 'fx') { const t = $('fxTicker'); if (t) t.hidden = true; }
 }
 $('skinBtn').onclick = () => {
-  const next = document.documentElement.dataset.skin === 'scale' ? 'classic' : 'scale';
+  const next = SKINS[(SKINS.indexOf(currentSkin()) + 1) % SKINS.length];
   try { localStorage.setItem(SKIN_KEY, next); } catch {}
   applySkin();
-  // 订阅脉搏的结构随皮肤走：首屏在现视图且手里有数据就立刻重渲染，不等下一拍
+  // 订阅脉搏的结构随皮肤走（环 / 刻度尺 / 燃料条）：首屏在现视图且有数据就立刻重渲染
   if (curView === 'home' && homeData) renderHome(homeData);
 };
 applySkin();
+
+// fx 氛围层：粒子星尘（单画布 + 单循环；reduced-motion 不开动画）
+function startFxBackdrop() {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) return;  // reduced-motion：不开粒子动画（页面还有静态结构，足够）
+  stopFxBackdrop();
+  const c = document.createElement('canvas');
+  c.id = 'fxBackdrop';
+  document.body.appendChild(c);
+  fxCanvas = c;
+  const dots = Array.from({ length: 64 }, () => ({
+    x: Math.random(), y: Math.random(), r: Math.random() * 1.3 + .3,
+    v: Math.random() * .00035 + .0001, ph: Math.random() * 6.28,
+  }));
+  const ctx = c.getContext('2d');
+  let stop = false;
+  const draw = (t) => {
+    if (stop || document.documentElement.dataset.skin !== 'fx') { return; }
+    const w = innerWidth, h = innerHeight;
+    if (c.width !== w) c.width = w;
+    if (c.height !== h) c.height = h;
+    ctx.clearRect(0, 0, w, h);
+    const acc = getComputedStyle(document.documentElement).getPropertyValue('--amber').trim() || '#c8ff4d';
+    dots.forEach((d, i) => {
+      d.y -= d.v * 16; if (d.y < -0.01) { d.y = 1.01; d.x = Math.random(); }
+      ctx.globalAlpha = d.r > 1 ? .32 : .18;
+      ctx.fillStyle = i % 9 === 0 ? acc : '#8b93a1';
+      ctx.beginPath();
+      ctx.arc(d.x * w, d.y * h, d.r, 0, 6.2832);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+    fxRafId = requestAnimationFrame(draw);
+  };
+  requestAnimationFrame(draw);
+  fxCanvas._stop = () => { stop = true; cancelAnimationFrame(fxRafId); };
+}
+function stopFxBackdrop() {
+  if (fxCanvas) {
+    fxCanvas._stop && fxCanvas._stop();
+    fxCanvas.remove();
+    fxCanvas = null;
+  }
+}
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themeMode === 'auto') applyTheme(); });
 $('themeBtn').onclick = () => {
   themeMode = isDarkNow() ? 'light' : 'dark'; // 取当前实际配色的反面：每次点击都必然变色
