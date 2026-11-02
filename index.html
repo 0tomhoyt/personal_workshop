@@ -1120,11 +1120,7 @@ function scheduleOpenCodePoll() {
   ocTimer = setTimeout(() => { if (curView === 'opencode') loadOpenCodePage(); }, 5_000);
 }
 
-<<<<<<< HEAD
-
 document.getElementById('ocRefresh')?.addEventListener('click', () => loadOpenCodePage());
-=======
->>>>>>> feat(ui): OpenCode/电视墙独立页（白话信号源 + 监控预览）
 async function loadOpenCodePage() {
   const box = $('ocControls');
   if (!box) return;
