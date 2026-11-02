@@ -1,4 +1,4 @@
-# 个人工作台 · 统一订阅 API 网关（personal_workshop）
+# 个人网关 · 统一订阅 API 网关（personal_gateway，仓库目录 personal_workshop）
 
 **统一订阅网关**：把**多个订阅服务**（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，
 本机所有 Agent（zcode CLI、Claude Code、opencode、任意 OpenAI/Anthropic 客户端）统一从这里调用。
@@ -6,6 +6,11 @@
 
 **个人工作台**（同一页的左栏第一组，`http://127.0.0.1:8484/#todos`）：跨 agent 的待办事项（人与 agent 经
 `/v1/todos` 共用）+ 时间段 AI 工作总结（读本机各 agent 的会话记录，两级总结成给上级的汇报）。
+
+> 2026-11 项目更名 **personal_gateway**：运行时目录 `~/.local/share/personal-gateway/`、
+> launchd label `cn.hicann.personal-gateway`、环境变量前缀 `PGW_`。重跑 `./install.sh`
+> 自动迁移旧目录 `~/.local/share/cannbot-gateway-proxy/`（数据全保留、旧 label 清理）；
+> 旧前缀 `CANNBOT_*` 环境变量仍被兜底识别（lib/env.mjs，PGW_ 优先）。
 
 ```
 zcode CLI / Claude Code / opencode / curl …（全部 Agent）
@@ -49,8 +54,8 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
 | `cannbot-creds.sh` | cannbot 订阅凭证诊断（可选；`--sync-zcode` 重写 zcode 指向网关并写入 token） |
 | `打开管理界面.command` | **双击即可**：自动确保网关已启动并打开管理台 |
 
-**两个目录的关系**：本文件夹是项目源（source of truth）；`install.sh` 会把 `server.mjs + lib/ + index.html`
-拷贝到运行时目录 `~/.local/share/cannbot-gateway-proxy/`（providers.json、日志、VK 缓存、stats.json 也
+**两个目录的关系**：本文件夹是项目源（source of truth）；`install.sh` 会把 `server.mjs + lib/ + index.html + theme.css`
+拷贝到运行时目录 `~/.local/share/personal-gateway/`（providers.json、日志、VK 缓存、stats.json 也
 都在那里），launchd 实际运行的是该副本——macOS 对桌面目录有 TCC 保护，launchd 读不到桌面。
 **改动代码后需重跑 `./install.sh` 才生效**；改 `providers.json` 不用（网关按 mtime 热加载）。
 
@@ -58,9 +63,9 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
 
 ```bash
 ./install.sh                    # 默认端口 8484；冲突时: ./install.sh 8485
-# 首次安装会生成 ~/.local/share/cannbot-gateway-proxy/providers.json（0600，含随机网关 token）
+# 首次安装会生成 ~/.local/share/personal-gateway/providers.json（0600，含随机网关 token）
 #   并在终端打印 token 与两个协议的接入片段
-$EDITOR ~/.local/share/cannbot-gateway-proxy/providers.json   # 填入各订阅凭证（见下节）
+$EDITOR ~/.local/share/personal-gateway/providers.json   # 填入各订阅凭证（见下节）
 #   —— 或者直接在管理台网页里「供应商配置」卡添加/编辑，无需手改文件
 ./status.sh                     # 看各上游凭证体检结果
 ```
@@ -123,8 +128,9 @@ $EDITOR ~/.local/share/cannbot-gateway-proxy/providers.json   # 填入各订阅�
 - **静态 token 三种来源**（按优先级）：`token` 内联 / `tokenEnv` 环境变量 / `tokenFile`（可选
   `tokenJsonPath` 用 `a.b.c` 取字段，可直接复用其他工具已登录的凭证文件）。每次请求现读，外部工具
   刷新 token 后立即生效。
-  ⚠️ launchd 环境里 shell 的 env 不生效——用 `token`/`tokenFile`，或把变量写进 plist 的
-  `EnvironmentVariables`。
+  ⚠️ launchd 环境里 shell 的 env 不生效——用 `token`/`tokenFile` 最稳（tokenEnv 需要
+  把变量写进 plist 的 `EnvironmentVariables`，而重跑 `./install.sh` 会重新生成 plist、
+  手工加的环境变量会丢——所以要沿用 tokenEnv 就每次重装后补回去，或干脆换 tokenFile）。
 - **费用统计单价**：`pricing` 节可覆盖任意模型单价（键 `模型名` 或 `pid/模型名`，美元 / 1M tokens）；
   未覆盖的模型用内置参考价（`lib/pricing.mjs`，参考 OpenRouter 公开牌价与各家官方定价量级估算）。
   费用是**按牌价折算的等效成本**——订阅制上游（Kimi Code / GLM Coding Plan / CANNWork）实际是
@@ -227,7 +233,7 @@ API Key  : ANTHROPIC_AUTH_TOKEN = 网关 token
   并纳入**该窗口内新增/完成的待办**（标题短列表，新增行带子项进度（k/j）；详情长文不进 prompt）。
   经两级总结（逐项目小结 → 汇总成稿）产出**给上级看的中文 Markdown 汇报**——按项目分节、
   突出做了什么/推进到哪/产出什么，文末附待办进展与模型用量数据附注。一键复制、下载 .md（按报告时间窗命名）、历史存档可回看并按原时间段一键重跑。任一级总结失败或空响应会自动重试一次（间隔可用
-  `CANNBOT_REPORT_RETRY_DELAY_MS` 调）。窗口内即使没有会话素材、只要待办有变动也照常出稿
+  `PGW_REPORT_RETRY_DELAY_MS` 调）。窗口内即使没有会话素材、只要待办有变动也照常出稿
   （不会把「只有待办进展的时段」写成无记录）。
 - **报告用什么模型**：providers.json 的 `workbench` 节（`reportProvider` / `reportModel`，改完热
   生效）；不配则自动用默认上游的第一个可用模型。**总结质量的调优入口集中在
@@ -352,7 +358,7 @@ Aerial（`0tomhoyt/aerial-tv`）的 `Workbench` 屏保在客厅电视上显示�
 - OpenCode 多源（枢纽汇聚）：`gateway.tv.opencodeSource` = `local`|`auto`|`spoke:<deviceId>`；spoke 经 `PUT /sync/v1/opencode` 投稿（`gateway.syncClient.publishOpenCode` 默认 false）；出口 JSON 带 `source`。管理台首屏「电视 OpenCode 源」小卡可切换。
 - **管理台大屏监控**：`#opencode` 页预览卡右下「⛶ 大屏监控」按钮 → 全屏暗色面板（Esc 退出），
   与电视同源（`GET /admin/tv-opencode?preview=1&rich=1`，仅回环）。rich 档放宽提取上限
-  （tools 24 / sessions 8 / tasks 20 / title 160，出口 32–64KB 兜底），面板展示工具时间线、
+  （tools 24 / sessions 8 / tasks 20 / title 160，出口 32KB 兜底），面板展示工具时间线、
   计划任务进度条、最近会话卡；小卡仍按瘦帧（电视 6KB 契约不变）。spoke 也会额外投一帧
   rich（`PUT /sync/v1/opencode?rich=1`，32KB 上限，旧 hub 拒收不影响瘦帧上墙）。
 - **四道门，顺序固定**：Host 必须是 IP 字面量或 `.local`（挡 DNS rebinding，外部域名 403）→
@@ -398,15 +404,17 @@ Aerial（`0tomhoyt/aerial-tv`）的 `Workbench` 屏保在客厅电视上显示�
 ```
 
 - **白名单路由**：`GET /sync/v1/health`、`GET /sync/v1/snapshot?since=`、`POST /sync/v1/todos`、
-  `PATCH|PUT /sync/v1/todos/:id`、`DELETE /sync/v1/todos/:id`。其余（含 `/admin/*`、`/v1/*`）**404**。
+  `PATCH|PUT /sync/v1/todos/:id`、`DELETE /sync/v1/todos/:id`、`GET|PUT /sync/v1/config`、
+  `GET|POST /sync/v1/stats`、`GET /sync/v1/opencode`（spoke 列表）、`PUT /sync/v1/opencode[?rich=1]`
+  （spoke 投稿）。其余（含 `/admin/*`、`/v1/*`）**404**。
 - **鉴权**：`Authorization: Bearer <token>` 或 `X-Workshop-Token`（`timingSafeEqual`）；与 `clientToken` /
   TV token 不得相同（配置加载时丢弃并告警）。
 - **快照**：`rev` 暂等于 `updated_at`；`?since=` 只回此后有变更的待办。冲突：PATCH 带过期 `rev` → **409**。
-- **同步什么、不同步什么**：`providers` / `routing` / `pricing` / `workbench` 会同步；
+- **同步什么、不同步什么**：`providers` / `routing` / `pricing` / `workbench` 会同步
+（`gateway.sync` / `gateway.syncClient` / `gateway.tv` 是本机角色键，永不被覆盖）；
   **`monitors`（显示器拓扑）永不同步**——它描述的是这台机器接了哪块屏、走哪个 VCP 值，
   两台机器通常完全不同。把枢纽的屏 UUID 搬到另一台会让那台的 m1ddc 全部失败；反过来
-  没配 `monitors` 的机器会把对方的配置覆盖成空、回落到内置示例 UUID。`gateway.sync` /
-  `gateway.syncClient` / `gateway.tv` 同样是本机角色键，永不被覆盖。
+  没配 `monitors` 的机器会把对方的配置覆盖成空、回落到内置示例 UUID。
 - **怎么开（枢纽，不动现网 8484 时可先换端口测）**：在运行时 `providers.json` 填好 `gateway.sync`，
   `enabled: true`，放一枚长随机 token，然后重启该网关进程（或 `./install.sh` 装到运行时目录后再启）。
 - **LAN 自检（无需 Tailscale）**：
@@ -427,7 +435,8 @@ Aerial（`0tomhoyt/aerial-tv`）的 `Workbench` 屏保在客厅电视上显示�
     }
   }
   ```
-  合并规则：按 id，远端 `rev`（= `updated_at`）严格更新才覆盖；本机独有 id 暂不删（无墓碑）。改 enabled/url 需重启。
+  合并规则：按 id，远端 `rev`（= `updated_at`）严格更新才覆盖；删除走墓碑——本机删除
+  推 DELETE、拉取方向按墓碑删本机副本（30 天 TTL）；改 enabled/url 需重启。
 - **测试**：`node test/sync-unit.mjs`（纯函数）、`node test/sync.mjs`（临时目录起网关，不碰 8484）。
 - **桌面 iCloud**：两台 Mac 若同步 Desktop，源码 worktree / 枢纽数据不要放在会互踩的桌面路径。
 
@@ -444,8 +453,8 @@ Aerial（`0tomhoyt/aerial-tv`）的 `Workbench` 屏保在客厅电视上显示�
 
 ```bash
 ./status.sh                       # 服务 + 各上游凭证 + 最近请求
-tail -f ~/.local/share/cannbot-gateway-proxy/proxy.log
-tail -50 ~/.local/share/cannbot-gateway-proxy/logs/proxy.err.log
+tail -f ~/.local/share/personal-gateway/proxy.log
+tail -50 ~/.local/share/personal-gateway/logs/proxy.err.log
 node test/smoke.mjs               # 端到端回归（不依赖真实订阅）
 node test/robustness.mjs          # 稳健性回归（Multi-byte / 断流 / 原型污染 / 跨站 / 并行 tool_use）
 ```
@@ -462,24 +471,34 @@ node test/robustness.mjs          # 稳健性回归（Multi-byte / 断流 / 原�
 
 ### 环境变量（写进 launchd plist 或前台导出）
 
+前缀 `PGW_`（2026-11 更名前为 `CANNBOT_`，旧名仍被识别作兜底）：
+
 | 变量 | 缺省 | 说明 |
 |---|---|---|
-| `CANNBOT_PROXY_PORT` | `8484` | 监听端口（`./install.sh <端口>` 一步到位；providers.json gateway.port 亦可） |
-| `CANNBOT_SESSION_FILE` / `CANNBOT_AUTH_FILE` | opencode 目录 | cannwork 凭证来源（provider auth 里也可配） |
-| `CANNBOT_EXCLUDE_MODELS` | 空 | 追加到各 provider models.exclude 的隐藏模型 |
-| `CANNBOT_CONFIG_FILE` / `CANNBOT_LOG_FILE` / `CANNBOT_STATS_FILE` | 运行时目录 | 文件位置覆盖（测试用） |
+| `PGW_PROXY_PORT` | `8484` | 监听端口（`./install.sh <端口>` 一步到位；providers.json gateway.port 亦可） |
+| `PGW_CONFIG_FILE` / `PGW_LOG_FILE` / `PGW_STATS_FILE` / `PGW_TODOS_FILE` / `PGW_REPORTS_FILE` / `PGW_VK_CACHE` / `PGW_STATS_SYNC_FILE` | 运行时目录 | 各运行时产物位置覆盖（测试用；VK 缓存含活凭证，前台联调务必指到临时目录） |
+| `PGW_SESSION_FILE` / `PGW_AUTH_FILE` | opencode 目录 | cannwork 凭证来源（provider auth 里也可配） |
+| `PGW_EXCLUDE_MODELS` | 空 | 追加到各 provider models.exclude 的隐藏模型 |
+| `PGW_CC_DIR` / `PGW_ZCODE_DB` / `PGW_OPENCODE_DB` / `PGW_CURSOR_DIR` | 各 agent 真实数据目录 | 报告数据源根路径覆盖（测试用） |
+| `PGW_M1DDC` | `~/bin/m1ddc` | 显示器切换工具路径（测试用 mock） |
+| `PGW_MAX_BODY_MB` | `32` | 请求体上限（providers.json gateway.maxBodyMB 亦可） |
+| `PGW_REPORT_RETRY_DELAY_MS` | `1500` | 报告两级总结失败重试间隔 |
+| `PGW_REPORT_BODY_TIMEOUT_MS` | `120000` | 报告上游响应体读取的整体 deadline |
+| `PGW_SKIP_LAUNCHCTL` | 空 | 设 1 跳过 launchctl 步骤（脚本演练；旧名 CGP_SKIP_LAUNCHCTL 也认） |
+| `PGW_OPENCODE_TV_DEMO` | 空 | 设 1 强制 OpenCode 电视演示帧（联调用） |
 
 ## 回滚（完全撤销）
 
 ```bash
-./uninstall.sh --revert-configs   # 停服务 + 回滚 zcode 两处配置
+./uninstall.sh --revert-configs   # 停服务 + 回滚 zcode 配置（有备份的那份；v2 无备份会显式警告并给手工指引）
 rm -rf ~/Desktop/project/personal_workshop
 ```
 
 卸载会先把 `providers.json` / `todos.json` / `reports.json` 与坏文件自愈的 `*.bad` 现场备份
-抢救到 `~/.local/share/cannbot-gateway-proxy.data-backup-<时间戳>/` 再清理运行时目录。
-脚本演练/测试时务必带 `CGP_SKIP_LAUNCHCTL=1`（跳过 launchctl 步骤——launchctl 作用于
-用户域、与 HOME 无关，沙箱 HOME 下跑也会停掉真实服务）。
+抢救到 `~/.local/share/personal-gateway.data-backup-<时间戳>/` 再清理运行时目录
+（新旧目录都会清理）。
+脚本演练/测试时务必带 `PGW_SKIP_LAUNCHCTL=1`（旧名 `CGP_SKIP_LAUNCHCTL` 也认；跳过
+launchctl 步骤——launchctl 作用于用户域、与 HOME 无关，沙箱 HOME 下跑也会停掉真实服务）。
 
 ## 已知注意事项
 

@@ -1,5 +1,5 @@
 {
-  "_说明": "统一订阅网关配置模板。复制到运行时目录后按需修改：cp providers.template.json ~/.local/share/cannbot-gateway-proxy/providers.json && chmod 600 该文件。含全部订阅凭证，绝不入版本库。",
+  "_说明": "统一订阅网关配置模板。复制到运行时目录后按需修改：cp providers.template.json ~/.local/share/personal-gateway/providers.json && chmod 600 该文件。含全部订阅凭证，绝不入版本库。",
   "gateway": {
     "clientToken": "__CLIENT_TOKEN__",
     "upstreamHeadersTimeoutMs": 180000,

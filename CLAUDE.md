@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-**个人工作台 = 统一订阅 API 网关 + 待办 + AI 工作总结**。网关部分：把多个订阅服务（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，本机所有 Agent（zcode CLI、Claude Code、opencode 等）统一调用。按请求体里的**模型名**路由到对应订阅（providers.json 声明），自动注入该订阅凭证；同协议**原样直通**，跨协议走**双向翻译**。工作台部分（同一页的左栏第一组）：跨 agent 的**待办事项**（`/v1/todos`，人与 agent 共用）+ **时间段 AI 工作总结**（读 Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录 → 两级总结成给上级的汇报）。**管理台与工作台是同一个页面（`index.html`）、八个视图**，左栏两级分组导航（#opencode 电视墙页内含全屏大屏监控面板，非独立视图）。
+**个人网关（personal_gateway，仓库目录仍名 personal_workshop）= 统一订阅 API 网关 + 待办 + AI 工作总结**。网关部分：把多个订阅服务（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，本机所有 Agent（zcode CLI、Claude Code、opencode 等）统一调用。按请求体里的**模型名**路由到对应订阅（providers.json 声明），自动注入该订阅凭证；同协议**原样直通**，跨协议走**双向翻译**。工作台部分（同一页的左栏第一组）：跨 agent 的**待办事项**（`/v1/todos`，人与 agent 共用）+ **时间段 AI 工作总结**（读 Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录 → 两级总结成给上级的汇报）。**管理台与工作台是同一个页面（`index.html`）、八个视图**，左栏两级分组导航（#opencode 电视墙页内含全屏大屏监控面板，非独立视图）。
 
 - **零依赖 + 模块化**：无 package.json / node_modules，只用 Node ≥ 18 内置模块 + spawn 系统 `sqlite3`，`server.mjs` 入口 + `lib/` 若干 ESM 模块。没有构建、lint；测试是 `node test/smoke.mjs`（mock 上游端到端 + fixture 数据源，不依赖真实订阅与真实 agent 数据）。
 - **语言约定**：注释、文档、commit message 全部使用中文，与现有风格保持一致。
@@ -16,9 +16,9 @@ node server.mjs              # 前台直接运行（调试用；源目录无 pro
 node test/smoke.mjs          # 端到端冒烟测试（起 mock 上游 + 网关实例，三百余项断言；固定端口 6290/6291）
 node test/robustness.mjs     # 稳健性回归（多字节跨 chunk / 上游断流 / 原型污染 / 跨站 / 并行 tool_use）
 # 前台联调真实配置（换端口避开 launchd 实例；VK 缓存指到临时目录防活凭证落入源目录）：
-CANNBOT_PROXY_PORT=8485 CANNBOT_CONFIG_FILE="$HOME/.local/share/cannbot-gateway-proxy/providers.json" CANNBOT_VK_CACHE=/tmp/vk-debug.json node server.mjs
-./install.sh [端口]           # 安装并启动 launchd 常驻服务（幂等，缺省 8484）；CGP_SKIP_LAUNCHCTL=1 演练（跳过 launchctl 步骤）
-./uninstall.sh [--revert-configs]   # 停服务；--revert-configs 连 zcode 配置一起回滚；CGP_SKIP_LAUNCHCTL=1 演练同上（launchctl 作用于用户域、与 HOME 无关，脚本测试必须带它）
+PGW_PROXY_PORT=8485 PGW_CONFIG_FILE="$HOME/.local/share/personal-gateway/providers.json" PGW_VK_CACHE=/tmp/vk-debug.json node server.mjs
+./install.sh [端口]           # 安装并启动 launchd 常驻服务（幂等，缺省 8484）；PGW_SKIP_LAUNCHCTL=1 演练（跳过 launchctl 步骤）
+./uninstall.sh [--revert-configs]   # 停服务；--revert-configs 连 zcode 配置一起回滚；PGW_SKIP_LAUNCHCTL=1 演练同上（旧名 CGP_SKIP_LAUNCHCTL 也认；launchctl 作用于用户域、与 HOME 无关，脚本测试必须带它）
 ./status.sh                  # 服务状态 + 各上游凭证体检 + 最近请求
 ./cannbot-creds.sh           # cannbot 订阅凭证诊断（日常不用跑）
 curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
@@ -26,9 +26,9 @@ curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
 
 ## ⚠️ 双目录设计（改代码必读）
 
-本目录是**项目源**（仓库名 `personal_workshop`）；launchd 实际运行的是 `install.sh` 拷贝到 `~/.local/share/cannbot-gateway-proxy/` 的**运行时副本**（运行时目录名暂未改）（macOS TCC 限制 launchd 读不了桌面）。
+本目录是**项目源**（仓库名 `personal_workshop`，项目定位 2026-11 已更名 personal_gateway）；launchd 实际运行的是 `install.sh` 拷贝到 `~/.local/share/personal-gateway/` 的**运行时副本**（macOS TCC 限制 launchd 读不了桌面）。2026-10 及更早版本装在 `~/.local/share/cannbot-gateway-proxy/`，重跑 `./install.sh` 会把旧目录**整体迁移**到新目录（providers.json/待办/统计全保留）并清掉旧 label 的 plist。
 
-**改动 `server.mjs`、`lib/`、`index.html`、`theme.css` 后必须重跑 `./install.sh` 才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、todos.json、reports.json、logs/proxy.err.log、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。运行时文件位置可用 `CANNBOT_CONFIG_FILE` / `CANNBOT_LOG_FILE` / `CANNBOT_STATS_FILE` / `CANNBOT_TODOS_FILE` / `CANNBOT_REPORTS_FILE` 覆盖；报告数据源根路径可用 `CANNBOT_CC_DIR` / `CANNBOT_ZCODE_DB` / `CANNBOT_OPENCODE_DB` / `CANNBOT_CURSOR_DIR` 覆盖（test/smoke.mjs 即用它们把产物与数据源全部隔离到临时目录）。
+**改动 `server.mjs`、`lib/`、`index.html`、`theme.css` 后必须重跑 `./install.sh` 才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、todos.json、reports.json、logs/proxy.err.log、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。环境变量前缀 2026-11 起 **CANNBOT_ → PGW_**（统一走 lib/env.mjs 读取：PGW_ 优先、同名旧 CANNBOT_ 兜底，旧 plist/外部脚本不至于一夜失效）。运行时文件位置可用 `PGW_CONFIG_FILE` / `PGW_LOG_FILE` / `PGW_STATS_FILE` / `PGW_TODOS_FILE` / `PGW_REPORTS_FILE` 覆盖；报告数据源根路径可用 `PGW_CC_DIR` / `PGW_ZCODE_DB` / `PGW_OPENCODE_DB` / `PGW_CURSOR_DIR` 覆盖（test/smoke.mjs 即用它们把产物与数据源全部隔离到临时目录）。
 
 ## 架构（模块图）
 
@@ -42,6 +42,14 @@ lib/providers-admin.mjs  管理台对 providers.json 的增删改（写前整体
 lib/gwauth.mjs        客户端 Bearer token 校验（timingSafeEqual；safeEqual 与 TV token 校验共用）
 lib/tv-opencode.mjs   电视 OpenCode 战况墙（纯函数 + 读 session_v2）：idle/running/done 帧，ETag 忽略 now/elapsedMs/tools.at；
                       rich 档（管理台大屏监控）：tools 24/sessions 8/tasks 20/title 160，出口 32KB 兜底，电视 6KB 契约不变
+                      （最新会话与 sessions 小卡同口径只取顶层会话——parent_id IS NULL，
+                      subagent 的 time_updated 最新会把主卡换成 explore）
+lib/tv-opencode-hub.mjs
+                      OpenCode 多源枢纽：spokeFrames（有界：僵尸 >450s 淘汰、设备 ≤16、
+                      读路径同样清理）；deviceId 首认领制（别的 token 冒名 → 409）；
+                      投稿入站走键白名单 + 嵌套逐字段校验（session/plan/tools 都不
+                      放过，junk 键曾能透传到电视出口）；resolveOpenCodeForTv 按
+                      local/auto/spoke:* 选帧，出口带 source
 lib/tv-snapshot.mjs   电视工作台快照（纯函数）：listTodos()+statsSnapshot() → 2–6 KB JSON，
                       裁掉 spans/perf/days[]/prices、note/标题截断、服务端算好 runningMs/doneToday；
                       ETag 只哈希数据本身（不含 now/runningMs，否则每分钟都 304 不命中）
@@ -70,13 +78,16 @@ lib/sync-snapshot.mjs Mac↔Mac 同步快照纯函数（rev=updated_at，支持 
 lib/sync-server.mjs   同步监听（gateway.sync，默认关闭，端口 8491）：白名单 /sync/v1/*；
                       Bearer 或 X-Workshop-Token；不挂 /admin、/v1；默认 CIDR 含 Tailscale。
                       删除幂等（再删 204）；PATCH/POST 撞墓碑：不新于墓碑 → 409 带
-                      deleted 墓碑，新于墓碑 → 复活（LWW）；
+                      deleted 墓碑，新于墓碑 → 复活（LWW；复活判定认 rev 即使请求体
+                      只带 rev 不带 updated_at）；
                       PUT /sync/v1/opencode[?rich=1] 收 spoke 的 OpenCode 投稿帧
                       （瘦 6KB 电视契约 / rich 32KB 大屏监控档，同 deviceId 覆盖）
 lib/sync-client.mjs   同步客户端（gateway.syncClient，默认关闭）：spoke 轮询枢纽 snapshot，
                       按 id/rev 合并待办、按墓碑删除；本地删除推 DELETE（404 视为删成）；
-                      OpenCode 投稿（publishOpenCode）每轮投两帧：瘦帧 + rich?（旧 hub
-                      拒收 rich 只记日志，不影响上墙）；不另起监听
+                      OpenCode 投稿（publishOpenCode）每轮投两帧：**先瘦后 rich**——hub
+                      对同 deviceId 单槽覆盖（后到赢），顺序反了 rich 永远被瘦帧盖掉、
+                      大屏监控档对 spoke 源从不生效；旧 hub 拒收 rich 只记日志，不影响
+                      上墙；不另起监听
 lib/sync-config.mjs   可同步配置的抽取/合并。**本机事实键 SYNC_LOCAL_ONLY_KEYS = ['monitors']**
                       永不进同步：显示器拓扑（哪块屏、哪个 VCP）绑的是本机硬件，两台机器
                       可以完全不同。两个方向的坏法——拉取方向：spoke 拿枢纽的屏 UUID 去
@@ -86,10 +97,16 @@ lib/sync-config.mjs   可同步配置的抽取/合并。**本机事实键 SYNC_L
                       其实指向不存在的硬件）。所以 apply 时**显式忽略并还原本机值**，
                       extract 时彻底不产出该键（也不进 rev 指纹，改显示屏名字不该让两台
                       机器反复互相覆盖）。
-lib/models.mjs        模型目录聚合（TTL 10min + 失败负缓存 30s，目录响应 2MB 有界读）+ model→provider
-                      路由（显式 pid/model > aliases > 裸名唯一 > defaultProvider 兜底）
+lib/models.mjs        模型目录聚合（TTL 10min + 失败负缓存 30s + 刷新失败时旧目录最多
+                      沿用 1h——一次性上游抖动不该把裸名路由打回 defaultProvider；
+                      目录响应 2MB 有界读）+ model→provider 路由（显式 pid/model >
+                      aliases > 裸名唯一 > defaultProvider 兜底；alias→裸名时解析值
+                      ≠原文，OpenAI 直通路径也要改写 body.model）
 lib/upstream.mjs      requestUpstream：按 provider 解析凭证头、fetch（「发请求→收到
-                      响应头」超时，不影响已建立的流）、401 按 provider 策略重试一次
+                      响应头」超时＝gateway.upstreamHeadersTimeoutMs，不影响已建立的流；
+                      401 重试前 cancel 第一份响应体，不让 socket 钉在池外）、
+                      401 按 provider 策略重试一次、版本类头（anthropic-version/-beta）
+                      客户端优先于凭证解析器的缺省值
 lib/auth/cannwork.mjs CANNWork JWT+VK 链（读 session.json → vk 多级缓存/换取/自愈）
 lib/auth/static.mjs   静态 token（内联 / tokenEnv / tokenFile+tokenJsonPath，每次请求现读）
 lib/proxy-openai.mjs  OpenAI 客户端 → openai 上游：字节级透传 + Transform tap 旁路统计
@@ -116,7 +133,9 @@ lib/monitors.mjs      显示器输入源切换（m1ddc/DDC-CI over USB-C，串�
                       仅示例种子，可删改
 lib/monitors-admin.mjs 管理台对 monitors 节的改名写回（只动 name，不碰 UUID/VCP；
                       原子落盘 0600）
-lib/log.mjs           日志（内存环形缓冲 1000 行 + 落盘 + 5MB 轮转）
+lib/log.mjs           日志（内存环形缓冲 1000 行 + 落盘 + 5MB 轮转；行内控制字符压空格——
+                      model 名/上游错误文案客户端可控，裸换行能伪造带假时间戳的日志行）
+lib/env.mjs           环境变量统一入口：PGW_ 优先、旧 CANNBOT_ 兜底（2026-11 更名过渡）
 lib/util.mjs          httpError / sendJson / readBodyLimited（上游响应体有界读：content-length
                       预检 + 无/非法长度边读边检）/ token 权重（CJK 1:1 其余 4:1）/ randHex /
                       clientTag（请求日志里的调用方 UA 短标识，见「流量统计」节）
@@ -128,7 +147,8 @@ lib/todos.mjs         工作台待办数据层（todos.json 写穿原子落盘 0
                       子项 checklist：todo.items=[{id,title,done,done_at}]，每次子项变更后
                       deriveFromItems 派生父状态
                       （非空且全 done→父 done 盖 completed_at 不重盖；有未完成且父 done→回
-                      in_progress 清章；空清单不派生；显式 PATCH status 永远生效）。note 即
+                      in_progress 清章；空清单不派生；显式 PATCH status 单独传时永远
+                      生效——与 items 同请求时 items 派生结果优先）。note 即
                       「详情」：agent 来源（source≠user）硬上限 300 码位、用户 2000；子项
                       标题 ≤200、每条待办 ≤50 子项；createTodoItem/updateTodoItem/
                       deleteTodoItem 供 /v1/todos/:id/items 端点。
@@ -163,10 +183,13 @@ lib/report/collect.mjs 素材收集：4 源并发降级（单源故障记 source
                       （basename 短名）、三级压缩（LIMITS 码位截断、tailOnly 尾取）、脱敏、
                       只做项目归并（todoGroups/归属在 generate 里做，因为要调模型）+
                       待办变动 + stats 用量佐证
-lib/report/generate.mjs 报告生成状态机：单任务串行（409）、collect→summarize→final 三段进度、
+lib/report/generate.mjs 报告生成状态机：单任务串行（409）、collect→attribute→summarize→final
+                      四段进度、响应体读取另有整体 deadline（PGW_REPORT_BODY_TIMEOUT_MS，
+                      缺省 120s——requestUpstream 只到响应头为止，头到体不来会无限悬挂
+                      并把 409 闸门永久锁死）、
                       模型兜底链（workbench 节 → 默认上游目录第一个）、requestUpstream 协议
                       分支、reports.json 原子存档（上限 200）；两级总结失败或空响应自动重试一次
-                      （CANNBOT_REPORT_RETRY_DELAY_MS 可调间隔）；一级按待办跑，未归属素材
+                      （PGW_REPORT_RETRY_DELAY_MS 可调间隔）；一级按待办跑，未归属素材
                       单独一次调用产出「其他」清单；一条待办都没有时回落按项目；
                       「无记录」固定快径只在会话与待办**双双为空**时走（有待办变动即调模型）；
                       归属是一次独立模型调用（phase=attribute）；**远程待办**（project 命中
@@ -213,7 +236,9 @@ theme.css             共享主题：令牌 / 骨架 / 左栏布局契约 / 通�
 | `/v1/models` | 聚合所有 provider 目录（重名消歧为 `pid/model`，`owned_by`=provider id） |
 | `/`、`/admin`、`/workbench` | 同一个 `index.html`（单页应用）。`/workbench` 是旧链接：页面按 pathname 强制落 `#todos` 并把地址改写成 `/#todos` |
 | `/theme.css`、`/workbench.css` | 共享主题样式（硬编码路由；后者为旧缓存页面的兼容别名，同一份） |
-| `/healthz`、`/admin/*` | healthz（providers[] 凭证体检）、管理台页面与 API（log/stats/config/restart/stop、
+| `/healthz`、`/admin/*` | healthz（providers[] 凭证体检）、管理台页面与 API（log/stats/config/restart/stop——
+  log/stats 与其他 /admin/* 同样仅回环 Host（防 DNS rebinding）、restart/stop 打新
+  label `cn.hicann.personal-gateway`、失败再补打旧 label 兜底更名前实例、
   providers CRUD+测试：GET 脱敏视图 / POST 新增 / PUT、DELETE `/admin/providers/:id` /
   POST `.../:id/check` 现拉目录验证凭证；写后热加载即时生效；
   首屏（仅回环）：GET `/admin/home` —— 待办简览 + 每订阅花费与额度（额度走 lib/quota.mjs，
@@ -274,7 +299,8 @@ User-Agent 取的**产品名/版本**（剥掉 OS 注释与括号，超长截断
 `<a href="#v">`（可中键新开、可复制、Tab 可达），由 `hashchange` 驱动切视图：
 
 ```
-工作台  [默认展开]     首屏 #home（落地默认）· 待办 #todos · 汇报 #report
+工作台  [默认展开]     首屏 #home（落地默认）· OpenCode #opencode（含全屏大屏监控，
+                       #monitor 深链直开面板）· 待办 #todos · 汇报 #report
 管理台  [默认收起]     总览 #overview · 统计 #traffic · 诊断 #test · 配置 #providers
 ```
 
@@ -284,7 +310,8 @@ User-Agent 取的**产品名/版本**（剥掉 OS 注释与括号，超长截断
   `#stats-7`/`#stats-30`→统计并预选区间、`#workbench`→待办。
 - **落地顺序 = 有效 hash > `/workbench`（强制待办）> `#home`。不再读 `gw-view` 记忆**——
   首屏的用途是「打开就看」，记住上次视图与它直接冲突（写入仍保留，读取路径已删）。
-- 数字键 1–7 按左栏顺序切视图（输入控件内不抢键）。
+- 数字键 1–8 按左栏顺序切视图（输入控件内不抢键；大屏监控全屏开着时整个不抢——
+  setView 用 replaceState 不触发 hashchange，底下换页用户看不见）。
 - 徽标：工作台「待办」=未完成数（pending+in_progress）、「汇报」=存档数；管理台组头=
   凭证异常 provider 数；「诊断」=最近 80 行错误行数。今日完成数在待办页说明行。
 
@@ -359,10 +386,11 @@ m1ddc 缺失降级提示）；
 - Claude Code（`~/.claude/settings.json` env）：当前直连 GLM Coding Plan 的 anthropic 端点
   （open.bigmodel.cn），不走网关；曾经指向网关（2026-10-27 上午 zcode 桶的 130 次多轮 agent
   流量即走 Anthropic 协议直通路径）。
-- launchd label：`cn.hicann.cannbot-gateway-proxy`（plist 由 `plist.template` sed 生成；端口经 `CANNBOT_PROXY_PORT` 注入或运行时 `port` 文件记录）。旧版的分离热键守护 label `cn.hicann.cannbot-monitor-hotkeys` 已随功能移除，install/uninstall 仅保留对其历史安装遗留的清理路径。
+- launchd label：`cn.hicann.personal-gateway`（2026-11 前为 `cn.hicann.cannbot-gateway-proxy`，
+  install/uninstall 都会对旧 label 做停用与清理；plist 由 `plist.template` sed 生成；端口经 `PGW_PROXY_PORT` 注入或运行时 `port` 文件记录）。旧版的分离热键守护 label `cn.hicann.cannbot-monitor-hotkeys` 已随功能移除，install/uninstall 仅保留对其历史安装遗留的清理路径。
 
 ## 安全红线
 
-- `providers.json`、`creds.json`、`vk-cache.json` 含实时凭证，已在 .gitignore，**绝不入库/入源目录**。注意 `vk-cache.json` 的默认落点是服务根目录：**前台从源目录起网关联调时必须设 `CANNBOT_VK_CACHE` 指向临时目录**（连同 `CANNBOT_LOG_FILE`/`CANNBOT_STATS_FILE`/`CANNBOT_TODOS_FILE`/`CANNBOT_REPORTS_FILE`），否则活 VK 会写进源目录（2026-10 曾发生并已清理）。
+- `providers.json`、`creds.json`、`vk-cache.json` 含实时凭证，已在 .gitignore，**绝不入库/入源目录**。注意 `vk-cache.json` 的默认落点是服务根目录：**前台从源目录起网关联调时必须设 `PGW_VK_CACHE` 指向临时目录**（连同 `PGW_LOG_FILE`/`PGW_STATS_FILE`/`PGW_TODOS_FILE`/`PGW_REPORTS_FILE`），否则活 VK 会写进源目录（2026-10 曾发生并已清理）。
 - 服务只绑 127.0.0.1；/v1/* 要求 Bearer token（未配置 clientToken 时不校验，勿在生产默认关闭）。
 - 网关 token 的防护边界：挡盲扫与误暴露；单用户 Mac 上同 uid 进程仍可读凭证文件（README 有如实说明）。
