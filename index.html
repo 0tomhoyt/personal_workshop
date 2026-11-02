@@ -1203,7 +1203,9 @@ async function loadHome() {
     $('homeTodos').innerHTML = `<span class="bad">加载失败：${esc(e?.message || e)}</span>`;
     return;
   }
-  renderHome(d);
+  // 首屏 30s 一拍、数据（待办/花费/额度）多数时候不变——整段重建曾让「选中复制
+  // 待办标题」每 30s 被抹一次
+  renderIfChanged('home', d, () => renderHome(d));
   scheduleHomePoll();
 }
 
@@ -1274,16 +1276,24 @@ function scheduleOpenCodePoll() {
 }
 
 document.getElementById('ocRefresh')?.addEventListener('click', () => loadOpenCodePage());
+let ocPageSeq = 0; // 乱序防护：5s 轮询、切视图即时拉、开面板即时拉三方并发，晚到旧响应不回填
 async function loadOpenCodePage() {
   const box = $('ocControls');
   if (!box && !ocBoardOpen) return;
+  const seq = ++ocPageSeq;
   try {
     // 面板开着 → rich 帧（超集）；否则瘦帧。切视图后大屏仍继续轮询（面板盖全屏，正常用不到）
     const d = await jf(`/admin/tv-opencode?preview=1${ocBoardOpen ? '&rich=1' : ''}`);
+    if (seq !== ocPageSeq) return;
+    // 4xx/5xx 的 JSON 错误壳如实抛出（曾落进「未识别为枢纽或投稿端」分支，
+    // 把瞬时故障误导成配置错误）
+    if (d && d.error) throw new Error(d.error.message || '端点返回错误');
     if (box) renderOpenCodePage(d);
     if (ocBoardOpen) renderOcBoard(d);
   } catch (e) {
+    if (seq !== ocPageSeq) return;
     if (box) box.innerHTML = `<span class="bad">读状态失败：${esc(e.message || e)}</span>`;
+    if (ocBoardOpen) renderOcBoard({ previewError: e?.message || String(e) });
   }
   scheduleOpenCodePoll();
 }
@@ -1793,7 +1803,30 @@ async function apiFetch(url, opts = {}) {
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+// 渲染去抖：轮询驱动的重绘在数据没变时整段跳过。innerHTML 重建不只在浪费——它打断
+// 用户正在做的文本选择、把日志页强制滚回底部、无谓触发整块 layout。按 key 缓存上次
+// payload 的 JSON 快照；带时效性标签（「剩 n 分」「已运行 n 分」）的调用方自行把
+// 时间桶并进 diff 数据，让空闲时最多一个粒度周期重绘一次，标签仍读到正确分钟。
+const lastRendered = new Map();
+function renderIfChanged(key, diffData, fn) {
+  let snap;
+  try { snap = JSON.stringify(diffData); } catch { snap = String(diffData); }
+  if (lastRendered.get(key) === snap) return false;
+  lastRendered.set(key, snap);
+  fn();
+  return true;
+}
+
 function render(h) {
+  // 去抖：payload 剥掉 uptimeSec 并按分钟桶入 diff——空闲时从每 3s 整块重建降到最多
+  // 1 次/分钟；JWT 剩余/已运行这类分钟粒度标签仍然正确，状态灯/凭证异常等真实变化
+  // 会立刻改变 diff、当拍即渲染。模型目录签名自愈在 poll() 里、不受去抖影响
+  renderIfChanged('healthz', { ...h, uptimeSec: undefined, _min: Math.floor(Date.now() / 60_000) }, () => {
+    renderHealth(h);
+  });
+}
+
+function renderHealth(h) {
   const ok = h.ok;
   $('dot').className = 'dot ' + (ok ? 'ok' : 'bad');
   $('sState').textContent = ok ? '运行中' : '运行中（部分上游凭证异常）';
@@ -1907,13 +1940,17 @@ async function maybeFetchLog() {
 async function fetchLog() {
   const r = await fetch('/admin/log').then(r => r.json()).catch(() => null);
   if (r && r.lines) {
-    $('log').innerHTML = r.lines.map(l => {
-      l = l.replace(/&/g,'&amp;').replace(/</g,'&lt;');
-      if (/→ [45]\d\d/.test(l) || /ERROR/.test(l)) return `<span style="color:var(--red)">${l}</span>`;
-      if (/→ 200/.test(l)) return l.replace(/→ 200/, '<span style="color:var(--green)">→ 200</span>');
-      return `<span class="dim">${l}</span>`;
-    }).join('\n');
-    $('log').scrollTop = $('log').scrollHeight;
+    // 无新行就整段跳过：每 2s 强制 scrollHeight 滚底曾把「往上翻历史日志」的用户
+    // 一直拽回去
+    renderIfChanged('log', r.lines, () => {
+      $('log').innerHTML = r.lines.map(l => {
+        l = l.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+        if (/→ [45]\d\d/.test(l) || /ERROR/.test(l)) return `<span style="color:var(--red)">${l}</span>`;
+        if (/→ 200/.test(l)) return l.replace(/→ 200/, '<span style="color:var(--green)">→ 200</span>');
+        return `<span class="dim">${l}</span>`;
+      }).join('\n');
+      $('log').scrollTop = $('log').scrollHeight;
+    });
     // 日志徽标：最近 80 行里的错误行数（超出 ring 窗口的看不到，作下限参考）
     const errN = r.lines.filter((l) => /→ [45]\d\d|ERROR/.test(l)).length;
     setBadge('vbLog', errN ? String(errN) : null, errN ? 'red' : '');
@@ -1929,7 +1966,9 @@ async function fetchStats() {
   const seq = ++statsSeq;
   const s = await fetch('/admin/stats').then(r => r.json()).catch(() => null);
   if (!s || seq !== statsSeq) return;
-  renderStats(s);
+  // 30 天满量数据整块重建（表格 + 图）是页面最重的重绘；流量空闲时 payload 逐字节
+  // 不变，跳过——统计表里选中复制不再每 3s 被抹掉
+  renderIfChanged('stats', s, () => renderStats(s));
   statsFetchedAt = Date.now();
   // 左栏「今日 n 次」左栏遥测：离开统计/总览视图后停在最后一次的值，title 写明刷新时刻，
   // 不把旧值伪装成实时
@@ -2573,13 +2612,19 @@ function monBadge(m) {
 }
 
 function renderMonitors(d) {
-  const box = $('monList');
   // 改名输入中跳过本帧重绘：轮询（总览 6s）会 innerHTML 重建列表，把焦点/光标
   // 炸掉——待办列表有快照还原，这里直接跳帧更简单（失焦后下一 tick 恢复刷新）
   {
     const ae = document.activeElement;
     if (ae && (ae.classList?.contains('monname') || ae.id === 'monInName' || ae.id === 'monInPick')) return;
   }
+  // 数据没变整段跳过（cached 标志在「刷新」与轮询间翻转，剔掉免得 diff 永不相等）
+  if (d && !renderIfChanged('monitors', { ...d, cached: undefined }, () => renderMonitorsInner(d))) return;
+  if (!d) renderMonitorsInner(d);
+}
+
+function renderMonitorsInner(d) {
+  const box = $('monList');
   const railMons = $('railMons');
   const railAll = $('railAll');
   const railFoot = $('railFoot');

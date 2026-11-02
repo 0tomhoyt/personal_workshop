@@ -2143,6 +2143,21 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('读失败时不盲切（data-mnext 空串 = 重试读取）',
       /data-mnext="\$\{esc\(!retry \? next\.value : ''\)\}"/.test(idxHtml)
       && /b\.dataset\.mnext === ''/.test(idxHtml));
+    // 轮询渲染去抖：数据没变时整段跳过 innerHTML 重建（打断文本选择/强制滚底/layout）。
+    // healthz 的 diff 必须按分钟桶（JWT 剩余/已运行是分钟粒度标签），monitors 必须剔
+    // cached 标志（刷新与轮询间翻转会让 diff 永不相等）
+    check('轮询渲染去抖（renderIfChanged 五处轮询渲染各就位）',
+      /function renderIfChanged\(/.test(idxHtml)
+      && /renderIfChanged\('healthz', \{ \.\.\.h, uptimeSec: undefined, _min: Math\.floor\(Date\.now\(\) \/ 60_000\) \}/.test(idxHtml)
+      && /renderIfChanged\('stats', s,/.test(idxHtml)
+      && /renderIfChanged\('log', r\.lines,/.test(idxHtml)
+      && /renderIfChanged\('monitors', \{ \.\.\.d, cached: undefined \}/.test(idxHtml)
+      && /renderIfChanged\('home', d,/.test(idxHtml));
+    // /admin/tv-opencode 的 4xx/5xx JSON 错误壳要如实抛出（曾落进「未识别为枢纽或投稿端」
+    // 分支，把瞬时故障误导成配置错误）；5s 轮询/切视图/开面板三方并发要有乱序防护
+    check('OpenCode 页错误壳如实抛出 + 乱序防护',
+      /if \(d && d\.error\) throw new Error\(/.test(idxHtml)
+      && /if \(seq !== ocPageSeq\) return;/.test(idxHtml));
     // 必须落在 providers 视图内部：从 <section class="view" data-view="providers"> 到下一个
     // view/main 边界之间（导航栏里的 data-view="providers" 是按钮，不能算数）
     const provViewHtml = /<section class="view"[^>]*data-view="providers">([\s\S]*?)(?=<section class="view"|<\/main>)/.exec(idxHtml)?.[1] ?? '';
