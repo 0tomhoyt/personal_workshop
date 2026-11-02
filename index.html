@@ -857,12 +857,7 @@
           <button type="button" id="ocRefresh">刷新</button>
         </div>
         <div class="oc-explain" id="ocExplain">
-          <b>电视怎么连、这里选什么？</b>
-          <ul>
-            <li>电视<strong>永远只连 Mac mini</strong>（配对地址/端口不变），不会直接连 MacBook。</li>
-            <li>下面选的是：<strong>电视 OpenCode 墙当前看哪台电脑的会话</strong>——本机 / MacBook 投稿 / 自动。</li>
-            <li><strong>MacBook 投稿默认关</strong>；合盖或不需要上墙时请保持关闭，就不会往 mini 投稿。</li>
-          </ul>
+          <b>加载说明…</b>
         </div>
         <div class="oc-grid">
           <div class="card">
@@ -1133,19 +1128,60 @@ async function loadOpenCodePage() {
   scheduleOpenCodePoll();
 }
 
-function ocSourceLabel(src) {
+/** OpenCode 页角色：有 syncClient 一律按投稿端（spoke）渲染——即使本机也开了 gateway.tv。 */
+function ocIsSpoke(d) { return !!d?.syncClientEnabled; }
+function ocIsHub(d) { return !!d?.tvEnabled && !ocIsSpoke(d); }
+
+/** 枢纽视角的源文案（「本机」= mini）。 */
+function ocHubSourceLabel(src) {
   const s = String(src || 'local');
-  if (s === 'local') return '本机（mini 自己的会话）';
-  if (s === 'auto') return '自动（MacBook 在投且 running 就跟它，否则本机）';
+  if (s === 'local') return '本机 OpenCode（这台 mini）';
+  if (s === 'auto') return '自动（有 MacBook 在投且 running 则跟它，否则本机）';
   if (s.startsWith('spoke:')) return `MacBook 投稿（${s.slice(6)}）`;
   return s;
 }
 
-function ocSourceKindText(source) {
+/** 投稿端只读源文案：禁止「本机（mini）」；local 明确写成 Mac mini。 */
+function ocSpokeSourceLabel(src) {
+  const s = String(src || 'local');
+  if (s === 'local') return 'Mac mini 自己的 OpenCode';
+  if (s === 'auto') return '自动（由 Mac mini 在「本机 / MacBook 投稿」间切换）';
+  if (s.startsWith('spoke:')) return `MacBook 投稿（${s.slice(6)}）`;
+  return s;
+}
+
+function ocSourceKindText(source, { asSpoke = false } = {}) {
   if (!source || typeof source !== 'object') return '未知';
-  if (source.kind === 'local') return `本机 · ${source.host || 'mini'}`;
-  if (source.kind === 'spoke') return `投稿 · ${source.id || source.host || 'spoke'}`;
+  if (source.kind === 'local') {
+    const host = source.host || 'mini';
+    // 投稿端预览：说「Mac mini」，不要「本机」
+    return asSpoke ? `Mac mini · ${host}` : `本机 · ${host}`;
+  }
+  if (source.kind === 'spoke') return `MacBook 投稿 · ${source.id || source.host || 'spoke'}`;
   return JSON.stringify(source);
+}
+
+function renderOpenCodeExplain(d) {
+  const el = $('ocExplain');
+  if (!el) return;
+  if (ocIsSpoke(d)) {
+    el.innerHTML = `<b>这台是 MacBook（投稿端）</b>
+      <ul>
+        <li>电视<strong>永远只连 Mac mini</strong>，不会直接连本机。</li>
+        <li><strong>电视看哪台的会话</strong>由 Mac mini 管理台决定（本页只读）。</li>
+        <li>下面的「本机」只表示<strong>这台 MacBook 要不要向 mini 投稿 OpenCode</strong>；默认关，合盖/不需要就保持关。</li>
+      </ul>`;
+  } else if (ocIsHub(d)) {
+    el.innerHTML = `<b>这台是 Mac mini（枢纽）</b>
+      <ul>
+        <li>电视<strong>永远只连本机</strong>（配对地址/端口不变）。</li>
+        <li>下面选的是：电视 OpenCode 墙看<strong>本机 OpenCode</strong>、还是 <strong>MacBook 投稿</strong>、或<strong>自动</strong>。</li>
+        <li>MacBook 投稿默认关；要上墙须对方打开投稿，再在本页切源。</li>
+      </ul>`;
+  } else {
+    el.innerHTML = `<b>本机未启用电视枢纽或投稿</b>
+      <ul><li>在 providers.json 打开 <code>gateway.tv</code>（mini）或 <code>gateway.syncClient</code>（MacBook）后再用本页。</li></ul>`;
+  }
 }
 
 function renderOpenCodePage(d) {
@@ -1154,25 +1190,30 @@ function renderOpenCodePage(d) {
   const meta = $('ocHostMeta');
   if (!box || !d) return;
 
+  renderOpenCodeExplain(d);
+
   const src = d.opencodeSource || 'local';
   const spokes = Array.isArray(d.spokes) ? d.spokes : [];
   const spokeOpts = spokes.map((s) => s.deviceId).filter(Boolean);
   const options = new Set(['local', 'auto', 'macbook', ...spokeOpts]);
   if (String(src).startsWith('spoke:')) options.add(src.slice(6));
+  // 枢纽下拉：「本机」= 这台 mini；绝不写「本机（mini）」这种给笔记本看的歧义句
   const optHtml = [...options].map((id) => {
     const val = (id === 'local' || id === 'auto') ? id : `spoke:${id}`;
-    const label = id === 'local' ? '本机（mini 会话）'
-      : id === 'auto' ? '自动（有 MacBook 在跑就跟它）'
+    const label = id === 'local' ? '本机 OpenCode'
+      : id === 'auto' ? '自动'
       : `MacBook 投稿（${id}）`;
     return `<option value="${esc(val)}"${val === src ? ' selected' : ''}>${esc(label)}</option>`;
   }).join('');
 
   const pubOn = d.publishOpenCode === true;
-  const isSpoke = !!d.syncClientEnabled;
-  const isHub = !!d.tvEnabled;
+  const isSpoke = ocIsSpoke(d);
+  const isHub = ocIsHub(d);
 
   if (meta) {
-    meta.textContent = `${d.host || ''}${isHub ? ' · 枢纽 TV:8490' : ''}${isSpoke ? ' · 可投稿到 mini' : ''}`;
+    meta.textContent = isSpoke
+      ? `${d.host || ''} · 投稿端 → mini`
+      : (isHub ? `${d.host || ''} · 枢纽 TV:8490` : (d.host || ''));
   }
 
   const spokeLines = spokes.length
@@ -1183,33 +1224,41 @@ function renderOpenCodePage(d) {
       }).join('')
     : '<div>还没有 MacBook 投稿（投稿默认关）</div>';
 
-  const hubBlock = isHub ? `
-    <p class="hsub" style="margin:0 0 6px">电视只连本机；这里选的是<strong>墙上看哪台的会话</strong>。</p>
+  let hubBlock = '';
+  let pubBlock = '';
+  if (isSpoke) {
+    // 投稿端：无切源下拉；「本机」只出现在投稿开关
+    hubBlock = `
+    <p class="hsub" style="margin:0 0 6px"><strong>电视看的源由 Mac mini 决定</strong>（本页只读，请到 mini 管理台切源）。</p>
+    <div class="dim" style="font-size:12px;margin-top:4px">mini 当前选择：<b>${esc(ocSpokeSourceLabel(src))}</b></div>`;
+    pubBlock = `
+    <div class="oc-row" style="margin-top:14px">
+      <span class="oc-tag ${pubOn ? 'on' : 'off'}">本机是否向 mini 投稿 OpenCode：${pubOn ? '开' : '关（默认）'}</span>
+      <button type="button" id="ocTogglePub">${pubOn ? '关闭本机投稿' : '打开本机投稿'}</button>
+    </div>
+    <div class="dim" style="font-size:11.5px;margin-top:6px">这里的「本机」= 这台 MacBook。打开后才会经 sync 把本机 OpenCode 帧发给 mini；合盖或不需要上墙时请关掉。</div>`;
+  } else if (isHub) {
+    hubBlock = `
+    <p class="hsub" style="margin:0 0 6px">电视只连<strong>本机</strong>（这台 Mac mini）；这里选墙上看谁的会话。</p>
     <div class="oc-row">
       <label for="ocSource">墙上看谁</label>
       <select id="ocSource">${optHtml}</select>
       <button type="button" class="primary" id="ocSaveSource">应用</button>
     </div>
-    <div class="dim" style="font-size:11.5px;margin-top:6px">当前配置：${esc(ocSourceLabel(src))}</div>
-  ` : `
-    <p class="hsub" style="margin:0 0 6px">信号源在 <b>Mac mini</b> 管理台选；本机是投稿端。</p>
-    <div class="dim" style="font-size:12px">本机看到的枢纽源配置：${esc(ocSourceLabel(src))}（只读镜像，改源请打开 mini）</div>
-  `;
-
-  const pubBlock = isSpoke ? `
+    <div class="dim" style="font-size:11.5px;margin-top:6px">当前：${esc(ocHubSourceLabel(src))}</div>`;
+    pubBlock = `
     <div class="oc-row" style="margin-top:14px">
-      <span class="oc-tag ${pubOn ? 'on' : 'off'}">本机投稿 ${pubOn ? '开' : '关（默认）'}</span>
-      <button type="button" id="ocTogglePub">${pubOn ? '关闭投稿' : '打开投稿'}</button>
+      <span class="oc-tag off">投稿在 MacBook 上开关</span>
     </div>
-    <div class="dim" style="font-size:11.5px;margin-top:6px">打开后才会把本机 OpenCode 帧经 sync 发给 mini；合盖或不需要上墙时请关掉。</div>
-  ` : `
-    <div class="oc-row" style="margin-top:14px">
-      <span class="oc-tag off">投稿开关在 MacBook</span>
-    </div>
-    <div class="dim" style="font-size:11.5px;margin-top:6px">mini 是枢纽，不向自己投稿。要让电视看笔记本会话：MacBook 打开投稿 → 本页把源切到 MacBook 或自动。</div>
-  `;
+    <div class="dim" style="font-size:11.5px;margin-top:6px">枢纽不向自己投稿。要让电视看笔记本：MacBook 打开「本机投稿」→ 本页选 MacBook 投稿或自动。</div>
+    <div class="oc-spokes" style="margin-top:14px"><div class="oc-meta">收到的 MacBook 投稿</div>${spokeLines}</div>`;
+  } else {
+    hubBlock = `<p class="hsub">未识别为枢纽或投稿端（检查 gateway.tv / syncClient）。</p>`;
+  }
 
-  box.innerHTML = `${hubBlock}${pubBlock}<div class="oc-spokes" style="margin-top:14px"><div class="oc-meta">MacBook 投稿状态</div>${spokeLines}</div>`;
+  box.innerHTML = isSpoke
+    ? `${hubBlock}${pubBlock}`
+    : `${hubBlock}${pubBlock}`;
 
   if (prev) {
     const frame = d.preview;
@@ -1218,7 +1267,7 @@ function renderOpenCodePage(d) {
     } else if (!frame) {
       prev.innerHTML = `<div class="oc-kicker">Live preview</div><div class="oc-empty">暂无预览帧</div>`;
     } else {
-      const srcTxt = ocSourceKindText(frame.source);
+      const srcTxt = ocSourceKindText(frame.source, { asSpoke: ocIsSpoke(d) });
       const tools = Array.isArray(frame.tools) ? frame.tools.slice(0, 6) : [];
       const toolLine = tools.length
         ? tools.map((x) => esc(x.name || x.target || x.command || 'tool')).join(' · ')
