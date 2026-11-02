@@ -4,7 +4,7 @@
 # 说明：统一订阅网关（server.mjs）每次请求自行从 session.json 现取 JWT 并注入 VK，
 #       正常使用无需运行本脚本。它用于：人工校验 cannbot 订阅凭证是否有效、查看可用模型、
 #       （可选）把 ~/.zcode/cli/config.json 的 cannbot provider 重写为指向本地网关。
-#       多上游与网关 token 的配置在 ~/.local/share/cannbot-gateway-proxy/providers.json。
+#       多上游与网关 token 的配置在 ~/.local/share/personal-gateway/providers.json。
 #
 # 用法:
 #   ./cannbot-creds.sh                校验凭证并刷新 ./creds.json
@@ -25,23 +25,27 @@ LIST_API="https://cannbot.hicann.cn/cannbot/api/models/list"
 VK_API="https://cannbot.hicann.cn/cannbot/api/ai-keys/vk/my"
 PERSONAL_API="https://cannbot.hicann.cn/cannbot/api/models/personal"
 GATEWAY_BASE="https://cannbot.hicann.cn/gateway/compatible-mode/v1"
-# 本地代理常驻地址（launchd: cn.hicann.cannbot-gateway-proxy），
+# 本地代理常驻地址（launchd: cn.hicann.personal-gateway），
 # 自行注入 JWT+VK；zcode 配置一律指向代理，不再烘真实凭证。
-# 端口以 install.sh 写的运行时 port 文件为准：装到非 8484 时硬编码会把 zcode 指空。
-_RUNTIME_PORT_FILE="$HOME/.local/share/cannbot-gateway-proxy/port"
-_LOCAL_PORT="$(cat "$_RUNTIME_PORT_FILE" 2>/dev/null || true)"
-PROXY_URL="${CANNBOT_PROXY_URL:-http://127.0.0.1:${_LOCAL_PORT:-8484}/v1}"
+# 端口以 install.sh 写的运行时 port 文件为准：装到非 8484 时硬编码会把 zcode 指空
+# （新目录优先，更名前的旧目录兜底）。
+_RUNTIME_PORT_FILE="$HOME/.local/share/personal-gateway/port"
+_LOCAL_PORT="$(cat "$_RUNTIME_PORT_FILE" 2>/dev/null || cat "$HOME/.local/share/cannbot-gateway-proxy/port" 2>/dev/null || true)"
+GW_PORT="${PGW_PROXY_PORT:-${CANNBOT_PROXY_PORT:-${_LOCAL_PORT:-8484}}}"
+PROXY_URL="${PGW_PROXY_URL:-${CANNBOT_PROXY_URL:-http://127.0.0.1:${GW_PORT}/v1}}"
 # creds.json 含实时 JWT+VK，默认写到运行时目录（不进桌面源目录/版本库/同步盘）；
-# 需要落在别处时：CANNBOT_CREDS_FILE=/path/to/creds.json ./cannbot-creds.sh
-CREDS_DIR="${CANNBOT_CREDS_DIR:-$HOME/.local/share/cannbot-gateway-proxy}"
+# 需要落在别处时：PGW_CREDS_FILE=/path/to/creds.json ./cannbot-creds.sh
+CREDS_DIR="${PGW_CREDS_DIR:-${CANNBOT_CREDS_DIR:-$HOME/.local/share/personal-gateway}}"
 mkdir -p "$CREDS_DIR"
-CREDS="${CANNBOT_CREDS_FILE:-$CREDS_DIR/creds.json}"
+CREDS="${PGW_CREDS_FILE:-${CANNBOT_CREDS_FILE:-$CREDS_DIR/creds.json}}"
 ZCODE_CONFIG="$HOME/.zcode/cli/config.json"
 # 排除的模型 slug（逗号分隔，按需增删；缺省不排除）
 EXCLUDE_MODELS=""
 
 msg() { printf '[cannbot] %s\n' "$*"; }
 die() { printf '[cannbot] 错误: %s\n' "$*" >&2; exit 1; }
+
+command -v jq >/dev/null 2>&1 || die "缺少 jq（brew install jq）——本脚本用它解析凭证 JSON，缺了会把「没装工具」误报成「未登录」"
 
 [ -f "$SESSION_FILE" ] || die "未找到 ${SESSION_FILE}（请先打开 CANNWork 扩展并登录）"
 JWT=$(jq -r '.accessToken // empty' "$SESSION_FILE")
@@ -130,7 +134,8 @@ if [ "${1:-}" = "--sync-zcode" ]; then
   fi
 
   # 网关 token：优先读运行时 providers.json；没有则维持旧的免鉴权占位
-  RUNTIME_PROVIDERS="$HOME/.local/share/cannbot-gateway-proxy/providers.json"
+  RUNTIME_PROVIDERS="$HOME/.local/share/personal-gateway/providers.json"
+  [ -f "$RUNTIME_PROVIDERS" ] || RUNTIME_PROVIDERS="$HOME/.local/share/cannbot-gateway-proxy/providers.json"
   GATEWAY_TOKEN=""
   if [ -f "$RUNTIME_PROVIDERS" ]; then
     GATEWAY_TOKEN=$(jq -r '.gateway.clientToken // empty' "$RUNTIME_PROVIDERS" 2>/dev/null) || GATEWAY_TOKEN=""
@@ -138,8 +143,8 @@ if [ "${1:-}" = "--sync-zcode" ]; then
 
   # 模型清单：优先取网关聚合目录（含全部订阅，id 已做重名消歧）；网关未启动时回落 cannbot 清单
   SYNC_MODELS_JSON=""
-  if [ -n "$GATEWAY_TOKEN" ] && curl -fsS -m 5 -H "Authorization: Bearer $GATEWAY_TOKEN" "http://127.0.0.1:${CANNBOT_PROXY_PORT:-8484}/v1/models" 2>/dev/null | jq -e '.data' >/dev/null 2>&1; then
-    SYNC_MODELS_JSON=$(curl -fsS -m 5 -H "Authorization: Bearer $GATEWAY_TOKEN" "http://127.0.0.1:${CANNBOT_PROXY_PORT:-8484}/v1/models" \
+  if [ -n "$GATEWAY_TOKEN" ] && curl -fsS -m 5 -H "Authorization: Bearer $GATEWAY_TOKEN" "http://127.0.0.1:${GW_PORT}/v1/models" 2>/dev/null | jq -e '.data' >/dev/null 2>&1; then
+    SYNC_MODELS_JSON=$(curl -fsS -m 5 -H "Authorization: Bearer $GATEWAY_TOKEN" "http://127.0.0.1:${GW_PORT}/v1/models" \
       | jq '[.data[] | {slug: .id, title: .title}] | unique_by(.slug)')
     msg "模型清单取自网关聚合目录（$(echo "$SYNC_MODELS_JSON" | jq 'length') 个，含全部订阅）"
   fi

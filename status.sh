@@ -5,15 +5,19 @@
 
 set -euo pipefail
 
-LABEL="cn.hicann.cannbot-gateway-proxy"
-RUNTIME_DIR="$HOME/.local/share/cannbot-gateway-proxy"
+LABEL="cn.hicann.personal-gateway"
+LEGACY_LABEL="cn.hicann.cannbot-gateway-proxy"   # 2026-11 更名前的旧 label：未重装时实例仍挂它
+RUNTIME_DIR="$HOME/.local/share/personal-gateway"
+OLD_RUNTIME_DIR="$HOME/.local/share/cannbot-gateway-proxy"
+# 更名过渡：新目录优先，旧目录兜底（尚未跑过新版 install.sh 时数据还在旧处）
+[ -d "$RUNTIME_DIR" ] || RUNTIME_DIR="$OLD_RUNTIME_DIR"
 # 缺省用安装时记录的端口（install.sh 写入），未安装则退回 8484
 DEFAULT_PORT="$(cat "$RUNTIME_DIR/port" 2>/dev/null || echo 8484)"
 [[ "$DEFAULT_PORT" =~ ^[0-9]+$ ]] || DEFAULT_PORT=8484
 PORT="${1:-$DEFAULT_PORT}"
 
-# launchd 原始信息（可能为空 = 未安装）
-LAUNCH_INFO="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null || true)"
+# launchd 原始信息（可能为空 = 未安装）；更名过渡期先查新 label、再查旧 label
+LAUNCH_INFO="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null || launchctl print "gui/$(id -u)/$LEGACY_LABEL" 2>/dev/null || true)"
 # healthz 原始 JSON（可能为空 = 服务无响应）
 HEALTH_JSON="$(curl -fsS -m 5 "http://127.0.0.1:$PORT/healthz" 2>/dev/null || true)"
 
@@ -29,7 +33,7 @@ C = lambda code: f"\033[{code}m" if color else ""
 GREEN, RED, YELLOW, DIM, BOLD, RESET = C("32"), C("31"), C("33"), C("2"), C("1"), C("0")
 
 W = 46
-print(f"{BOLD}个人工作台{RESET}  " + DIM + "─" * W + RESET)
+print(f"{BOLD}个人网关 personal_gateway{RESET}  " + DIM + "─" * W + RESET)
 
 # ---- 服务 ----
 pid = None
@@ -53,7 +57,17 @@ if not health_raw:
     print(f"{RED}✗ 服务不可用{RESET}")
     sys.exit(1)
 
-h = json.loads(health_raw)
+try:
+    h = json.loads(health_raw)
+except ValueError:
+    # 响应不是 JSON（端口被别的东西占了、代理错误页）：归入「服务不可用」而不是裸 traceback
+    print(f"  接口    {RED}http://127.0.0.1:{port} 返回非 JSON 响应（端口可能被其他服务占用）{RESET}")
+    if os.path.exists(err_log):
+        tail = [l for l in open(err_log, encoding="utf-8", errors="replace").read().splitlines()[-3:]]
+        for l in tail:
+            print(f"          {RED}{l[:100]}{RESET}")
+    print(f"{RED}✗ 服务不可用{RESET}")
+    sys.exit(1)
 print(f"  接口    http://127.0.0.1:{port}/v1  {DIM}→ {len(h.get('providers', []))} 个订阅上游{RESET}")
 up = h.get("uptimeSec", 0)
 up_h = f"{up//3600}小时{up%3600//60}分" if up >= 3600 else (f"{up//60}分{up%60}秒" if up >= 60 else f"{up}秒")

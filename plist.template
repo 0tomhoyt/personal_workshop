@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- 模板：install.sh 会把 __NODE_BIN__ / __RUNTIME_DIR__ 替换为实际路径后
-     安装到 ~/Library/LaunchAgents/cn.hicann.cannbot-gateway-proxy.plist
+     安装到 ~/Library/LaunchAgents/cn.hicann.personal-gateway.plist
      注意：macOS 对桌面/文稿等目录有 TCC 保护，launchd 后台进程读不到，
      因此 launchd 实际运行的是 install.sh 拷贝到 ~/.local/share/ 的运行时副本 -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>cn.hicann.cannbot-gateway-proxy</string>
+    <string>cn.hicann.personal-gateway</string>
     <key>ProgramArguments</key>
     <array>
         <string>__NODE_BIN__</string>
