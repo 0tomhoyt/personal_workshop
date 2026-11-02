@@ -53,6 +53,7 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
 | `install.sh` / `uninstall.sh` / `status.sh` / `plist.template` | launchd 部署与状态 |
 | `cannbot-creds.sh` | cannbot 订阅凭证诊断（可选；`--sync-zcode` 重写 zcode 指向网关并写入 token） |
 | `打开管理界面.command` | **双击即可**：自动确保网关已启动并打开管理台 |
+| `打开管理界面.bat` | Windows 版双击脚本：healthz 探活、未启动则最小化窗口跑 `node server.mjs`，再打开管理台 |
 
 **两个目录的关系**：本文件夹是项目源（source of truth）；`install.sh` 会把 `server.mjs + lib/ + index.html + theme.css`
 拷贝到运行时目录 `~/.local/share/personal-gateway/`（providers.json、日志、VK 缓存、stats.json 也
@@ -71,6 +72,21 @@ $EDITOR ~/.local/share/personal-gateway/providers.json   # 填入各订阅凭证
 ```
 
 模板里 cannbot（CANNWork）无需凭证配置——JWT 由 CANNWork 扩展登录供给；Kimi/GLM 需要补 token。
+
+### Windows 上跑
+
+核心（网关/路由/翻译/统计/待办/管理台）是纯 Node，跨平台直接可用：
+
+```bat
+node server.mjs                 # 从仓库目录前台跑；providers.json 等运行时文件落在本目录
+```
+
+与 macOS 的差异：launchd 部署脚本（install.sh / status.sh / plist.template）不可用，
+常驻改用任务计划程序或 NSSM；显示器切换功能依赖 m1ddc（Apple Silicon 专有），Windows 上
+该功能优雅降级、不影响其他部分；汇报功能读会话库需系统有 `sqlite3` CLI（Windows 从
+sqlite.org 下 tools 包加入 PATH，或设 `PGW_SQLITE3` 指完整路径）。Claude Code / Cursor /
+zcode 的会话目录在 Windows 用户目录下结构相同；opencode 不在默认位置时用 `PGW_OPENCODE_DB` 指过去。
+双击 `打开管理界面.bat` 即可探活 + 启动 + 打开管理台。
 
 ## providers.json 详解
 
@@ -484,6 +500,7 @@ node test/robustness.mjs          # 稳健性回归（Multi-byte / 断流 / 原�
 | `PGW_EXCLUDE_MODELS` | 空 | 追加到各 provider models.exclude 的隐藏模型 |
 | `PGW_CC_DIR` / `PGW_ZCODE_DB` / `PGW_OPENCODE_DB` / `PGW_CURSOR_DIR` | 各 agent 真实数据目录 | 报告数据源根路径覆盖（测试用） |
 | `PGW_M1DDC` | `~/bin/m1ddc` | 显示器切换工具路径（测试用 mock） |
+| `PGW_SQLITE3` | macOS `/usr/bin/sqlite3`，其余平台查 PATH | sqlite3 CLI 路径（汇报读会话库用；Windows 装 sqlite.org tools 后可用 PATH） |
 | `PGW_MAX_BODY_MB` | `32` | 请求体上限（providers.json gateway.maxBodyMB 亦可） |
 | `PGW_REPORT_RETRY_DELAY_MS` | `1500` | 报告两级总结失败重试间隔 |
 | `PGW_REPORT_BODY_TIMEOUT_MS` | `120000` | 报告上游响应体读取的整体 deadline |

@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sqlite3Bin } from '../lib/report/sqlite.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MOCK_PORT = 6291;
@@ -1218,7 +1219,7 @@ try {
     // fixture：最小列集 = 适配器 SQL 引用的列；SQL 从 stdin 喂给系统 sqlite3
     const j = (v) => `'${JSON.stringify(v).replace(/'/g, "''")}'`;
     const db = path.join(tmp, 'zcode-fixture.db');
-    spawnSync('/usr/bin/sqlite3', [db], {
+    spawnSync(sqlite3Bin(), [db], {
       input: `
 CREATE TABLE session (id TEXT, project_id TEXT, directory TEXT, title TEXT, task_type TEXT, parent_id TEXT, version TEXT, time_created INTEGER, time_updated INTEGER, time_deleted INTEGER);
 CREATE TABLE message (id TEXT, session_id TEXT, sequence INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);
@@ -1267,7 +1268,7 @@ INSERT INTO part VALUES ('m5', 'session_ccc', 1, ${j({ type: 'text', text: '很�
     const WIN = { startMs: NOW - 3600_000, endMs: NOW + 3600_000 };
     const j = (v) => `'${JSON.stringify(v).replace(/'/g, "''")}'`;
     const db = path.join(tmp, 'opencode-fixture.db');
-    spawnSync('/usr/bin/sqlite3', [db], {
+    spawnSync(sqlite3Bin(), [db], {
       input: `
 CREATE TABLE session (id TEXT, project_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER);
 CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
