@@ -12,6 +12,7 @@ import { safeEqual } from '../lib/gwauth.mjs';
 import {
   buildOpenCodeSnapshot, buildDemoOpenCodeSnapshot, deriveStatus, mapToolStatus, mapTaskState,
   extractTools, extractTasks, etagOfOpenCode, fitOpenCodeToLimit, OPENCODE_MAX_BYTES,
+  buildSessionBrief, buildSessionBriefs, SESSIONS_MAX,
 } from '../lib/tv-opencode.mjs';
 import {
   putSpokeOpenCodeFrame, clearSpokeOpenCodeFrames, resolveOpenCodeForTv,
@@ -583,6 +584,95 @@ check('sanitizeSpokeOpenCodePayload 拒超大/非法', () => {
   let threw = false;
   try { sanitizeSpokeOpenCodePayload(null); } catch (e) { threw = e.status === 400; }
   assert.equal(threw, true);
+});
+
+
+group('OpenCode sessions 小卡列表');
+const SB_NOW = 10_000_000;
+const sbMsg = (name, input, status = 'completed') => [{ id: 'm1', time_updated: SB_NOW - 1000, data: { content: [{ type: 'tool', id: 'c1', name, state: { status, input } }] } }];
+check('brief：done / 路径取文件名 / 字段瘦', () => {
+  const r = buildSessionBrief(
+    { id: 'ses_a', title: '修网关', directory: '/Users/x/proj/aerial-tv', time_updated: SB_NOW - 60_000, time_busy: SB_NOW - 200_000, time_idle: SB_NOW - 60_000, idle_outcome: 'succeeded' },
+    sbMsg('edit', { path: '/Users/x/proj/aerial-tv/lib/tv-opencode.mjs' }), SB_NOW);
+  assert.equal(r.status, 'done');
+  assert.equal(r.project, 'aerial-tv');
+  assert.equal(r.title, '修网关');
+  assert.equal(r.step, 'edit tv-opencode.mjs');
+  assert.equal(r.at, SB_NOW - 60_000);
+  assert.ok(Buffer.byteLength(JSON.stringify(r)) < 260);
+});
+check('brief：有未完成工具 → running；shell 去掉前导 cd', () => {
+  const r = buildSessionBrief(
+    { id: 'ses_b', title: 'x', directory: '/a/b', time_updated: SB_NOW - 2000, time_busy: SB_NOW - 5000, time_idle: 0 },
+    sbMsg('shell', { command: 'cd /a/b && npm test' }, 'running'), SB_NOW);
+  assert.equal(r.status, 'running');
+  assert.equal(r.step, 'shell npm test');
+});
+check('brief：遗留 busy（超 10 分钟没更新）不装成 running', () => {
+  const r = buildSessionBrief(
+    { id: 'ses_c', title: 'old', directory: '/a/b', time_updated: SB_NOW - 3_600_000, time_busy: SB_NOW - 3_600_000, time_idle: 0 }, [], SB_NOW);
+  assert.equal(r.status, 'idle');
+});
+check('brief：failed；无工具无 step；缺 title/directory 不抛', () => {
+  const r = buildSessionBrief({ id: 'ses_d', time_updated: SB_NOW, time_busy: SB_NOW - 9000, time_idle: SB_NOW - 100, idle_outcome: 'failed' }, [], SB_NOW);
+  assert.equal(r.status, 'failed');
+  assert.equal(r.step, undefined);
+  assert.equal(r.title, undefined);
+  assert.equal(buildSessionBrief(null), null);
+});
+check('briefs：最多 3 行，保持输入顺序（最新在前）', () => {
+  const sessions = [1, 2, 3, 4, 5].map((i) => ({ id: `s${i}`, title: `t${i}`, time_updated: SB_NOW - i }));
+  const rows = buildSessionBriefs({ sessions, now: SB_NOW });
+  assert.equal(rows.length, SESSIONS_MAX);
+  assert.deepEqual(rows.map((r) => r.id), ['s1', 's2', 's3']);
+});
+check('快照：sessions 挂到 out.sessions；空列表不出现该键（瘦 JSON）', () => {
+  const sessions = buildSessionBriefs({ sessions: [{ id: 's1', title: 'a', time_updated: SB_NOW }], now: SB_NOW });
+  const withS = buildOpenCodeSnapshot({ session: { id: 's1', title: 'a', time_updated: SB_NOW }, sessions, now: SB_NOW });
+  assert.equal(withS.sessions.length, 1);
+  const without = buildOpenCodeSnapshot({ session: { id: 's1', title: 'a', time_updated: SB_NOW }, now: SB_NOW });
+  assert.equal('sessions' in without, false);
+});
+check('演示帧带 3 个会话且不超 6KB；ETag 在周期内稳定', () => {
+  const d = buildDemoOpenCodeSnapshot(1_000);
+  assert.equal(d.sessions.length, 3);
+  assert.ok(Buffer.byteLength(JSON.stringify(d)) <= OPENCODE_MAX_BYTES);
+  assert.equal(etagOfOpenCode(JSON.stringify(d)), etagOfOpenCode(JSON.stringify(buildDemoOpenCodeSnapshot(1_000 + 72_000))));
+});
+check('fit：超限时先砍 sessions 到 1 行，其后整体仍合规', () => {
+  const sessions = [0, 1, 2].map((i) => ({ id: `s${i}`, status: 'idle', at: 1, title: 'x'.repeat(40), step: 'y'.repeat(40) }));
+  const fat = { now: 1, online: true, status: 'idle', title: 't', sessions, plan: { tasks: [{ id: 'a', title: 'z'.repeat(80), state: 'done' }] }, junk: 'q'.repeat(OPENCODE_MAX_BYTES) };
+  const f = fitOpenCodeToLimit({ ...fat, junk: 'q'.repeat(OPENCODE_MAX_BYTES - 700) });
+  assert.ok(Buffer.byteLength(JSON.stringify(f)) <= OPENCODE_MAX_BYTES);
+  assert.ok(!f.sessions || f.sessions.length <= 3);
+});
+check('枢纽：sessions 跟随 source（local 用本机的；spoke 用投稿端的）', () => {
+  clearSpokeOpenCodeFrames();
+  const localFrame = { now: 1, online: true, status: 'idle', sessions: [{ id: 'L1', status: 'idle', at: 1, title: '本机会话' }] };
+  putSpokeOpenCodeFrame('macbook', { now: 1, online: true, status: 'running', sessions: [{ id: 'M1', status: 'running', at: 2, title: '投稿会话' }] }, { receivedAt: 950 });
+  const loc = resolveOpenCodeForTv({ opencodeSource: 'local', localFrame, now: 1000 });
+  assert.equal(loc.source.kind, 'local');
+  assert.equal(loc.sessions[0].id, 'L1');
+  const sp = resolveOpenCodeForTv({ opencodeSource: 'spoke:macbook', localFrame, now: 1000 });
+  assert.equal(sp.source.kind, 'spoke');
+  assert.equal(sp.sessions[0].id, 'M1');
+  const stale = resolveOpenCodeForTv({ opencodeSource: 'spoke:macbook', localFrame, now: 999_000 });
+  assert.equal(stale.source.kind, 'local');
+  assert.equal(stale.sessions[0].id, 'L1');
+});
+check('投稿体 sanitize：sessions 只收数组、≤3 行、白名单字段、非法 status → idle', () => {
+  const { frame } = sanitizeSpokeOpenCodePayload({
+    online: true, status: 'idle', deviceId: 'macbook', now: 1,
+    sessions: [
+      { id: 'a', status: 'bogus', at: 5, title: 't', evil: 'x'.repeat(100) },
+      { id: 'b', status: 'running', at: 6 }, { id: 'c', status: 'done', at: 7 }, { id: 'd', status: 'done', at: 8 }, 'junk',
+    ],
+  });
+  assert.equal(frame.sessions.length, 3);
+  assert.equal(frame.sessions[0].status, 'idle');
+  assert.equal('evil' in frame.sessions[0], false);
+  const { frame: f2 } = sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'macbook', sessions: 'nope' });
+  assert.equal('sessions' in f2, false);
 });
 
 console.log(`\n结果: ${passed} 通过, ${failures.length} 失败${failures.length ? ` — ${failures.join(' ; ')}` : ''}`);
