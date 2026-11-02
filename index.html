@@ -268,41 +268,97 @@
   .home-topline, .home-side-head, .home-list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .home-topline, .home-hero, .home-quicklinks, .home-list-head, #homeTodos, .home-side-head, #homeProv { position: relative; }
   /* ---- OpenCode / 电视墙独立页 ---------------------------------------- */
-  .oc-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(280px, .85fr); gap: 16px; align-items: start; }
-  @media (max-width: 980px) { .oc-grid { grid-template-columns: 1fr; } }
-  .oc-explain {
-    margin: 0 0 14px; padding: 12px 14px; border-radius: 12px;
-    border: 1px solid rgba(var(--amber-rgb), .28);
-    background: linear-gradient(135deg, rgba(var(--amber-rgb), .08), transparent 70%);
-    font: 13px/1.55 var(--sans); color: var(--ink-2);
+  .oc-page { display: flex; flex-direction: column; gap: 14px; }
+  .oc-hero {
+    position: relative; overflow: hidden;
+    border: 1px solid var(--line); border-radius: 18px;
+    background:
+      radial-gradient(900px 220px at 12% -40%, rgba(var(--amber-rgb), .18), transparent 55%),
+      linear-gradient(145deg, var(--panel), var(--panel-2));
+    box-shadow: var(--card-shadow);
+    padding: 18px 20px 16px;
   }
+  .oc-hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .oc-role {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 4px 11px; border-radius: 999px;
+    font: 600 11px var(--mono); letter-spacing: .08em; text-transform: uppercase;
+    border: 1px solid var(--line); background: var(--inset); color: var(--ink-2);
+  }
+  .oc-role.hub { border-color: rgba(var(--amber-rgb), .45); color: var(--amber-hi); background: rgba(var(--amber-rgb), .08); }
+  .oc-role.spoke { border-color: rgba(var(--green-rgb), .4); color: var(--green); background: rgba(var(--green-rgb), .08); }
+  .oc-role i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+  .oc-hero h3 { margin: 10px 0 6px; font: 500 clamp(22px, 2.4vw, 28px)/1.2 var(--serif); letter-spacing: -.02em; color: var(--ink); }
+  .oc-hero .oc-lead { margin: 0; font: 13.5px/1.55 var(--sans); color: var(--ink-2); max-width: 62ch; }
+  .oc-explain { margin: 12px 0 0; padding: 0; border: 0; background: none; font: 13px/1.55 var(--sans); color: var(--ink-2); }
   .oc-explain b { color: var(--ink); font-weight: 600; }
-  .oc-explain ul { margin: 8px 0 0; padding-left: 1.2em; }
-  .oc-explain li { margin: 3px 0; }
+  .oc-explain ul { margin: 8px 0 0; padding-left: 1.15em; }
+  .oc-explain li { margin: 4px 0; }
+  .oc-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(300px, .95fr); gap: 14px; align-items: stretch; }
+  @media (max-width: 980px) { .oc-grid { grid-template-columns: 1fr; } }
+  .oc-panel {
+    position: relative; min-width: 0;
+    border: 1px solid var(--line); border-radius: 16px;
+    background: linear-gradient(160deg, var(--panel), var(--panel-2));
+    box-shadow: var(--card-shadow);
+    padding: 16px 17px 15px;
+  }
+  .oc-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+  .oc-panel-head h3 { margin: 0; font: 600 14px var(--sans); letter-spacing: .01em; color: var(--ink); }
   .oc-meta { font: 10.5px var(--mono); color: var(--muted); letter-spacing: .04em; }
+  .oc-section { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+  .oc-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+  .oc-section-title { font: 600 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin-bottom: 8px; }
   .oc-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
-  .oc-row label { font: 12px var(--sans); color: var(--ink-2); min-width: 4.5em; }
-  .oc-row select, .oc-row button { font: 12.5px var(--sans); padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--inset); color: var(--ink); }
-  .oc-row button.primary { background: var(--amber); border-color: transparent; color: #1a1206; font-weight: 600; }
-  .oc-tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font: 10.5px var(--mono); letter-spacing: .04em; border: 1px solid var(--line); }
-  .oc-tag.on { border-color: rgba(var(--amber-rgb), .55); color: var(--amber-hi); }
-  .oc-tag.off { opacity: .72; }
-  .oc-spokes { margin-top: 10px; font: 12px/1.5 var(--mono); color: var(--muted); }
+  .oc-row label { font: 12.5px var(--sans); color: var(--ink-2); min-width: 4.5em; }
+  .oc-row select, .oc-row button {
+    font: 12.5px var(--sans); padding: 7px 12px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--inset); color: var(--ink);
+  }
+  .oc-row select { min-width: 11.5em; }
+  .oc-row button.primary { background: var(--amber); border-color: transparent; color: #1a1206; font-weight: 650; }
+  .oc-row button.primary:hover { filter: brightness(1.05); }
+  .oc-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font: 11px var(--mono); letter-spacing: .03em; border: 1px solid var(--line); background: var(--inset); }
+  .oc-tag.on { border-color: rgba(var(--green-rgb), .45); color: var(--green); background: rgba(var(--green-rgb), .08); }
+  .oc-tag.off { opacity: .78; }
+  .oc-readonly {
+    margin-top: 6px; padding: 10px 12px; border-radius: 12px;
+    border: 1px solid var(--line); background: rgba(var(--amber-rgb), .04);
+    font: 13px/1.45 var(--sans); color: var(--ink-2);
+  }
+  .oc-readonly b { color: var(--ink); }
+  .oc-spokes { margin-top: 8px; font: 12px/1.55 var(--mono); color: var(--muted); }
   .oc-spokes b { color: var(--ink-2); font-weight: 600; }
+  /* 预览做成「小电视」 */
   .oc-preview {
-    border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2);
-    padding: 14px 15px; min-height: 180px;
+    position: relative; min-height: 280px; padding: 0; overflow: hidden;
+    border: 1px solid var(--line); border-radius: 16px;
+    background: #0b0f14;
+    box-shadow: var(--card-shadow), inset 0 0 0 1px rgba(255,255,255,.04);
   }
-  .oc-preview .oc-kicker { font: 600 10px var(--mono); letter-spacing: .14em; color: var(--dim); text-transform: uppercase; }
-  .oc-preview .oc-title { font: 500 18px/1.3 var(--serif); margin: 8px 0 6px; color: var(--ink); }
-  .oc-preview .oc-step { font: 12.5px var(--sans); color: var(--ink-2); margin: 0 0 8px; }
-  .oc-preview .oc-tools { font: 11.5px/1.45 var(--mono); color: var(--muted); }
-  .oc-preview .oc-empty { color: var(--muted); font: 13px var(--sans); margin-top: 18px; }
+  .oc-preview::before {
+    content: ""; position: absolute; inset: 0;
+    background:
+      radial-gradient(600px 180px at 20% 0%, rgba(90,200,250,.12), transparent 50%),
+      radial-gradient(500px 200px at 90% 10%, rgba(191,139,255,.1), transparent 45%),
+      linear-gradient(180deg, #121821, #0b0f14 55%);
+    pointer-events: none;
+  }
+  .oc-preview-inner { position: relative; z-index: 1; padding: 16px 16px 14px; color: #e8eef7; min-height: 280px; display: flex; flex-direction: column; }
+  .oc-preview .oc-kicker { font: 600 10px var(--mono); letter-spacing: .16em; color: rgba(232,238,247,.45); text-transform: uppercase; }
+  .oc-preview .oc-title { font: 500 20px/1.25 var(--serif); margin: 10px 0 6px; color: #f4f7fc; letter-spacing: -.01em; }
+  .oc-preview .oc-step { font: 12.5px/1.45 var(--sans); color: rgba(232,238,247,.72); margin: 0 0 10px; }
+  .oc-preview .oc-tools { font: 11.5px/1.5 var(--mono); color: rgba(232,238,247,.48); flex: 1; }
+  .oc-preview .oc-empty { color: rgba(232,238,247,.45); font: 13px var(--sans); margin: auto 0; text-align: center; }
+  .oc-preview .oc-empty.bad { color: #ff8f8f; }
   .oc-srcpill {
-    display: inline-flex; align-items: center; gap: 6px; margin-top: 4px;
-    padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line);
-    font: 11px var(--mono); color: var(--ink-2); background: var(--inset);
+    display: inline-flex; align-items: center; gap: 7px; margin-top: 8px; width: fit-content;
+    padding: 4px 11px; border-radius: 999px;
+    border: 1px solid rgba(90,200,250,.35);
+    font: 11px var(--mono); color: #9ad8ff; background: rgba(90,200,250,.08);
   }
+  .oc-srcpill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #5ac8fa; box-shadow: 0 0 8px #5ac8fa; }
+  .oc-preview-foot { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.06); font: 11px var(--mono); color: rgba(232,238,247,.4); display: flex; justify-content: space-between; gap: 8px; }
 
   .home-date { font: 500 10.5px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim); }
   .home-local { display: inline-flex; align-items: center; gap: 6px; font: 600 9px var(--mono); letter-spacing: .12em; color: var(--green); }
@@ -853,23 +909,33 @@
         <div class="sechead">
           <span class="idx">00</span><h2>OpenCode · 电视墙</h2><span class="en">TV wall</span>
           <span class="spacer"></span>
-          <span class="note">监控当前上墙帧 · 选择信号源 · MacBook 投稿</span>
+          <span class="note" id="ocNote">按角色显示：枢纽切源 · 投稿端开关</span>
           <button type="button" id="ocRefresh">刷新</button>
         </div>
-        <div class="oc-explain" id="ocExplain">
-          <b>加载说明…</b>
-        </div>
-        <div class="oc-grid">
-          <div class="card">
-            <div class="sechead" style="margin:0 0 8px;padding:0;border:0">
-              <h3 style="margin:0;font:600 15px var(--sans)">信号源与投稿</h3>
+        <div class="oc-page">
+          <div class="oc-hero" id="ocHero">
+            <div class="oc-hero-top">
+              <span class="oc-role" id="ocRoleBadge"><i></i><span>…</span></span>
               <span class="oc-meta" id="ocHostMeta">…</span>
             </div>
-            <div id="ocControls"><span class="dim">加载中…</span></div>
+            <h3 id="ocHeroTitle">OpenCode 上墙</h3>
+            <p class="oc-lead" id="ocHeroLead">加载中…</p>
+            <div class="oc-explain" id="ocExplain"></div>
           </div>
-          <div class="oc-preview" id="ocPreview">
-            <div class="oc-kicker">Live preview</div>
-            <div class="oc-empty">加载中…</div>
+          <div class="oc-grid">
+            <div class="oc-panel">
+              <div class="oc-panel-head">
+                <h3 id="ocCtrlTitle">控制</h3>
+                <span class="oc-meta" id="ocCtrlMeta"></span>
+              </div>
+              <div id="ocControls"><span class="dim">加载中…</span></div>
+            </div>
+            <div class="oc-preview" id="ocPreview">
+              <div class="oc-preview-inner">
+                <div class="oc-kicker">TV preview</div>
+                <div class="oc-empty">加载中…</div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -1135,7 +1201,7 @@ function ocIsHub(d) { return !!d?.tvEnabled && !ocIsSpoke(d); }
 /** 枢纽视角的源文案（「本机」= mini）。 */
 function ocHubSourceLabel(src) {
   const s = String(src || 'local');
-  if (s === 'local') return '本机 OpenCode（这台 mini）';
+  if (s === 'local') return '本机 OpenCode';
   if (s === 'auto') return '自动（有 MacBook 在投且 running 则跟它，否则本机）';
   if (s.startsWith('spoke:')) return `MacBook 投稿（${s.slice(6)}）`;
   return s;
@@ -1163,24 +1229,38 @@ function ocSourceKindText(source, { asSpoke = false } = {}) {
 
 function renderOpenCodeExplain(d) {
   const el = $('ocExplain');
-  if (!el) return;
+  const badge = $('ocRoleBadge');
+  const title = $('ocHeroTitle');
+  const lead = $('ocHeroLead');
+  const note = $('ocNote');
+  const ctrlTitle = $('ocCtrlTitle');
   if (ocIsSpoke(d)) {
-    el.innerHTML = `<b>这台是 MacBook（投稿端）</b>
-      <ul>
-        <li>电视<strong>永远只连 Mac mini</strong>，不会直接连本机。</li>
-        <li><strong>电视看哪台的会话</strong>由 Mac mini 管理台决定（本页只读）。</li>
-        <li>下面的「本机」只表示<strong>这台 MacBook 要不要向 mini 投稿 OpenCode</strong>；默认关，合盖/不需要就保持关。</li>
+    if (badge) { badge.className = 'oc-role spoke'; badge.innerHTML = '<i></i><span>投稿端 · MacBook</span>'; }
+    if (title) title.textContent = '向 mini 投稿，不上墙决策';
+    if (lead) lead.textContent = '电视永远只连 Mac mini。本页不切信号源——「本机」只表示这台 MacBook 要不要把 OpenCode 帧发给 mini。';
+    if (note) note.textContent = '投稿端：本机投稿开关 · 源由 mini 决定';
+    if (ctrlTitle) ctrlTitle.textContent = '本机投稿';
+    if (el) el.innerHTML = `<ul>
+        <li>电视<strong>永远只连 Mac mini</strong>，不会直接连这台电脑。</li>
+        <li><strong>电视看哪台会话</strong>请到 Mac mini 的本页切换（此处只读）。</li>
+        <li>默认<strong>关闭投稿</strong>；合盖或不需要上墙时保持关闭即可。</li>
       </ul>`;
   } else if (ocIsHub(d)) {
-    el.innerHTML = `<b>这台是 Mac mini（枢纽）</b>
-      <ul>
-        <li>电视<strong>永远只连本机</strong>（配对地址/端口不变）。</li>
-        <li>下面选的是：电视 OpenCode 墙看<strong>本机 OpenCode</strong>、还是 <strong>MacBook 投稿</strong>、或<strong>自动</strong>。</li>
-        <li>MacBook 投稿默认关；要上墙须对方打开投稿，再在本页切源。</li>
+    if (badge) { badge.className = 'oc-role hub'; badge.innerHTML = '<i></i><span>枢纽 · Mac mini</span>'; }
+    if (title) title.textContent = '客厅电视看谁的 OpenCode';
+    if (lead) lead.textContent = '电视只配对本机。在这里选择墙上跟「本机 OpenCode」、还是跟「MacBook 投稿」，或交给自动。';
+    if (note) note.textContent = '枢纽：切源 · 看 MacBook 投稿状态';
+    if (ctrlTitle) ctrlTitle.textContent = '信号源';
+    if (el) el.innerHTML = `<ul>
+        <li>电视<strong>永远只连本机</strong>（地址/端口不变）。</li>
+        <li>选项：<strong>本机 OpenCode</strong> / <strong>MacBook 投稿</strong> / <strong>自动</strong>。</li>
+        <li>MacBook 须先打开投稿，墙上才会有笔记本会话可切。</li>
       </ul>`;
   } else {
-    el.innerHTML = `<b>本机未启用电视枢纽或投稿</b>
-      <ul><li>在 providers.json 打开 <code>gateway.tv</code>（mini）或 <code>gateway.syncClient</code>（MacBook）后再用本页。</li></ul>`;
+    if (badge) { badge.className = 'oc-role'; badge.innerHTML = '<i></i><span>未配置</span>'; }
+    if (title) title.textContent = '尚未启用电视墙';
+    if (lead) lead.textContent = '打开 gateway.tv（mini）或 gateway.syncClient（MacBook）后刷新本页。';
+    if (el) el.innerHTML = '';
   }
 }
 
@@ -1212,9 +1292,11 @@ function renderOpenCodePage(d) {
 
   if (meta) {
     meta.textContent = isSpoke
-      ? `${d.host || ''} · 投稿端 → mini`
-      : (isHub ? `${d.host || ''} · 枢纽 TV:8490` : (d.host || ''));
+      ? `${d.host || ''} · sync → mini`
+      : (isHub ? `${d.host || ''} · TV :8490` : (d.host || ''));
   }
+  const ctrlMeta = $('ocCtrlMeta');
+  if (ctrlMeta) ctrlMeta.textContent = isSpoke ? (pubOn ? '投稿中' : '默认关闭') : ocHubSourceLabel(src);
 
   const spokeLines = spokes.length
     ? spokes.map((s) => {
@@ -1222,63 +1304,66 @@ function renderOpenCodePage(d) {
         const tag = s.stale ? '过期' : (s.status || 'idle');
         return `<div><b>${esc(s.deviceId)}</b> · ${esc(tag)} · ${age}s 前${s.title ? ' · ' + esc(s.title) : ''}</div>`;
       }).join('')
-    : '<div>还没有 MacBook 投稿（投稿默认关）</div>';
+    : '<div>尚无投稿（MacBook 默认关）</div>';
 
-  let hubBlock = '';
-  let pubBlock = '';
+  let body = '';
   if (isSpoke) {
-    // 投稿端：无切源下拉；「本机」只出现在投稿开关
-    hubBlock = `
-    <p class="hsub" style="margin:0 0 6px"><strong>电视看的源由 Mac mini 决定</strong>（本页只读，请到 mini 管理台切源）。</p>
-    <div class="dim" style="font-size:12px;margin-top:4px">mini 当前选择：<b>${esc(ocSpokeSourceLabel(src))}</b></div>`;
-    pubBlock = `
-    <div class="oc-row" style="margin-top:14px">
-      <span class="oc-tag ${pubOn ? 'on' : 'off'}">本机是否向 mini 投稿 OpenCode：${pubOn ? '开' : '关（默认）'}</span>
-      <button type="button" id="ocTogglePub">${pubOn ? '关闭本机投稿' : '打开本机投稿'}</button>
+    body = `
+    <div class="oc-section">
+      <div class="oc-section-title">电视信号源（只读）</div>
+      <div class="oc-readonly">由 <b>Mac mini</b> 决定 · 当前：<b>${esc(ocSpokeSourceLabel(src))}</b></div>
     </div>
-    <div class="dim" style="font-size:11.5px;margin-top:6px">这里的「本机」= 这台 MacBook。打开后才会经 sync 把本机 OpenCode 帧发给 mini；合盖或不需要上墙时请关掉。</div>`;
+    <div class="oc-section">
+      <div class="oc-section-title">本机投稿</div>
+      <div class="oc-row">
+        <span class="oc-tag ${pubOn ? 'on' : 'off'}">${pubOn ? '开' : '关（默认）'}</span>
+        <button type="button" id="ocTogglePub">${pubOn ? '关闭本机投稿' : '打开本机投稿'}</button>
+      </div>
+      <div class="dim" style="font-size:12px;margin-top:8px;line-height:1.45">这里的「本机」= <b>这台 MacBook</b>。打开后才会把本机 OpenCode 帧发给 mini。</div>
+    </div>`;
   } else if (isHub) {
-    hubBlock = `
-    <p class="hsub" style="margin:0 0 6px">电视只连<strong>本机</strong>（这台 Mac mini）；这里选墙上看谁的会话。</p>
-    <div class="oc-row">
-      <label for="ocSource">墙上看谁</label>
-      <select id="ocSource">${optHtml}</select>
-      <button type="button" class="primary" id="ocSaveSource">应用</button>
+    body = `
+    <div class="oc-section">
+      <div class="oc-section-title">墙上看谁</div>
+      <div class="oc-row">
+        <label for="ocSource">信号源</label>
+        <select id="ocSource">${optHtml}</select>
+        <button type="button" class="primary" id="ocSaveSource">应用</button>
+      </div>
+      <div class="dim" style="font-size:12px;margin-top:8px">当前：${esc(ocHubSourceLabel(src))}</div>
     </div>
-    <div class="dim" style="font-size:11.5px;margin-top:6px">当前：${esc(ocHubSourceLabel(src))}</div>`;
-    pubBlock = `
-    <div class="oc-row" style="margin-top:14px">
-      <span class="oc-tag off">投稿在 MacBook 上开关</span>
-    </div>
-    <div class="dim" style="font-size:11.5px;margin-top:6px">枢纽不向自己投稿。要让电视看笔记本：MacBook 打开「本机投稿」→ 本页选 MacBook 投稿或自动。</div>
-    <div class="oc-spokes" style="margin-top:14px"><div class="oc-meta">收到的 MacBook 投稿</div>${spokeLines}</div>`;
+    <div class="oc-section">
+      <div class="oc-section-title">MacBook 投稿</div>
+      <div class="oc-tag off">开关在 MacBook 上</div>
+      <div class="oc-spokes" style="margin-top:10px">${spokeLines}</div>
+    </div>`;
   } else {
-    hubBlock = `<p class="hsub">未识别为枢纽或投稿端（检查 gateway.tv / syncClient）。</p>`;
+    body = `<p class="hsub">未识别为枢纽或投稿端（检查 gateway.tv / syncClient）。</p>`;
   }
-
-  box.innerHTML = isSpoke
-    ? `${hubBlock}${pubBlock}`
-    : `${hubBlock}${pubBlock}`;
+  box.innerHTML = body;
 
   if (prev) {
     const frame = d.preview;
+    const wrap = (inner) => `<div class="oc-preview-inner">${inner}</div>`;
     if (d.previewError) {
-      prev.innerHTML = `<div class="oc-kicker">Live preview</div><div class="oc-empty bad">预览失败：${esc(d.previewError)}</div>`;
+      prev.innerHTML = wrap(`<div class="oc-kicker">TV preview</div><div class="oc-empty bad">预览失败：${esc(d.previewError)}</div>`);
     } else if (!frame) {
-      prev.innerHTML = `<div class="oc-kicker">Live preview</div><div class="oc-empty">暂无预览帧</div>`;
+      prev.innerHTML = wrap(`<div class="oc-kicker">TV preview</div><div class="oc-empty">暂无上墙帧</div>`);
     } else {
-      const srcTxt = ocSourceKindText(frame.source, { asSpoke: ocIsSpoke(d) });
-      const tools = Array.isArray(frame.tools) ? frame.tools.slice(0, 6) : [];
+      const srcTxt = ocSourceKindText(frame.source, { asSpoke: isSpoke });
+      const tools = Array.isArray(frame.tools) ? frame.tools.slice(0, 5) : [];
       const toolLine = tools.length
         ? tools.map((x) => esc(x.name || x.target || x.command || 'tool')).join(' · ')
         : '（无工具动态）';
-      prev.innerHTML = `
-        <div class="oc-kicker">Live preview · 与电视同源</div>
-        <div class="oc-srcpill">电视墙上将显示：${esc(srcTxt)}</div>
+      const footL = frame.online === false ? 'offline' : 'live';
+      const footR = frame.demo ? 'demo' : (isSpoke ? 'mirror' : 'hub');
+      prev.innerHTML = wrap(`
+        <div class="oc-kicker">TV preview · 与客厅同源</div>
+        <div class="oc-srcpill">${esc(srcTxt)}</div>
         <div class="oc-title">${esc(frame.title || '空闲 / 无标题会话')}</div>
         <div class="oc-step">${esc(frame.status || 'idle')}${frame.step ? ' · ' + esc(frame.step) : ''}${frame.stepIndex != null && frame.stepTotal != null ? ` · ${frame.stepIndex}/${frame.stepTotal}` : ''}</div>
         <div class="oc-tools">${toolLine}</div>
-        <div class="dim" style="font-size:11px;margin-top:10px">${frame.online === false ? '网关侧标记 offline' : 'online'}${frame.demo ? ' · 演示帧' : ''}</div>`;
+        <div class="oc-preview-foot"><span>${footL}</span><span>${footR}</span></div>`);
     }
   }
 
