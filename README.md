@@ -347,7 +347,7 @@ Aerial（`0tomhoyt/aerial-tv`）的 `Workbench` 屏保在客厅电视上显示�
 }
 ```
 
-- **只认两个路由**：`GET /tv/v1/snapshot`（2–6 KB 聚合快照，ETag + `If-None-Match` → 304）、
+- **只认三个路由**：`GET /tv/v1/snapshot`、`GET /tv/v1/opencode`（2–6 KB 聚合快照，ETag + `If-None-Match` → 304）、
   `GET /tv/v1/health`。其余一切路径（含 `/admin/*`、`/v1/*`、`/`）一律 **404**。
 - **四道门，顺序固定**：Host 必须是 IP 字面量或 `.local`（挡 DNS rebinding，外部域名 403）→
   来源必须命中 `allowedCidrs`（非私网 403）→ 路由白名单（其余 404）→ `X-Aerial-Token`
