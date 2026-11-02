@@ -305,6 +305,12 @@ User-Agent 取的**产品名/版本**（剥掉 OS 注释与括号，超长截断
 ```
 
 - 组头点击只折叠/展开，不导航；状态存 `localStorage` 的 `gw-groups`。
+- **可选皮肤「刻度 · 纸面」**：主题按钮旁的「琥/刻」钮切换（`localStorage` 的
+  `gw-skin` → `html[data-skin="scale"]`）。与 ☀/☾ 材质轴正交：classic（缺省）一字不改；
+  scale = 仪器美学（hairline 平面节、直角、单一信号橙、订阅脉搏变 10% 格刻度尺），
+  深/浅两种材质各有对应令牌。订阅脉搏的结构随皮肤走（环 ↔ 刻度尺），切皮肤时
+  首屏有缓存数据就立刻重渲染。皮肤层全部作用域化（theme.css 尾部 + 页面内嵌覆盖块），
+  classic 路径零影响。
 - **当前视图所属组自动展开**：进了 `#traffic` 却看到组还收着，会让人以为走错页。
 - 深链：`#home`、`#todos`…`#providers` 直达；历史形态 `#latency`→统计、`#log`→诊断、`#stats`→统计、
   `#stats-7`/`#stats-30`→统计并预选区间、`#workbench`→待办。

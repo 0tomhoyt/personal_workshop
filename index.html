@@ -328,6 +328,48 @@
   }
   .oc-readonly b { color: var(--ink); }
   .oc-spokes { margin-top: 8px; font: 12px/1.55 var(--mono); color: var(--faint); }
+  /* ---- 可选皮肤「刻度」（html[data-skin="scale"]）：首屏与 OpenCode 页的结构覆盖 ----
+     令牌层在 theme.css；这里只管页面内嵌样式。classic 下一字不生效。 */
+  html[data-skin="scale"] .home-left, html[data-skin="scale"] .home-right {
+    border-radius: 2px; background: var(--panel);
+  }
+  /* 琥珀圆环装饰与光斑是 classic 的身份元素，刻度下退场 */
+  html[data-skin="scale"] .home-left::before, html[data-skin="scale"] .home-left::after { display: none; }
+  html[data-skin="scale"] .home-head em { text-shadow: none; }
+  html[data-skin="scale"] .orbit-core { background: var(--inset); box-shadow: none; }
+  html[data-skin="scale"] .stat .num { font-size: 28px; }
+  /* 24h 图：测量条——平头细柱、无渐变无辉光；悬停/热点以信号橙标示 */
+  html[data-skin="scale"] .chart .bar {
+    border-radius: 1px 1px 0 0;
+    background: var(--faint); box-shadow: none;
+  }
+  html[data-skin="scale"] .chart .bar:hover, html[data-skin="scale"] .chart .bar.hot {
+    filter: none; background: var(--amber); box-shadow: none;
+  }
+  html[data-skin="scale"] .chart .bar.zero { background: var(--line-soft); box-shadow: none; }
+  html[data-skin="scale"] .oc-hero {
+    border-radius: 2px; background: var(--panel);
+  }
+  html[data-skin="scale"] .oc-panel { border-radius: 2px; background: var(--panel); }
+  html[data-skin="scale"] .oc-role, html[data-skin="scale"] .oc-tag, html[data-skin="scale"] .oc-readonly { border-radius: 2px; }
+  html[data-skin="scale"] .oc-row select, html[data-skin="scale"] .oc-row button { border-radius: 3px; }
+  html[data-skin="scale"] .husage { border-radius: 2px; background: var(--inset); }
+  /* 刻度尺额度行：classic 的多档圆环横排，刻度下改纵向整行——每档占满一行的标尺
+     （横排时每档只剩 ~100px，hscale 被压到 0 宽，标尺消失） */
+  html[data-skin="scale"] .hrings { flex-direction: column; align-items: stretch; margin-left: 0; gap: 2px; width: 100%; }
+  /* 刻度尺额度行：每格 10% 的标尺 + 平头填充；警示（超额/余量 <20%）用信号橙 */
+  .hruler { display: flex; align-items: center; gap: 10px; padding: 6px 0; flex: 1; min-width: 0; }
+  .hruler .hcap { flex: none; width: 44px; font: 600 11px var(--sans); color: var(--dim); white-space: nowrap; }
+  .hruler .hscale {
+    flex: 1; height: 10px; position: relative; min-width: 0;
+    background:
+      repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px 10%),
+      linear-gradient(var(--line-soft), var(--line-soft)) 0 100% / 100% 1px no-repeat;
+  }
+  .hruler .hscale i { position: absolute; left: 0; bottom: 0; top: 3px; width: var(--w); background: var(--dim); }
+  .hruler .hnum { flex: none; width: 38px; text-align: right; font-style: normal; font: 600 12px var(--mono); color: var(--ink); }
+  .hruler.is-warn .hscale i { background: var(--amber); }
+  .hruler.is-warn .hnum { color: var(--amber-hi); }
   .oc-spokes b { color: var(--dim); font-weight: 600; }
   /* 预览做成「小电视」 */
   .oc-preview {
@@ -672,7 +714,7 @@
     </div>
     <div class="rail-rule"></div>
     <div class="rail-tel">
-      <div class="statline"><span class="dot" id="dot"></span><span id="sState">…</span><span class="dim">·</span><button id="themeBtn" class="rail-theme" title="切换主题">☾</button></div>
+      <div class="statline"><span class="dot" id="dot"></span><span id="sState">…</span><span class="dim">·</span><button id="themeBtn" class="rail-theme" title="切换主题">☾</button><button id="skinBtn" class="rail-theme" title="风格：琥珀遥测台（点按切换到「刻度 · 纸面」）">琥</button></div>
       <div class="statline dim">运行 <span class="mono" id="sUptime">…</span><span class="dim">·</span>鉴权 <span id="sAuth">…</span></div>
       <div class="statline dim">今日 <span class="mono" id="railTodayReq">–</span><span class="dim">次</span><span class="dim">·</span>上游 <span class="mono" id="railProvN">–</span></div>
     </div>
@@ -1222,8 +1264,24 @@ const HOME_URG = { urgent: '紧急', normal: '', someday: '不急' };
 // （站点只给上限、不给已用，见 lib/quota.mjs 的 capTiers）。
 const HOME_TIER_NAME = { five_hour: '5 小时', weekly_limit: '周', daily: '今日', monthly: '本月' };
 
+// 订阅脉搏的额度形态随皮肤走：classic = 琥珀圆环；scale = 刻度尺行（每格 10%）。
+// 语义完全一致（pct 钳制 / over=已超 / <20% 预警 / title 带真实倍数），只是形状不同。
+let homeData = null; // 最近一次首屏数据（applySkin 切换时重渲染用）
 function homeRing(tier) {
   const pct = Math.max(0, Math.min(100, Number(tier.remainingPct) || 0));
+  if (document.documentElement.dataset.skin === 'scale') {
+    const over = tier.over === true;
+    const warn = over || pct < 20;
+    const text = over ? '已超' : `${pct}%`;
+    const tip = over && tier.usedPct != null
+      ? `${HOME_TIER_NAME[tier.name] || tier.name}已用 ${tier.usedPct}%（${fmtTok(tier.used)} / ${fmtTok(tier.limit)}）`
+      : '';
+    return `<div class="hruler${warn ? ' is-warn' : ''}"${tip ? ` title="${esc(tip)}"` : ''}>
+      <span class="hcap">${HOME_TIER_NAME[tier.name] || esc(tier.name)}</span>
+      <div class="hscale"><i style="--w:${pct}%"></i></div>
+      <em class="hnum">${esc(text)}</em>
+    </div>`;
+  }
   // 超额（只用在本机记账的 cap 档）：环画满 + 红色，文字改说「已超」。
   // 不能还写 remainingPct —— 那是 0%，一个空环读起来是「没额度了」，
   // 而「用超了、还能继续用」是完全不同的事。真实倍数放 title。
@@ -1633,6 +1691,7 @@ function renderOpenCodePage(d) {
 }
 
 function renderHome(d) {
+  homeData = d; // 皮肤切换时要原样重渲染（环 ↔ 刻度尺），缓存最近一份
   const t = d.todos || { counts: {}, items: [], hidden: 0 };
   const now = new Date();
   const week = '日一二三四五六'[now.getDay()];
@@ -3084,6 +3143,33 @@ function applyTheme() {
     ? `当前跟随系统（${dark ? '深色' : '浅色'}）；点击切到${dark ? '浅色' : '深色'}`
     : `当前${dark ? '深色' : '浅色'}；点击切到${dark ? '浅色' : '深色'}`;
 }
+
+// 可选皮肤「刻度 · 纸面」（data-skin="scale"）：与主题（材质深/浅）正交的第二根轴。
+// classic = 原琥珀遥测台，一字不动；scale = 仪器美学（hairline/直角/信号橙/刻度尺额度）。
+// 切换后重渲染首屏——订阅脉搏在两种皮肤下是两种结构（环 ↔ 刻度尺），纯 CSS 换不了。
+const SKIN_KEY = 'gw-skin';
+function applySkin() {
+  let skin = 'classic';
+  try { skin = localStorage.getItem(SKIN_KEY) === 'scale' ? 'scale' : 'classic'; } catch {}
+  if (skin === 'scale') document.documentElement.dataset.skin = 'scale';
+  else delete document.documentElement.dataset.skin;
+  const sc = skin === 'scale';
+  const btn = $('skinBtn');
+  if (btn) {
+    btn.textContent = sc ? '刻' : '琥';
+    btn.title = sc
+      ? '风格：刻度 · 纸面（点按切回「琥珀遥测台」）'
+      : '风格：琥珀遥测台（点按切换到「刻度 · 纸面」）';
+  }
+}
+$('skinBtn').onclick = () => {
+  const next = document.documentElement.dataset.skin === 'scale' ? 'classic' : 'scale';
+  try { localStorage.setItem(SKIN_KEY, next); } catch {}
+  applySkin();
+  // 订阅脉搏的结构随皮肤走：首屏在现视图且手里有数据就立刻重渲染，不等下一拍
+  if (curView === 'home' && homeData) renderHome(homeData);
+};
+applySkin();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themeMode === 'auto') applyTheme(); });
 $('themeBtn').onclick = () => {
   themeMode = isDarkNow() ? 'light' : 'dark'; // 取当前实际配色的反面：每次点击都必然变色

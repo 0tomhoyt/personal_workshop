@@ -387,3 +387,67 @@ code { background: var(--inset); border: 1px solid var(--line-soft); border-radi
     scroll-behavior: auto !important; transition-duration: .01ms !important;
   }
 }
+
+/* ---- 可选皮肤「刻度」（html[data-skin="scale"]）--------------------------
+   与材质开关（data-theme 深/浅）正交的第二根轴：classic 缺省不改一字，
+   scale 下整体切换为「仪器美学」——hairline 分隔、单一信号色、直角、无阴影。
+   变量名沿用 amber 系历史命名（全页 30+ 处引用），值重调为信号橙。
+   由左栏风格切换钮（localStorage gw-skin）驱动，页面首屏脚本落 data-skin。 */
+html[data-skin="scale"] {
+  --bg: #0b0c0e;
+  --panel: #0e1013; --panel-2: #13151a; --inset: #08090b;
+  --ink: #f2f3f5; --dim: #9aa0aa; --faint: #5f6570;
+  --line: rgba(242, 243, 245, .14); --line-soft: rgba(242, 243, 245, .07);
+  --amber: #ff5c00; --amber-hi: #ff8a3d; --amber-rgb: 255, 92, 0;
+  --amber-dim: rgba(255, 92, 0, .1);
+  --green: #5fbf8f;
+  --row-hover: rgba(255, 255, 255, .03);
+  --card-shadow: none;
+  --noise-op: .028;
+}
+html[data-skin="scale"][data-theme="light"] {
+  --bg: #f2f0ea;
+  --panel: #f2f0ea; --panel-2: #eceae2; --inset: #edebe2;
+  --ink: #191914; --dim: #5c5c52; --faint: #85837a;
+  --line: rgba(25, 25, 20, .2); --line-soft: rgba(25, 25, 20, .09);
+  --amber: #e63e0c; --amber-hi: #b83309; --amber-rgb: 230, 62, 12;
+  --amber-dim: rgba(230, 62, 12, .07);
+  --green: #3d7a54;
+  --row-hover: rgba(25, 25, 20, .04);
+  --card-shadow: none;
+  --noise-op: .04;
+}
+/* 纸面就是纸面：氛围渐变与蓝图网格退场（颗粒保留 = 纸的肌理） */
+html[data-skin="scale"] body { background: var(--bg); }
+html[data-skin="scale"] body::before { content: none; }
+html[data-skin="scale"] .rail { background: var(--bg); }
+html[data-skin="scale"] .rail-rule { background: var(--line); }
+html[data-skin="scale"] .brand .zh-mark { border-radius: 3px; border-color: var(--amber); box-shadow: none; }
+/* 直角化：控件与徽章从胶囊变刻度 */
+html[data-skin="scale"] button { border-radius: 3px; }
+html[data-skin="scale"] button.primary { color: #1a0e02; box-shadow: none; }
+html[data-skin="scale"] button.primary:hover { box-shadow: none; }
+html[data-skin="scale"] select { border-radius: 3px; }
+html[data-skin="scale"] .seg { border-radius: 3px; }
+html[data-skin="scale"] .seg button { border-radius: 2px; }
+html[data-skin="scale"] .badge { border-radius: 2px; }
+html[data-skin="scale"] .vbadge { border-radius: 2px; }
+html[data-skin="scale"] .frow input, html[data-skin="scale"] .frow textarea { border-radius: 3px; }
+html[data-skin="scale"] .banner { border-radius: 2px; }
+html[data-skin="scale"] code { border-radius: 2px; }
+/* 卡片 → 平面 hairline 节 */
+html[data-skin="scale"] .card {
+  background: var(--panel); border-radius: 2px;
+  box-shadow: none;
+}
+/* 分区标题：底 hairline + 编号去框（bare accent numeral） */
+html[data-skin="scale"] .sechead { padding-bottom: 9px; border-bottom: 1px solid var(--line-soft); }
+html[data-skin="scale"] .sechead .idx {
+  border: none; padding: 0; background: none; border-radius: 0;
+  font-size: 11px; letter-spacing: .18em;
+}
+/* 活动视图：全墨文字 + 实心直角刻度（去辉光） */
+html[data-skin="scale"] .viewbtn.active { color: var(--ink); border-color: transparent; }
+html[data-skin="scale"] .viewbtn.active::before {
+  border-radius: 0; background: var(--amber); box-shadow: none;
+}
