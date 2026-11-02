@@ -283,14 +283,14 @@
     display: inline-flex; align-items: center; gap: 7px;
     padding: 4px 11px; border-radius: 999px;
     font: 600 11px var(--mono); letter-spacing: .08em; text-transform: uppercase;
-    border: 1px solid var(--line); background: var(--inset); color: var(--ink-2);
+    border: 1px solid var(--line); background: var(--inset); color: var(--dim);
   }
   .oc-role.hub { border-color: rgba(var(--amber-rgb), .45); color: var(--amber-hi); background: rgba(var(--amber-rgb), .08); }
   .oc-role.spoke { border-color: rgba(var(--green-rgb), .4); color: var(--green); background: rgba(var(--green-rgb), .08); }
   .oc-role i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
   .oc-hero h3 { margin: 10px 0 6px; font: 500 clamp(22px, 2.4vw, 28px)/1.2 var(--serif); letter-spacing: -.02em; color: var(--ink); }
-  .oc-hero .oc-lead { margin: 0; font: 13.5px/1.55 var(--sans); color: var(--ink-2); max-width: 62ch; }
-  .oc-explain { margin: 12px 0 0; padding: 0; border: 0; background: none; font: 13px/1.55 var(--sans); color: var(--ink-2); }
+  .oc-hero .oc-lead { margin: 0; font: 13.5px/1.55 var(--sans); color: var(--dim); max-width: 62ch; }
+  .oc-explain { margin: 12px 0 0; padding: 0; border: 0; background: none; font: 13px/1.55 var(--sans); color: var(--dim); }
   .oc-explain b { color: var(--ink); font-weight: 600; }
   .oc-explain ul { margin: 8px 0 0; padding-left: 1.15em; }
   .oc-explain li { margin: 4px 0; }
@@ -305,12 +305,12 @@
   }
   .oc-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
   .oc-panel-head h3 { margin: 0; font: 600 14px var(--sans); letter-spacing: .01em; color: var(--ink); }
-  .oc-meta { font: 10.5px var(--mono); color: var(--muted); letter-spacing: .04em; }
+  .oc-meta { font: 10.5px var(--mono); color: var(--faint); letter-spacing: .04em; }
   .oc-section { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
   .oc-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
   .oc-section-title { font: 600 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin-bottom: 8px; }
   .oc-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
-  .oc-row label { font: 12.5px var(--sans); color: var(--ink-2); min-width: 4.5em; }
+  .oc-row label { font: 12.5px var(--sans); color: var(--dim); min-width: 4.5em; }
   .oc-row select, .oc-row button {
     font: 12.5px var(--sans); padding: 7px 12px; border-radius: 9px;
     border: 1px solid var(--line); background: var(--inset); color: var(--ink);
@@ -324,11 +324,11 @@
   .oc-readonly {
     margin-top: 6px; padding: 10px 12px; border-radius: 12px;
     border: 1px solid var(--line); background: rgba(var(--amber-rgb), .04);
-    font: 13px/1.45 var(--sans); color: var(--ink-2);
+    font: 13px/1.45 var(--sans); color: var(--dim);
   }
   .oc-readonly b { color: var(--ink); }
-  .oc-spokes { margin-top: 8px; font: 12px/1.55 var(--mono); color: var(--muted); }
-  .oc-spokes b { color: var(--ink-2); font-weight: 600; }
+  .oc-spokes { margin-top: 8px; font: 12px/1.55 var(--mono); color: var(--faint); }
+  .oc-spokes b { color: var(--dim); font-weight: 600; }
   /* 预览做成「小电视」 */
   .oc-preview {
     position: relative; min-height: 280px; padding: 0; overflow: hidden;
@@ -381,13 +381,21 @@
   }
   .oc-board-close:hover { background: rgba(255,255,255,.12); }
   .oc-board-grid { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(280px, 1fr); gap: 14px; margin-top: 14px; flex: 1 1 auto; min-height: 0; }
-  @media (max-width: 980px) { .oc-board-grid { grid-template-columns: 1fr; } }
+  /* 窄屏折单列：flex:1 会把 grid 高度锁死在剩余空间里，第二张卡被压扁且内容裁掉。
+     改回自然高度，整页滚动看全。 */
+  @media (max-width: 980px) {
+    .oc-board-grid { grid-template-columns: 1fr; flex: 0 0 auto; min-height: 0; }
+    .oc-board-card .oc-tasks { max-height: 320px; }
+    .oc-tl { max-height: 320px; }
+  }
   .oc-board-card {
     border: 1px solid rgba(255,255,255,.08); border-radius: 14px;
     background: rgba(255,255,255,.028);
     padding: 15px 16px 13px; min-width: 0; display: flex; flex-direction: column;
   }
   .oc-board-card h4 { margin: 0 0 10px; font: 600 10.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: rgba(232,238,247,.42); }
+  /* 任务列表填满右卡：grid stretch 只拉卡片壳，内容要 flex:1 才跟得上（否则下半截空白） */
+  .oc-board-card .oc-tasks { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   .oc-board-meta { display: flex; gap: 16px; flex-wrap: wrap; font: 12px var(--mono); color: rgba(232,238,247,.62); margin-bottom: 10px; }
   .oc-board-meta b { color: #e8eef7; font-weight: 600; }
   .oc-bar { height: 5px; border-radius: 999px; background: rgba(255,255,255,.09); overflow: hidden; margin: 4px 0 12px; }
@@ -1109,7 +1117,7 @@
     </div>
     <div class="oc-board-card">
       <h4>计划任务</h4>
-      <div id="ocBoardTasks" style="overflow-y:auto"><span style="color:rgba(232,238,247,.4);font:12px var(--sans)">暂无任务</span></div>
+      <div id="ocBoardTasks" class="oc-tasks"><span style="color:rgba(232,238,247,.4);font:12px var(--sans)">暂无任务</span></div>
     </div>
   </div>
   <div class="oc-board-sessions" id="ocBoardSessions"></div>
@@ -1121,7 +1129,7 @@ const fmtDur = (s) => s >= 3600 ? `${s/3600|0}时${s%3600/60|0}分` : s >= 60 ? 
 let models = [];
 let gwToken = null;
 
-/* ---- 视图切换：两级分组导航 + hash 深链 + localStorage 记忆 + 数字键 1-6 ----
+/* ---- 视图切换：两级分组导航 + hash 深链 + localStorage 记忆 + 数字键 1-8 ----
    左栏是两组可折叠分组（工作台 / 管理台），子项是 <a href="#v"> 真链接——
    可中键新开、可复制、Tab 可达；视图切换由 hashchange 驱动，不写 JS 导航。 */
 const VIEW_IDS = ['home', 'opencode', 'todos', 'report', 'overview', 'traffic', 'test', 'providers'];
@@ -1384,6 +1392,12 @@ const OC_TASK_MARK = { done: '✓', running: '▸', pending: '·' };
 function renderOcBoard(d) {
   const board = $('ocBoard');
   if (!board || !d) return;
+  // 预览失败不要装成正常：不查 previewError 时面板会把「失败」渲染成「空闲 · live」
+  if (d.previewError) {
+    const failEl = $('ocBoardMeta');
+    if (failEl) failEl.innerHTML = `<span class="bad">预览失败：${esc(d.previewError)}（下轮 5s 重试）</span>`;
+    return;
+  }
   const f = d.preview;
   const now = Number(f?.now) || Date.now();
 
@@ -1465,8 +1479,12 @@ function setOcBoard(open) {
   board.classList.toggle('open', ocBoardOpen);
   if (ocBoardOpen) {
     board.focus();
+    // 深链可分享/可收藏：开面板时把 hash 归一成 #monitor
+    if (location.hash !== '#monitor') history.replaceState(null, '', '#monitor');
     loadOpenCodePage(); // 立刻拉一次 rich 帧，不等 5s tick
   } else {
+    // 关面板：把 #monitor 归一回 #opencode（不触发 hashchange，replaceState 不入历史）
+    if (location.hash === '#monitor') history.replaceState(null, '', '#opencode');
     scheduleOpenCodePoll(); // 回到普通节奏（视图在 opencode 则继续，否则停）
   }
 }
@@ -1522,7 +1540,7 @@ function renderOpenCodePage(d) {
     body = `
     <div class="oc-section">
       <div class="oc-section-title">电视信号源（只读）</div>
-      <div class="oc-readonly">由 <b>Mac mini</b> 决定 · 当前：<b>${esc(ocSpokeSourceLabel(src))}</b></div>
+      <div class="oc-readonly">由 <b>Mac mini</b> 决定 · 本机配置：${esc(ocSpokeSourceLabel(src))}（mini 的实际选择以 mini 为准）</div>
     </div>
     <div class="oc-section">
       <div class="oc-section-title">本机投稿</div>
@@ -1677,6 +1695,9 @@ addEventListener('keydown', (e) => {
   // 输入控件里不抢按键；仅无修饰键的数字键切视图（顺序同左栏从上到下）。
   // IME 组合期同理不抢：拼音/候选框里敲数字（keydown 带着 isComposing）不该跳视图，
   // 与 / 聚焦、Esc 清空两个快捷键的守卫口径一致。
+  // 大屏监控全屏时整个不抢：面板盖着全屏，底下换视图用户看不见（setView 用
+  // replaceState 也不触发 hashchange，连关面板的反向逻辑都带不动），纯无声换页
+  if (ocBoardOpen) return;
   if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -1701,13 +1722,17 @@ addEventListener('keydown', (e) => {
   const hashView = viewForHash(h);
   const start = hashView || (onWorkbench ? 'todos' : 'home');
   setView(start, { push: false });
+  // #monitor 冷启动：直接进大屏（可收藏成「监控屏」书签/独立窗口）
+  if (h === 'monitor') setOcBoard(true);
   // 从 /workbench 进来：把地址归一到 /#<当前视图>，刷新与再收藏都一致
   if (onWorkbench) history.replaceState(null, '', '/#' + curView);
 })();
 // hash → 视图。真链接 #todos…、旧别名（latency/log/stats/workbench）、
-// 旧区间形态 #stats-7/#stats-30（落统计；区间由 applyStatsHash 另设）都在这里归一，
+// 旧区间形态 #stats-7/#stats-30（落统计；区间由 applyStatsHash 另设）、
+// #monitor（OpenCode 大屏监控快捷方式：落 opencode 页并直接开面板）都在这里归一，
 // 冷启动与页内 hash 变化走同一条判断，不会出现「新开标签能用、页内粘贴不认」。
 function viewForHash(h) {
+  if (h === 'monitor') return 'opencode';
   if (/^stats-/.test(h)) return 'traffic';
   const v = VIEW_ALIASES[h] || h;
   return VIEW_IDS.includes(v) ? v : null;
@@ -1720,6 +1745,11 @@ addEventListener('hashchange', () => {
   if (v && v !== curView) setView(v, { push: false });
   // 已经停在统计页时粘贴 #stats-30 也要换区间（视图没变，视图分支不会触发）
   applyStatsHash();
+  // #monitor：进页后直接开大屏（v===null 时不动——非法 hash 不应关掉已开的面板）
+  if (h === 'monitor') setOcBoard(true);
+  // 反向：离开 #monitor（hash 换成**合法视图**）时收起面板；
+  // v===null（非法 hash）不动，与上面注释的承诺一致
+  else if (ocBoardOpen && v) setOcBoard(false);
   // 页内从 #stats-7 跳到 #report 之类的反向场景：视图变了但区间控件保持上次选择，无副作用
 });
 
@@ -1894,9 +1924,11 @@ async function fetchLog() {
 async function maybeFetchStats() {
   if (curView === 'overview' || curView === 'traffic') await fetchStats();
 }
+let statsSeq = 0; // 乱序防护：3s 轮询与切视图即时拉取双入口并发时，晚到的旧响应不得覆盖新值
 async function fetchStats() {
+  const seq = ++statsSeq;
   const s = await fetch('/admin/stats').then(r => r.json()).catch(() => null);
-  if (!s) return;
+  if (!s || seq !== statsSeq) return;
   renderStats(s);
   statsFetchedAt = Date.now();
   // 左栏「今日 n 次」左栏遥测：离开统计/总览视图后停在最后一次的值，title 写明刷新时刻，
@@ -2542,6 +2574,12 @@ function monBadge(m) {
 
 function renderMonitors(d) {
   const box = $('monList');
+  // 改名输入中跳过本帧重绘：轮询（总览 6s）会 innerHTML 重建列表，把焦点/光标
+  // 炸掉——待办列表有快照还原，这里直接跳帧更简单（失焦后下一 tick 恢复刷新）
+  {
+    const ae = document.activeElement;
+    if (ae && (ae.classList?.contains('monname') || ae.id === 'monInName' || ae.id === 'monInPick')) return;
+  }
   const railMons = $('railMons');
   const railAll = $('railAll');
   const railFoot = $('railFoot');
@@ -2596,7 +2634,7 @@ function renderMonitors(d) {
           ? `${m.label}：当前在「${curLabel}」（无其他输入源可轮换）`
           : `${m.label}：当前在「${curLabel}」；点击切到「${next.label}」`;
       return `<button class="railm${m.ok && m.input ? ' on' : ''}" data-mdisp="${esc(m.uuid)}"`
-        + ` data-mnext="${!retry ? next.value : ''}"${monBusy ? ' disabled' : ''} title="${esc(title)}">`
+        + ` data-mnext="${esc(!retry ? next.value : '')}"${monBusy ? ' disabled' : ''} title="${esc(title)}">`
         + `<span class="lb">${esc(m.label)}</span>`
         + `<span class="inp">${esc(curLabel)}</span></button>`;
     }).join('');
@@ -2617,7 +2655,7 @@ function renderMonitors(d) {
       const title = atAll
         ? `所有可读屏都已经在「${i.label}」，点击保持不变`
         : `${n ? `${n}/${readable.length} 台可读屏在「${i.label}」` : '所有可读屏都没在这个输入源'}；点击全部切到「${i.label}」`;
-      return `<button class="railm all${atAll ? ' on' : ''}" data-mminput="${i.value}"`
+      return `<button class="railm all${atAll ? ' on' : ''}" data-mminput="${esc(i.value)}"`
         + `${monBusy ? ' disabled' : ''} title="${esc(title)}">`
         + `<span class="lb">全部 → ${esc(i.label)}</span></button>`;
     }).join('');
@@ -2631,7 +2669,7 @@ function renderMonitors(d) {
     const curIdx = inputs.findIndex((i) => i.value === m.input);
     const next = inputs.length ? inputs[(curIdx + 1) % inputs.length] : null;
     const cycle = next
-      ? `<button data-mcycle="${esc(m.uuid)}" data-next="${next.value}" ${monBusy || !m.ok ? 'disabled' : ''} style="font-size:11.5px;padding:3px 9px;margin-left:7px" title="点击切到「${esc(next.label)}」，再点继续轮换">⇄ ${esc(next.label)}</button>`
+      ? `<button data-mcycle="${esc(m.uuid)}" data-next="${esc(next.value)}" ${monBusy || !m.ok ? 'disabled' : ''} style="font-size:11.5px;padding:3px 9px;margin-left:7px" title="点击切到「${esc(next.label)}」，再点继续轮换">⇄ ${esc(next.label)}</button>`
       : '';
     // 标题行：名字（或 UUID 前 8 位）+ 当前输入徽标 + 改名按钮
     const title = editing
@@ -2652,7 +2690,7 @@ function renderMonitors(d) {
     ? `<div class="kv" style="margin-top:6px;border-bottom:none"><span class="k" style="flex:1">输入源名称</span><span>${
         inEditing
           ? `<select id="monInPick" style="font-size:11.5px;padding:3px 7px">${inputs.map((i) =>
-              `<option value="${i.value}"${('in:' + i.value) === monEditing ? ' selected' : ''}>${esc(i.label)}</option>`).join('')}</select>`
+              `<option value="${esc(i.value)}"${('in:' + i.value) === monEditing ? ' selected' : ''}>${esc(i.label)}</option>`).join('')}</select>`
             + `<input class="monname" id="monInName" value="${esc(editVal)}" maxlength="40" placeholder="留空 = 输入 N" autocomplete="off" spellcheck="false">`
             + `<button id="monInSave" style="padding:2px 8px;font-size:11px;margin-left:6px">保存</button>`
             + `<button data-mnamecancel="1" style="padding:2px 8px;font-size:11px;margin-left:4px">取消</button>`
