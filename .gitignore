@@ -19,6 +19,7 @@ logs/
 
 # 统一订阅网关配置（含全部订阅凭证 —— 绝不入库）
 providers.json
+copilot-auth.json
 
 # ZCode 会话产物
 .zcode/

@@ -58,7 +58,72 @@
         "list": [],
         "exclude": []
       },
+      "chatOptions": {
+        "enable_thinking": true,
+        "chat_template_kwargs": {
+          "enable_thinking": true
+        }
+      },
       "streamUsage": true
+    },
+    {
+      "id": "deepseek-official",
+      "name": "DeepSeek Official",
+      "_说明": "可选：直接复用 ~/.codex/config.toml 中 model_providers.deepseek 的 token；不需要时保持 enabled=false。",
+      "baseUrl": "https://api.deepseek.com",
+      "protocol": "openai-responses",
+      "endpoints": {
+        "openai": "https://api.deepseek.com",
+        "responses": "https://api.deepseek.com"
+      },
+      "auth": {
+        "type": "static-token",
+        "codexProvider": "deepseek"
+      },
+      "models": {
+        "source": "static",
+        "list": [
+          {
+            "id": "deepseek-flash",
+            "title": "DeepSeek Flash",
+            "contextLength": 1048576
+          },
+          {
+            "id": "deepseek-v4-pro",
+            "title": "DeepSeek V4 Pro",
+            "contextLength": 1048576
+          }
+        ]
+      },
+      "enabled": false
+    },
+    {
+      "id": "copilot-chat",
+      "name": "GitHub Copilot Chat",
+      "_说明": "复用 Pi 的 GitHub Copilot OAuth；从 ~/.pi/agent/auth.json 复制到运行时 copilot-auth.json 后启用。只展示账号真实有权限的 Chat 模型。",
+      "baseUrl": "https://api.individual.githubcopilot.com",
+      "protocol": "openai",
+      "auth": {
+        "type": "copilot-oauth",
+        "tokenFile": "__COPILOT_AUTH_FILE__",
+        "tokenJsonPath": "github-copilot"
+      },
+      "models": { "source": "api" },
+      "enabled": false
+    },
+    {
+      "id": "copilot-responses",
+      "name": "GitHub Copilot Responses",
+      "_说明": "同一 Copilot OAuth 的 Responses 模型；与 copilot-chat 分开是为了按上游真实协议直通。",
+      "baseUrl": "https://api.individual.githubcopilot.com",
+      "protocol": "openai-responses",
+      "auth": {
+        "type": "copilot-oauth",
+        "tokenFile": "__COPILOT_AUTH_FILE__",
+        "tokenJsonPath": "github-copilot"
+      },
+      "models": { "source": "api" },
+      "enabled": false
     },
     {
       "id": "kimi",
@@ -104,6 +169,13 @@
     "defaultProvider": "cannbot",
     "aliases": {}
   },
+  "codex": {
+    "_说明": "运行 scripts/configure-codex.mjs 时生成 ~/.codex/unified-models.json 和 Codex provider 配置。所有模型默认使用 pid/model 形式，避免不同渠道重名。",
+    "catalogTemplate": "~/.codex/models.json",
+    "catalogBaseModel": "deepseek-flash",
+    "excludeProviders": [],
+    "models": []
+  },
   "monitors": {
     "_说明": "可选：显示器输入源切换（m1ddc/DDC over USB-C）。网关只认硬件事实——屏的 System UUID 与输入的 VCP60 值；name 是你自己起的名字，留空则界面显示编号（屏=UUID 前 8 位、输入=「输入 15」）。改完热生效，不用重启。",
     "inputs": [
@@ -148,8 +220,9 @@
     "gateway.tv.cacheSeconds": "响应 Cache-Control 的 max-age 提示（快照本身每次现算）；电视端另有 60 s 轮询间隔。",
     "gateway.tv.maxPerMinute": "每 token 每分钟请求上限，超出 429 + Retry-After: 60。",
     "providers[].baseUrl": "统一填不含尾部 /v1 的地址（代码自动补 /v1/chat/completions 或 /v1/messages）；粘贴带 /v1 的也会自动去掉",
-    "providers[].protocol": "openai | anthropic —— 上游兼容的 API 协议，决定直通还是翻译",
-    "providers[].auth": "cannwork-jwt-vk：读 opencode session.json 的 JWT+VK 链；static-token：token / tokenEnv / tokenFile(+tokenJsonPath) 三选一",
+    "providers[].protocol": "openai | openai-responses | anthropic —— 上游兼容 API；openai-responses 提供 Codex /v1/responses 原生直通",
+    "providers[].endpoints": "可选：openai / anthropic / responses 入站协议对应 URL；用于同一上游存在多个原生协议入口时直通",
+    "providers[].auth": "cannwork-jwt-vk：读 opencode session.json 的 JWT+VK 链；static-token：token / tokenEnv / tokenFile(+tokenJsonPath) / codexProvider 选一",
     "providers[].models.source": "api：从上游拉模型列表（cannwork 用站点专用接口，其余用标准 GET /v1/models）；static：用下面的 list",
     "providers[].models.exclude": "从 /v1/models 隐藏的模型名（请求仍可直接指定）",
     "providers[].streamUsage": "openai 上游流式请求自动补 stream_options.include_usage（供统计），不需要可关",

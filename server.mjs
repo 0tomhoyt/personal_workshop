@@ -29,6 +29,7 @@ import { listModels, resolveModelRoute, defaultProvider, peekModelsKnown, checkP
 import { providersView, createProvider, updateProvider, deleteProvider, saveRemoteProjects, tvOpenCodeStatus, tvOpenCodePreview, saveTvOpenCodeSettings } from './lib/providers-admin.mjs';
 import { forward, readRequestBody, withUpstreamModel } from './lib/proxy-openai.mjs';
 import { handleAnthropicInbound, handleOpenAIToAnthropic } from './lib/proxy-anthropic.mjs';
+import { handleResponsesInbound } from './lib/proxy-responses.mjs';
 import { checkClientAuth } from './lib/gwauth.mjs';
 import { authStatus } from './lib/upstream.mjs';
 import { monitorsStatus, switchMonitors } from './lib/monitors.mjs';
@@ -125,7 +126,7 @@ const server = http.createServer(async (req, res) => {
         ok: details.every((d) => d.auth?.ok ?? d.auth?.jwt?.ok) && details.length > 0,
         service: 'unified-subscription-gateway',
         authRequired: Boolean(config.gateway?.clientToken),
-        protocols: ['openai (passthrough / translated)', 'anthropic messages (direct / translated)'],
+        protocols: ['openai (passthrough / translated)', 'codex responses (direct / translated)', 'anthropic messages (direct / translated)'],
         providers: details,
         uptimeSec: Math.round(process.uptime()),
       });
@@ -548,6 +549,32 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, list);
     }
 
+    if (url === '/v1/responses' || url === '/responses') {
+      checkClientAuth(req);
+      const bodyBuf = await readRequestBody(req, MAX_BODY);
+      let body = {};
+      try { body = JSON.parse(bodyBuf.toString('utf8') || '{}'); } catch { body = null; }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return sendJson(res, 400, {
+          error: { message: '请求体不是合法 JSON 对象', type: 'invalid_request_error' },
+        });
+      }
+      if (!body.model) {
+        return sendJson(res, 400, {
+          error: { message: 'Responses 请求缺少 model 字段', type: 'invalid_request_error' },
+        });
+      }
+      const route = await routeFor(body.model);
+      try {
+        return await handleResponsesInbound(req, res, bodyBuf, body, route);
+      } catch (e) {
+        if (res.headersSent) { try { res.end(); } catch {} return; }
+        return sendJson(res, e.status ?? 502, {
+          error: { message: e.message, type: e.code ?? 'api_error' },
+        });
+      }
+    }
+
     if (url === '/v1/messages' || url === '/messages') {
       checkClientAuth(req);
       const bodyBuf = await readRequestBody(req, MAX_BODY);
@@ -592,7 +619,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     return sendJson(res, 404, {
-      error: { message: `未知路径 ${url}；可用: / (页面), /v1/chat/completions, /v1/messages, /v1/models, /v1/todos(子项 /:id/items), /admin/report/*, /healthz`, type: 'not_found' },
+      error: { message: `未知路径 ${url}；可用: / (页面), /v1/responses, /v1/chat/completions, /v1/messages, /v1/models, /v1/todos(子项 /:id/items), /admin/report/*, /healthz`, type: 'not_found' },
     });
   } catch (e) {
     const status = e.status ?? 500;

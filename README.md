@@ -1,7 +1,7 @@
 # 个人网关 · 统一订阅 API 网关（personal_gateway，仓库目录 personal_workshop）
 
 **统一订阅网关**：把**多个订阅服务**（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，
-本机所有 Agent（zcode CLI、Claude Code、opencode、任意 OpenAI/Anthropic 客户端）统一从这里调用。
+本机所有 Agent（Codex、zcode CLI、Claude Code、opencode、任意 OpenAI/Anthropic 客户端）统一从这里调用。
 网关按请求里的**模型名**路由到对应订阅，自动注入该订阅的凭证——业务配置里不需要保存任何上游密钥。
 
 **个人工作台**（同一页的左栏第一组，`http://127.0.0.1:8484/#todos`）：跨 agent 的待办事项（人与 agent 经
@@ -15,7 +15,7 @@
 ```
 zcode CLI / Claude Code / opencode / curl …（全部 Agent）
         │  Authorization: Bearer <网关token>
-        │  OpenAI  /v1/chat/completions    Anthropic  /v1/messages
+        │  OpenAI /v1/chat/completions   Codex /v1/responses   Anthropic /v1/messages
         ▼
 统一网关 127.0.0.1:8484（launchd 常驻）
    ├─ 模型名路由     model → provider（providers.json，热加载）
@@ -46,6 +46,8 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
 |---|---|
 | `server.mjs` | 入口：HTTP 服务 + 路由分发 + healthz/admin 端点（Node ≥18 零依赖） |
 | `lib/` | 服务端模块：config（providers.json）/ models（模型目录与路由）/ upstream（统一上游请求）/ auth/（cannwork、static 凭证链）/ translate/（Anthropic↔OpenAI 双向翻译）/ proxy-openai、proxy-anthropic（两条入站管道）/ stats / log / gwauth / util / todos（工作台待办）/ report（总结管线：四源适配器 + 素材收集 + 生成状态机）/ report-prompts（总结 prompt 与阈值，调质量改这里） |
+| `lib/proxy-responses.mjs` | Codex Responses 入站：原生 Responses 直通；Chat 上游双向转换（文本、reasoning、function/namespace tools、多轮工具结果） |
+| `scripts/configure-codex.mjs` | 按已启用 provider 生成 Codex 模型目录，并写入 `~/.codex/config.toml` |
 | `index.html` | 单页应用（`http://127.0.0.1:8484/`）：左栏两级导航，八个视图——首屏 / OpenCode 电视墙 / 待办 / 汇报 / 总览 / 统计 / 诊断 / 配置 |
 | `theme.css` | 共享主题：令牌 / 骨架 / 左栏布局契约 / 通用组件（`/theme.css` 提供） |
 | `providers.template.json` | providers.json 模板（install.sh 首次安装时生成到运行时目录） |
@@ -101,7 +103,7 @@ zcode 的会话目录在 Windows 用户目录下结构相同；opencode 不在�
       "id": "cannbot",                     // 路由前缀标识：cannbot/glm-5.3
       "name": "CANNWork",
       "baseUrl": "https://cannbot.hicann.cn/gateway/compatible-mode",   // 不带尾部 /v1（自动补协议路径）
-      "protocol": "openai",                // openai | anthropic —— 默认上游协议（models/报告用）
+      "protocol": "openai",                // openai | openai-responses | anthropic —— 默认上游协议（models/报告用）
       // "endpoints": { "openai": "…", "anthropic": "…" }  // 可选；仅当两侧真是对应协议时才配，否则会直通失败
       "auth": { "type": "cannwork-jwt-vk" },                            // JWT+VK 凭证链
       "models": { "source": "api", "exclude": [] }                      // 从上游接口拉模型列表
@@ -147,6 +149,11 @@ zcode 的会话目录在 Windows 用户目录下结构相同；opencode 不在�
   ⚠️ launchd 环境里 shell 的 env 不生效——用 `token`/`tokenFile` 最稳（tokenEnv 需要
   把变量写进 plist 的 `EnvironmentVariables`，而重跑 `./install.sh` 会重新生成 plist、
   手工加的环境变量会丢——所以要沿用 tokenEnv 就每次重装后补回去，或干脆换 tokenFile）。
+- **GitHub Copilot OAuth**：`auth.type=copilot-oauth`，凭证从 Pi 的
+  `~/.pi/agent/auth.json` 中 `github-copilot` 项读取；短期 Copilot token 临期或上游
+  返回 401 时自动换取并原子写回。Copilot 的 Chat 与 Responses 模型需分成两个 Provider
+  （`copilot-chat` / `copilot-responses`）；网关会将 `/v1/chat/completions`、
+  `/v1/responses` 映射到 Copilot 的无 `/v1` 路径，并按账号模型目录过滤不可用模型。
 - **费用统计单价**：`pricing` 节可覆盖任意模型单价（键 `模型名` 或 `pid/模型名`，美元 / 1M tokens）；
   未覆盖的模型用内置参考价（`lib/pricing.mjs`，参考 OpenRouter 公开牌价与各家官方定价量级估算）。
   费用是**按牌价折算的等效成本**——订阅制上游（Kimi Code / GLM Coding Plan / CANNWork）实际是
@@ -155,6 +162,10 @@ zcode 的会话目录在 Windows 用户目录下结构相同；opencode 不在�
 - anthropic 协议上游自动带 `x-api-key` + `Authorization: Bearer` + `anthropic-version`，兼容
   Kimi / Z.ai 等不同实现。
 - 文件含全部订阅凭证：0600 权限、绝不入版本库（.gitignore 已排除）。
+- **Pi 日常入口收敛**：网关模型全部就绪后运行
+  `node scripts/configure-pi.mjs`。脚本重写 Pi 的 `models.json` 和 `enabledModels`，
+  让 `/model` 默认只显示统一网关模型；不会删除 Pi 的官方直连凭证，按 Tab 切到 `all`
+  仍可把官方直连当作网关故障时的应急通道。
 
 ## 模型路由规则
 
@@ -174,6 +185,7 @@ zcode 的会话目录在 Windows 用户目录下结构相同；opencode 不在�
 |---|---|---|
 | **OpenAI 客户端** | 原样透传（逐字节，仅可选补 include_usage） | 双向翻译：openai→anth 请求 + anthropic SSE→openai chunk 状态机 |
 | **Anthropic 客户端** | 双向翻译（anth→openai 请求 + openai SSE→anth 事件流） | **原样直通**（换凭证头与 model 名，SSE 字节级透传，零翻译损耗） |
+| **Codex Responses 客户端** | 双向翻译：Responses→chat；chat SSE→Responses SSE | `openai-responses` 提供者原样直通；Anthropic 提供者暂返回 501 |
 
 翻译层覆盖：system（字符串/块数组）、文本、base64/url 图片、tools + tool_choice、tool_use/tool_result
 多轮闭环、stop/temperature/top_p/top_k、流式完整事件序列、thinking↔reasoning_content。
@@ -188,6 +200,23 @@ Base URL : http://127.0.0.1:8484/v1
 API Key  : providers.json 里的 gateway.clientToken
 模型列表 : GET /v1/models（全部订阅聚合，owned_by 标注来源）
 ```
+
+### Codex（Responses API）
+
+Codex 固定使用 `/v1/responses`。先生成 Codex 模型目录和本地 provider：
+
+```bash
+node scripts/configure-codex.mjs --config /path/to/providers.json
+```
+
+脚本会：
+
+- 把每个可服务 Responses 的模型生成为 `provider/model` 别名；
+- 写入 `~/.codex/unified-models.json`；
+- 备份并更新 `~/.codex/config.toml`，把 Codex 指向本网关；
+- 默认选择目录中的第一个模型，也可在 `providers.json` 的 `codex.defaultModel` 指定。
+
+重启 Codex 后，即可在正常模型选择器中直接切换渠道。
 
 ```bash
 curl http://127.0.0.1:8484/v1/chat/completions \

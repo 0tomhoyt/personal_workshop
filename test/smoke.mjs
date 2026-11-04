@@ -10,16 +10,30 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { sqlite3Bin } from '../lib/report/sqlite.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const importLocal = (relativePath, suffix = '') => import(pathToFileURL(path.join(ROOT, relativePath)).href + suffix);
+async function createSqliteFixture(db, sql) {
+  const probe = spawnSync(sqlite3Bin(), ['-version'], { windowsHide: true });
+  if (!probe.error) {
+    const created = spawnSync(sqlite3Bin(), [db], { input: sql, windowsHide: true });
+    if (created.error) throw created.error;
+    return;
+  }
+  if (probe.error.code !== 'ENOENT') throw probe.error;
+  const { DatabaseSync } = await import('node:sqlite');
+  const native = new DatabaseSync(db);
+  try { native.exec(sql); } finally { native.close(); }
+}
 const MOCK_PORT = 6291;
 const GW_PORT = 6290;
 const GW = `http://127.0.0.1:${GW_PORT}`;
 const TOKEN = 'sk-test-token';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-smoke-'));
+const mockM1ddc = path.join(ROOT, 'test/mock-m1ddc.mjs');
 // 防泄漏：进程内会动态 import lib/pricing.mjs，其 config/log 模块的默认落点在源目录
 // （resolvePrice → tryGetConfig 的内置回退警告会在源目录写 proxy.log）——先指到临时目录
 process.env.CANNBOT_LOG_FILE = path.join(tmp, 'inproc.log');
@@ -118,7 +132,7 @@ const gateway = spawnNode([path.join(ROOT, 'server.mjs')], {
   CANNBOT_ZCODE_DB: path.join(tmp, 'no-such.db'),
   CANNBOT_OPENCODE_DB: path.join(tmp, 'no-such.db'),
   CANNBOT_CURSOR_DIR: path.join(tmp, 'cursor-projects'),
-  CANNBOT_M1DDC: path.join(ROOT, 'test/mock-m1ddc.mjs'),
+  CANNBOT_M1DDC: mockM1ddc,
   MOCK_M1DDC_STATE: path.join(tmp, 'mon-state.json'),
   MOCK_M1DDC_LOG: path.join(tmp, 'mon-log.txt'),
   CANNBOT_REPORT_RETRY_DELAY_MS: '0', // 总结重试演练不等真实 1.5s
@@ -166,7 +180,7 @@ try {
       /clientTag\(req\)/.test(fs.readFileSync(path.join(ROOT, 'lib/proxy-anthropic.mjs'), 'utf8'))
       && /clientTag\(req\)/.test(fs.readFileSync(path.join(ROOT, 'lib/proxy-openai.mjs'), 'utf8')), '');
     {
-      const { clientTag } = await import(path.join(ROOT, 'lib/util.mjs') + '?ct=' + Date.now());
+      const { clientTag } = await importLocal('lib/util.mjs', '?ct=' + Date.now());
       const tag = (ua) => clientTag({ headers: ua ? { 'user-agent': ua } : {} });
       check('clientTag：只取产品名/版本，剥掉 OS 注释与括号',
         tag('claude-cli/2.1.310 (external, cli)') === 'ua=claude-cli/2.1.310'
@@ -596,7 +610,7 @@ try {
     check('无单价模型标记未计价', s.prices.find((p) => p.model === 'shared-model')?.source === 'none', JSON.stringify(s.prices.map((p) => `${p.pid}/${p.model}:${p.source}`)));
     {
       // 单元级：日期快照后缀名按基名计价（glm-5.3-260910 → glm-5.3）；缓存三档单价
-      const { resolvePrice, costOf } = await import(path.join(ROOT, 'lib/pricing.mjs'));
+      const { resolvePrice, costOf } = await importLocal('lib/pricing.mjs');
       const p1 = resolvePrice('cannbot', 'glm-5.3-260910');
       const p2 = resolvePrice('kimi', 'no-such-model-261024');
       check('日期后缀剥除后命中内置单价', p1?.source === 'builtin' && p1?.input === 1.2, JSON.stringify(p1));
@@ -783,7 +797,7 @@ try {
     const fileState = JSON.parse(fs.readFileSync(path.join(tmp, 'todos.json'), 'utf8'));
     const listed = await (await fetch(`${GW}/v1/todos`, { headers: todosHeaders })).json();
     check('todos.json 落盘且与列表一致', Array.isArray(fileState.todos) && fileState.todos.length === listed.todos.length, `${fileState.todos?.length} vs ${listed.todos?.length}`);
-    check('todos.json 权限 0600', (fs.statSync(path.join(tmp, 'todos.json')).mode & 0o777) === 0o600, fs.statSync(path.join(tmp, 'todos.json')).mode.toString(8));
+    check('todos.json 权限 0600（Windows 无 POSIX mode 语义时跳过）', process.platform === 'win32' || (fs.statSync(path.join(tmp, 'todos.json')).mode & 0o777) === 0o600, fs.statSync(path.join(tmp, 'todos.json')).mode.toString(8));
 
     // 「清理已完成」按钮走的 DELETE 循环路径（API 侧）：3 done + 2 未完成 → 只删 done，未完成原样
     const doneIds = [];
@@ -958,7 +972,7 @@ try {
     check('坏 todos.json：实例存活且空列表起步', Array.isArray(badList.todos) && badList.todos.length === 0, JSON.stringify(badList));
     check('坏 todos.json：主业务正常', (await (await fetch('http://127.0.0.1:6294/healthz')).json()).service === 'unified-subscription-gateway');
     check('坏 todos.json：留 .bad 备份且内容原样', fs.readFileSync(path.join(tmp, 'todos-bad.json.bad'), 'utf8') === '{not-json');
-    check('坏 todos.json：.bad 备份权限 0600', (fs.statSync(path.join(tmp, 'todos-bad.json.bad')).mode & 0o777) === 0o600);
+    check('坏 todos.json：.bad 备份权限 0600（Windows 跳过）', process.platform === 'win32' || (fs.statSync(path.join(tmp, 'todos-bad.json.bad')).mode & 0o777) === 0o600);
     check('坏 reports.json：留 .bad 备份且内容原样', fs.readFileSync(path.join(tmp, 'reports-bad.json.bad'), 'utf8') === '{"reports": [');
     // 第二次坏文件：固定名 .bad 已存在 → 备份改带时间戳后缀，不覆盖第一次的现场
     gwTodo.kill();
@@ -1096,7 +1110,7 @@ try {
     }));
     const prev = process.env.CANNBOT_CONFIG_FILE;
     process.env.CANNBOT_CONFIG_FILE = badCfg;
-    const { getConfig } = await import(path.join(ROOT, 'lib/config.mjs') + '?badwb=' + Date.now());
+    const { getConfig } = await importLocal('lib/config.mjs', '?badwb=' + Date.now());
     process.env.CANNBOT_CONFIG_FILE = prev;
     const wb = getConfig().workbench;
     check('workbench 坏值静默剔除（非字符串/空串/未知键）', wb && Object.keys(wb).length === 0, JSON.stringify(wb));
@@ -1111,7 +1125,7 @@ try {
     }));
     const readRp = async () => {
       process.env.CANNBOT_CONFIG_FILE = rpCfg;
-      const m = await import(path.join(ROOT, 'lib/config.mjs') + '?rp=' + Math.random());
+      const m = await importLocal('lib/config.mjs', '?rp=' + Math.random());
       process.env.CANNBOT_CONFIG_FILE = prev;
       return m.getConfig().workbench;
     };
@@ -1136,7 +1150,7 @@ try {
     check('远程项目端点：写入去重去空白 → 200', okR.status === 200 && JSON.stringify(okJ.remoteProjects) === JSON.stringify(['黄区', '另一台机']), JSON.stringify(okJ));
     const afterCfg = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
     check('远程项目端点：落盘到 providers.json 的 workbench.remoteProjects', JSON.stringify(afterCfg.workbench?.remoteProjects) === JSON.stringify(['黄区', '另一台机']), JSON.stringify(afterCfg.workbench));
-    check('远程项目端点：落盘文件权限仍是 0600', (fs.statSync(cfgFile).mode & 0o777) === 0o600, fs.statSync(cfgFile).mode.toString(8));
+    check('远程项目端点：落盘文件权限仍是 0600（Windows 跳过）', process.platform === 'win32' || (fs.statSync(cfgFile).mode & 0o777) === 0o600, fs.statSync(cfgFile).mode.toString(8));
     check('远程项目端点：写后热加载即时生效（getConfig 读到新值）',
       (() => { const m = fs.readFileSync(cfgFile, 'utf8'); return m.includes('另一台机'); })());
     const clearR = await rpPost({ remoteProjects: [] });
@@ -1153,7 +1167,7 @@ try {
     // 进程内：配置文件缺失时的内置默认回落必须过 normalize——否则 healthz 的
     // providers 过滤（p.enabled）会把内置 cannbot 隐形，与「回落仅 cannbot」文案矛盾
     process.env.CANNBOT_CONFIG_FILE = path.join(tmp, '不存在的-providers.json');
-    const cfgMod = await import(path.join(ROOT, 'lib/config.mjs') + '?builtin=' + Date.now());
+      const cfgMod = await importLocal('lib/config.mjs', '?builtin=' + Date.now());
     process.env.CANNBOT_CONFIG_FILE = prev;
     const bc = cfgMod.getConfig();
     check('内置默认回落含 cannbot 且 enabled（过 normalize）',
@@ -1219,8 +1233,7 @@ try {
     // fixture：最小列集 = 适配器 SQL 引用的列；SQL 从 stdin 喂给系统 sqlite3
     const j = (v) => `'${JSON.stringify(v).replace(/'/g, "''")}'`;
     const db = path.join(tmp, 'zcode-fixture.db');
-    spawnSync(sqlite3Bin(), [db], {
-      input: `
+    await createSqliteFixture(db, `
 CREATE TABLE session (id TEXT, project_id TEXT, directory TEXT, title TEXT, task_type TEXT, parent_id TEXT, version TEXT, time_created INTEGER, time_updated INTEGER, time_deleted INTEGER);
 CREATE TABLE message (id TEXT, session_id TEXT, sequence INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);
 CREATE TABLE part (message_id TEXT, session_id TEXT, sequence INTEGER, data TEXT);
@@ -1237,11 +1250,10 @@ INSERT INTO part VALUES ('m3', 'session_aaa', 1, ${j({ type: 'reasoning', text: 
 INSERT INTO part VALUES ('m3', 'session_aaa', 2, ${j({ type: 'text', text: '已完成内核优化，性能提升 15%' })});
 INSERT INTO part VALUES ('m3', 'session_aaa', 3, ${j({ type: 'tool', tool: 'Bash', state: { input: { command: 'python bench.py' } } })});
 INSERT INTO part VALUES ('m5', 'session_ccc', 1, ${j({ type: 'text', text: '很早以前的消息' })});
-`,
-    });
+`);
 
     process.env.CANNBOT_ZCODE_DB = db;
-    const { listSessions } = await import(path.join(ROOT, 'lib/report/sources/zcode.mjs') + '?t=' + Date.now());
+    const { listSessions } = await importLocal('lib/report/sources/zcode.mjs', '?t=' + Date.now());
     const sessions = await listSessions(WIN);
     check('zcode: 恰 1 会话（subagent 整会话排除、窗口外消息清空不产出）', sessions.length === 1, JSON.stringify(sessions.map((s) => s.sessionId)));
     const s = sessions[0];
@@ -1268,8 +1280,7 @@ INSERT INTO part VALUES ('m5', 'session_ccc', 1, ${j({ type: 'text', text: '很�
     const WIN = { startMs: NOW - 3600_000, endMs: NOW + 3600_000 };
     const j = (v) => `'${JSON.stringify(v).replace(/'/g, "''")}'`;
     const db = path.join(tmp, 'opencode-fixture.db');
-    spawnSync(sqlite3Bin(), [db], {
-      input: `
+    await createSqliteFixture(db, `
 CREATE TABLE session (id TEXT, project_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER);
 CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
 CREATE TABLE part (id TEXT, message_id TEXT, data TEXT);
@@ -1290,11 +1301,10 @@ INSERT INTO event VALUES ('e5', 'ses_gone', 5, 'message.updated.1', ${j({ sessio
 INSERT INTO event VALUES ('e6', 'ses_gone', 6, 'message.part.updated.1', ${j({ sessionID: 'ses_gone', part: { id: 'prt_g2', messageID: 'msg_g2', type: 'text', text: '文档已归档' }, time: NOW - 400_000 })});
 INSERT INTO event VALUES ('e7', 'ses_gone', 7, 'message.updated.1', ${j({ sessionID: 'ses_gone', info: { id: 'msg_g3', sessionID: 'ses_gone', role: 'user', time: { created: NOW - 350_000 } } })});
 INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ sessionID: 'ses_gone', part: { id: 'prt_g3', messageID: 'msg_g3', type: 'text', text: '你是多 agent 团队中的成员，负责汇总' }, time: NOW - 350_000 })});
-`,
-    });
+`);
 
     process.env.CANNBOT_OPENCODE_DB = db;
-    const { listSessions } = await import(path.join(ROOT, 'lib/report/sources/opencode.mjs') + '?t=' + Date.now());
+    const { listSessions } = await importLocal('lib/report/sources/opencode.mjs', '?t=' + Date.now());
     const sessions = await listSessions(WIN);
     check('opencode: 双路产出 2 会话（live + event-only）', sessions.length === 2, JSON.stringify(sessions.map((x) => x.sessionId)));
     const live = sessions.find((x) => x.sessionId === 'ses_live');
@@ -1338,7 +1348,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     fs.writeFileSync(path.join(projDir, 'sess3.jsonl'), 'not json at all\n{broken\n');
 
     process.env.CANNBOT_CC_DIR = path.join(tmp, 'cc-projects');
-    const { listSessions } = await import(path.join(ROOT, 'lib/report/sources/claude-code.mjs') + '?t=' + Date.now());
+    const { listSessions } = await importLocal('lib/report/sources/claude-code.mjs', '?t=' + Date.now());
     const sessions = await listSessions(WIN);
     check('claude-code: 恰 1 会话（窗口外/坏文件不产出）', sessions.length === 1, JSON.stringify(sessions.map((x) => x.sessionId)));
     const s = sessions[0];
@@ -1425,7 +1435,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     ].join('\n') + '\n');
 
     process.env.CANNBOT_CURSOR_DIR = path.join(tmp, 'cursor-projects');
-    const { listSessions } = await import(path.join(ROOT, 'lib/report/sources/cursor.mjs') + '?t=' + Date.now());
+    const { listSessions } = await importLocal('lib/report/sources/cursor.mjs', '?t=' + Date.now());
     const sessions = await listSessions(WIN);
     check('cursor: 产出 3 会话（空目录不产出）', sessions.length === 3, JSON.stringify(sessions.map((x) => x.sessionId)));
     const s1 = sessions.find((x) => x.sessionId === U1);
@@ -1509,7 +1519,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     process.env.CANNBOT_TODOS_FILE = path.join(tmp, 'todos.json'); // 读 gateway 写穿的最新状态
     process.env.CANNBOT_ZCODE_DB = path.join(tmp, 'no-such.db'); // 失败源降级路径
     process.env.CANNBOT_OPENCODE_DB = path.join(tmp, 'no-such.db');
-    const { collectMaterials } = await import(path.join(ROOT, 'lib/report/collect.mjs') + '?t=' + Date.now());
+    const { collectMaterials } = await importLocal('lib/report/collect.mjs', '?t=' + Date.now());
     const m = await collectMaterials(WIN);
     const projNames = m.projects.map((p) => p.name);
     check('collect: 双源归并出项目（real-proj / proj）', projNames.includes('real-proj') && projNames.includes('proj'), JSON.stringify(projNames));
@@ -1521,7 +1531,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     // 脱敏模式全覆盖（此前只测 sk- 一种；JWT 是 base64url 不是 hex，长 hex 兜不住它——
     // 而 CANNWork 恰是 JWT+VK 凭证链）。提取层 redact 是发给上游前的唯一真防线
     {
-      const { redact } = await import(path.join(ROOT, 'lib/report-prompts.mjs') + '?t=' + Date.now());
+      const { redact } = await importLocal('lib/report-prompts.mjs', '?t=' + Date.now());
       const samples = [
         ['JWT 三段式', 'token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c', 'eyJhbGciOi'],
         ['GitHub PAT', 'key ghp_0123456789abcdefghij0123456789 done', 'ghp_0123456789'],
@@ -1536,7 +1546,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       }
       // env 兼容层：PGW_ 优先、旧 CANNBOT_ 兜底（2026-11 更名过渡；smoke 全程用
       // CANNBOT_* 起 server 能跑通本身就是兜底路径的端到端证明，这里钉优先级）
-      const { envOf } = await import(path.join(ROOT, 'lib/env.mjs') + '?t=' + Date.now());
+      const { envOf } = await importLocal('lib/env.mjs', '?t=' + Date.now());
       process.env.PGW_ENVCOMPAT_TEST = 'new';
       process.env.CANNBOT_ENVCOMPAT_TEST = 'old';
       check('env: PGW_ 优先于 CANNBOT_', envOf('PGW_ENVCOMPAT_TEST') === 'new');
@@ -1578,7 +1588,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
 
   console.log('— 会话→待办归属（lib/report/attribute.mjs：模型输出解析，纯函数） —');
   {
-    const { parseAttribution, todoListBlock } = await import(path.join(ROOT, 'lib/report/attribute.mjs') + '?t=' + Date.now());
+    const { parseAttribution, todoListBlock } = await importLocal('lib/report/attribute.mjs', '?t=' + Date.now());
     const projects = [{ name: 'unigemm_sme' }, { name: 'kblas' }, { name: 'gateway' }];
     const todos = [
       { id: 'T1', title: 'unigemm int8 性能优化', project: '黄区', status: 'in_progress' },
@@ -1607,7 +1617,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
 
     // 远程待办（workbench.remoteProjects）：不在本机做，不参与归属候选。
     // 否则「黄区kblas int8问题单处理」会抢走本机 kblas 的会话——同名不同机器。
-    const { isRemoteTodo } = await import(path.join(ROOT, 'lib/report/attribute.mjs') + '?t=' + Date.now());
+    const { isRemoteTodo } = await importLocal('lib/report/attribute.mjs', '?t=' + Date.now());
     check('isRemoteTodo：project 命中远程标签 → true',
       isRemoteTodo({ project: '黄区' }, ['黄区']) === true);
     check('isRemoteTodo：project 不命中 / 为空 / 无标签配置 → false',
@@ -1637,7 +1647,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
 
     // userFinal 单元：待办行进 prompt 的形态（纯函数直测，不起 HTTP）
     {
-      const { PROMPTS, LIMITS } = await import(path.join(ROOT, 'lib/report-prompts.mjs') + '?t=' + Date.now());
+      const { PROMPTS, LIMITS } = await importLocal('lib/report-prompts.mjs', '?t=' + Date.now());
       // 证据分级：不依赖 agent 的工作（发邮件/开会/评审）没有会话素材，
       // 材料就是待办自身——它必须进正文，且备忘要标「需过滤」交给模型改写
       const base = { rangeText: 'x', projects: [], unassigned: { sessions: 0, summaryText: '' }, todos: { created: [], updated: [], completed: [] }, usage: {}, sourcesFailed: [] };
@@ -2039,8 +2049,10 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
         await sleep(500);
       }
       const roList = await (await fetch('http://127.0.0.1:6295/admin/report/list')).json();
-      check('落盘失败 → job failed 且错误可读（EACCES）', roJob.state === 'failed' && /EACCES|permission/i.test(roJob.error ?? ''), JSON.stringify(roJob).slice(0, 200));
-      check('落盘失败 → 历史列表无幽灵报告（内存回滚）', (roList.reports ?? []).length === 0, JSON.stringify(roList));
+      check('落盘失败 → job failed 且错误可读（EACCES；Windows 无只读目录语义时跳过）',
+        process.platform === 'win32' || (roJob.state === 'failed' && /EACCES|permission/i.test(roJob.error ?? '')), JSON.stringify(roJob).slice(0, 200));
+      check('落盘失败 → 历史列表无幽灵报告（Windows 无只读目录语义时跳过）',
+        process.platform === 'win32' || (roList.reports ?? []).length === 0, JSON.stringify(roList));
       fs.chmodSync(roDir, 0o755);
       gwRo.kill();
     }
@@ -2070,7 +2082,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     {
       const savedReports = process.env.CANNBOT_REPORTS_FILE;
       delete process.env.CANNBOT_REPORTS_FILE;
-      const { REPORTS_FILE } = await import(path.join(ROOT, 'lib/report/generate.mjs') + '?path=' + Date.now());
+      const { REPORTS_FILE } = await importLocal('lib/report/generate.mjs', '?path=' + Date.now());
       if (savedReports != null) process.env.CANNBOT_REPORTS_FILE = savedReports;
       check('reports.json 默认路径在服务根目录（非 lib/ 子目录）', path.dirname(REPORTS_FILE) === ROOT, REPORTS_FILE);
     }
@@ -2380,7 +2392,8 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const st = await (await fetch(`${GW}/admin/monitors`)).json();
     check('GET 状态：available 且两台屏各一节', st.available === true && st.monitors?.length === 2, JSON.stringify(st).slice(0, 200));
     // 网关不预设语义：名字留空时一律显示编号（屏=UUID 前 8 位，输入=「输入 N」）
-    check('GET 状态：未命名时输入显示编号 VCP 15', st.monitors.every((m) => m.ok && m.input === 15 && m.inputLabel === '输入 15'), JSON.stringify(st.monitors.map((m) => [m.input, m.inputLabel])));
+    check('GET 状态：未命名时输入显示编号 VCP 15',
+      st.monitors.every((m) => m.ok && m.input === 15 && m.inputLabel === '输入 15'), JSON.stringify(st.monitors.map((m) => [m.input, m.inputLabel])));
     check('GET 状态：未命名时屏显示 UUID 前 8 位', st.monitors.every((m) => m.id === m.uuid.slice(0, 8).toUpperCase() && m.label === m.id), JSON.stringify(st.monitors.map((m) => [m.id, m.label])));
     check('GET 状态：inputs 按配置顺序回传且未命名', st.inputs?.length === 2 && st.inputs[0].value === 15 && st.inputs[1].value === 21 && st.inputs.every((i) => i.label === `输入 ${i.value}`), JSON.stringify(st.inputs));
 
@@ -2388,7 +2401,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     // 节读取时直接忽略（不崩、不影响 inputs），管理台下次写盘顺手清掉。
     check('GET 状态：不再透出 hotkeys（系统热键功能已移除）', st.hotkeys === undefined, JSON.stringify(st.hotkeys));
     {
-      const cfgMod = await import(path.join(ROOT, 'lib/config.mjs') + '?hk1');
+      const cfgMod = await importLocal('lib/config.mjs', '?hk1');
       const parsed = cfgMod.normalizeMonitors({ inputs: [15, 21], hotkeys: [{ action: 'toggle', key: 'f13' }] });
       check('旧配置残留 hotkeys 节：归一化直接忽略，不影响 inputs 解析', parsed.hotkeys === undefined && parsed.inputs.length === 2, JSON.stringify(parsed));
     }
@@ -2515,7 +2528,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
         CANNBOT_LOG_FILE: path.join(tmp, 'proxy3.log'),
         CANNBOT_STATS_FILE: path.join(tmp, 'stats3.json'),
         CANNBOT_STATS_SYNC_FILE: path.join(tmp, 'stats3-sync.json'),
-        CANNBOT_M1DDC: path.join(ROOT, 'test/mock-m1ddc.mjs'),
+        CANNBOT_M1DDC: mockM1ddc,
         MOCK_M1DDC_STATE: path.join(tmp, 'mon-state.json'),
         MOCK_M1DDC_LOG: path.join(tmp, 'mon-log3.txt'),
       }, 'gateway-no-monitors');
@@ -2573,7 +2586,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('agent 待办 skill 存在（skills/workbench-todos/SKILL.md）', fs.existsSync(skillPath), skillPath);
     if (fs.existsSync(skillPath)) {
       const sk = fs.readFileSync(skillPath, 'utf8');
-      check('skill 有 name/description 前置元数据', /^---\nname: workbench-todos\ndescription: .+\n---/.test(sk));
+      check('skill 有 name/description 前置元数据', /^---\r?\nname: workbench-todos\r?\ndescription: .+\r?\n---/.test(sk));
       check('skill 的端点与字段与实现一致',
         sk.includes('/v1/todos') && sk.includes('/items') && sk.includes('/admin/config')
         && sk.includes('in_progress') && sk.includes('someday'));
@@ -2611,10 +2624,10 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const statsFile = path.join(tmp, 'stats-flush.json');
     const prevStats = process.env.CANNBOT_STATS_FILE;
     process.env.CANNBOT_STATS_FILE = statsFile;
-    const statsMod = await import(path.join(ROOT, 'lib/stats.mjs') + '?t=' + Date.now());
+    const statsMod = await importLocal('lib/stats.mjs', '?t=' + Date.now());
     statsMod.recordStats({ provider: 'p1', model: 'm1', status: 200, ms: 5, bytesIn: 10, bytesOut: 20, tin: 1, tout: 2 });
     statsMod.flushStats();
-    check('stats 原子落盘：文件存在且权限 0600', fs.existsSync(statsFile) && (fs.statSync(statsFile).mode & 0o777) === 0o600, fs.statSync(statsFile)?.mode?.toString(8));
+    check('stats 原子落盘：文件存在且权限 0600（Windows 跳过）', fs.existsSync(statsFile) && (process.platform === 'win32' || (fs.statSync(statsFile).mode & 0o777) === 0o600), fs.statSync(statsFile)?.mode?.toString(8));
     const flushed = JSON.parse(fs.readFileSync(statsFile, 'utf8'));
     check('stats 落盘内容含记账桶', flushed.days && Object.values(flushed.days)[0]?.providers?.p1?.models?.m1?.req === 1, JSON.stringify(flushed).slice(0, 120));
     // 写一半被 kill 模拟：flush 完成后目录无残留 tmp（rename 已原子换名）
@@ -2623,7 +2636,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     const statsBad = path.join(tmp, 'stats-bad.json');
     fs.writeFileSync(statsBad, '{not-json');
     process.env.CANNBOT_STATS_FILE = statsBad;
-    const statsBadMod = await import(path.join(ROOT, 'lib/stats.mjs') + '?t=' + Date.now() + 'b');
+    const statsBadMod = await importLocal('lib/stats.mjs', '?t=' + Date.now() + 'b');
     statsBadMod.recordStats({ provider: 'p1', model: 'm1', status: 200, ms: 5 });
     statsBadMod.flushStats();
     check('坏 stats.json：留 .bad 备份且内容原样', fs.existsSync(statsBad + '.bad') && fs.readFileSync(statsBad + '.bad', 'utf8') === '{not-json');

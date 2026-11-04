@@ -21,6 +21,7 @@ const ANTH_TOKEN = 'mock-token-anthropic';
 const ZHIPU_TOKEN = 'mock-token-zhipu';
 const KIMI_TOKEN = 'mock-token-kimi';
 const DUAL_TOKEN = 'mock-token-dual';
+const RESP_TOKEN = 'mock-token-responses';
 // 首屏额度端点用的凭证（与订阅转发用的 token 分开，避免两套语义互相污染）
 // 额度端点复用各自的订阅 token（真实世界也是同一枚 key），不做额外账号
 const KIMI_QUOTA_KEY = 'mock-token-kimi';
@@ -67,6 +68,58 @@ function openaiChatResult(echoText, model, usage) {
   };
 }
 
+function openaiToolResult(model) {
+  return {
+    id: 'cmpl-mock-tool',
+    object: 'chat.completion',
+    created: 1,
+    model,
+    choices: [{
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: 'call_mock_tool',
+          type: 'function',
+          function: { name: 'exec_command', arguments: '{"cmd":"Write-Output MOCK_TOOL"}' },
+        }],
+      },
+      finish_reason: 'tool_calls',
+    }],
+    usage: { prompt_tokens: 11, completion_tokens: 4 },
+  };
+}
+
+function nativeResponsesResult(body) {
+  return {
+    id: 'resp_mock',
+    object: 'response',
+    created_at: 1,
+    status: 'completed',
+    model: body.model,
+    output: [{
+      id: 'msg_mock_native',
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      phase: 'final_answer',
+      content: [{
+        type: 'output_text',
+        text: `NATIVE:${body.model}`,
+        annotations: [],
+      }],
+    }],
+    usage: {
+      input_tokens: 7,
+      input_tokens_details: { cached_tokens: 0 },
+      output_tokens: 3,
+      output_tokens_details: { reasoning_tokens: 0 },
+      total_tokens: 10,
+    },
+  };
+}
+
 function anthropicEcho(body, auth) {
   return {
     model: body.model,
@@ -95,6 +148,9 @@ const server = http.createServer(async (req, res) => {
 
   if (url === '/oai/v1/models') {
     return json(res, 200, { object: 'list', data: [{ id: 'mock-pro' }, { id: 'mock-flash' }, { id: 'shared-model' }] });
+  }
+  if (url === '/resnative/v1/models') {
+    return json(res, 200, { object: 'list', data: [{ id: 'native-model' }] });
   }
   if (url === '/anth/v1/models') {
     return json(res, 200, { data: [{ id: 'claude-mock', display_name: 'Claude Mock' }, { id: 'shared-model', display_name: 'Shared' }] });
@@ -144,6 +200,16 @@ const server = http.createServer(async (req, res) => {
   if (url === '/oai/v1/chat/completions') {
     if (auth !== `Bearer ${OAI_TOKEN}` && auth !== `Bearer ${DUAL_TOKEN}`) return json(res, 401, { error: { message: 'bad token', type: 'authentication_error' } });
     if (body.model === 'mock-500') return json(res, 500, { error: { message: 'mock 上游 5xx 演练' } }); // 报告失败口径测试用
+    if (body.model === 'mock-tool') {
+      if (!body.stream) return json(res, 200, openaiToolResult(body.model));
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ id: 'cmpl-mock-tool', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
+      chunk({ role: 'assistant', content: '' });
+      chunk({ tool_calls: [{ index: 0, id: 'call_mock_tool', type: 'function', function: { name: 'exec_command', arguments: '{"cmd":"Write-Output MOCK_TOOL"}' } }] });
+      chunk({}, 'tool_calls');
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
     // 报告重试演练：按 system prompt 区分两级（systemFinal 含「汇报助手」），模拟 kimi 式偶发空响应
     {
       const sys = (body.messages ?? []).find((m) => m?.role === 'system')?.content ?? '';
@@ -176,6 +242,23 @@ const server = http.createServer(async (req, res) => {
       res.write(`data: ${JSON.stringify({ id: 'cmpl-mock', object: 'chat.completion.chunk', choices: [], usage: { prompt_tokens: 9, completion_tokens: 12, prompt_tokens_details: { cached_tokens: 5 } } })}\n\n`);
     }
     res.write('data: [DONE]\n\n');
+    return res.end();
+  }
+
+  if (url === '/resnative/v1/responses') {
+    if (auth !== `Bearer ${RESP_TOKEN}`) {
+      return json(res, 401, { error: { message: 'bad token', type: 'authentication_error' } });
+    }
+    const result = nativeResponsesResult(body);
+    if (!body.stream) return json(res, 200, result);
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const ev = (event) => res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    const created = { ...result, status: 'in_progress', output: [] };
+    ev({ type: 'response.created', sequence_number: 0, response: created });
+    ev({ type: 'response.output_item.added', sequence_number: 1, output_index: 0, item: result.output[0] });
+    ev({ type: 'response.output_text.delta', sequence_number: 2, item_id: 'msg_mock_native', output_index: 0, content_index: 0, delta: `NATIVE:${body.model}` });
+    ev({ type: 'response.output_item.done', sequence_number: 3, output_index: 0, item: result.output[0] });
+    ev({ type: 'response.completed', sequence_number: 4, response: result });
     return res.end();
   }
 
