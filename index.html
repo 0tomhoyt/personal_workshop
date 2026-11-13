@@ -987,12 +987,14 @@
               <select id="fProto">
                 <option value="anthropic">anthropic（/v1/messages 原样直通，保真度最高）</option>
                 <option value="openai">openai（/v1/chat/completions）</option>
+                <option value="openai-responses">openai-responses（/v1/responses，Codex 原生直通）</option>
               </select></div>
             <div class="frow"><label>端点 baseUrl</label><input id="fBase" placeholder="https://api.kimi.com/coding/（尾部 /v1 会自动去掉）" autocomplete="off" spellcheck="false"></div>
             <div class="frow"><label>凭证类型</label>
               <select id="fAuthType">
                 <option value="static-token">静态 Token（API Key 型订阅）</option>
                 <option value="cannwork-jwt-vk">CANNWork JWT+VK 链</option>
+                <option value="copilot-oauth">GitHub Copilot OAuth</option>
               </select></div>
             <div id="authStatic">
               <div class="frow"><label>Token</label><input id="fToken" type="password" placeholder="粘贴订阅 API Key" autocomplete="new-password">
@@ -1000,10 +1002,14 @@
               <div class="frow"><label>环境变量名</label><input id="fTokenEnv" placeholder="KIMI_API_KEY（可选；内联 token 优先）" autocomplete="off" spellcheck="false"></div>
               <div class="frow"><label>Token 文件</label><input id="fTokenFile" placeholder="/path/to/key（可选）" autocomplete="off" spellcheck="false"></div>
               <div class="frow"><label>JSON 取值路径</label><input id="fTokenJsonPath" placeholder="a.b.c（配合 Token 文件，可选）" autocomplete="off" spellcheck="false"></div>
+              <div class="frow"><label>Codex Provider</label><input id="fCodexProvider" placeholder="deepseek（从 ~/.codex/config.toml 复用 token，可选）" autocomplete="off" spellcheck="false"></div>
             </div>
             <div id="authCannwork" hidden>
               <div class="frow"><label>session.json</label><input id="fSessionFile" placeholder="缺省 ~/.local/share/opencode/session.json" autocomplete="off" spellcheck="false"></div>
               <div class="frow"><label>auth.json</label><input id="fAuthJsonFile" placeholder="缺省 ~/.local/share/opencode/auth.json" autocomplete="off" spellcheck="false"></div>
+            </div>
+            <div id="authCopilot" hidden>
+              <div class="frow"><label>认证文件</label><input id="fCopilotFile" placeholder="缺省 copilot-auth.json（需从 Pi 复制 OAuth 凭证）" autocomplete="off" spellcheck="false"></div>
             </div>
             <div class="frow"><label>模型列表</label>
               <select id="fModelSource">
@@ -3087,8 +3093,11 @@ function renderProvCfg() {
 
 function syncAuthFields() {
   const st = $('fAuthType').value === 'static-token';
+  const cw = $('fAuthType').value === 'cannwork-jwt-vk';
+  const cp = $('fAuthType').value === 'copilot-oauth';
   $('authStatic').hidden = !st;
-  $('authCannwork').hidden = st;
+  $('authCannwork').hidden = !cw;
+  $('authCopilot').hidden = !cp;
 }
 function syncModelFields() { $('modelStatic').hidden = $('fModelSource').value !== 'static'; }
 $('fAuthType').onchange = syncAuthFields;
@@ -3101,14 +3110,16 @@ function openProvForm(p) {
   $('fName').value = p?.name ?? '';
   $('fProto').value = p?.protocol ?? 'anthropic';
   $('fBase').value = p?.baseUrl ?? '';
-  $('fAuthType').value = p?.auth?.type === 'cannwork-jwt-vk' ? 'cannwork-jwt-vk' : 'static-token';
+  $('fAuthType').value = ['cannwork-jwt-vk','copilot-oauth'].includes(p?.auth?.type) ? p.auth.type : 'static-token';
   $('fToken').value = '';
   $('fToken').placeholder = p?.auth?.tokenSet ? '留空 = 沿用已保存的 token' : '粘贴订阅 API Key';
   $('fTokenEnv').value = p?.auth?.tokenEnv ?? '';
   $('fTokenFile').value = p?.auth?.tokenFile ?? '';
   $('fTokenJsonPath').value = p?.auth?.tokenJsonPath ?? '';
+  $('fCodexProvider').value = p?.auth?.codexProvider ?? '';
   $('fSessionFile').value = p?.auth?.sessionFile ?? '';
   $('fAuthJsonFile').value = p?.auth?.authJsonFile ?? '';
+  $('fCopilotFile').value = p?.auth?.tokenFile ?? '';
   $('fModelSource').value = p?.models?.source === 'api' ? 'api' : 'static';
   $('fModels').value = (p?.models?.list ?? []).map((m) =>
     typeof m === 'string' ? m : (m.title ? `${m.id} | ${m.title}` : m.id)).join('\n');
@@ -3127,15 +3138,18 @@ function collectProvForm() {
   if (auth.type === 'static-token') {
     const t = $('fToken').value.trim();
     if (t) auth.token = t;
-    for (const [el, key] of [['fTokenEnv', 'tokenEnv'], ['fTokenFile', 'tokenFile'], ['fTokenJsonPath', 'tokenJsonPath']]) {
+    for (const [el, key] of [['fTokenEnv', 'tokenEnv'], ['fTokenFile', 'tokenFile'], ['fTokenJsonPath', 'tokenJsonPath'], ['fCodexProvider', 'codexProvider']]) {
       const v = $(el).value.trim();
       if (v) auth[key] = v;
     }
-  } else {
+  } else if (auth.type === 'cannwork-jwt-vk') {
     for (const [el, key] of [['fSessionFile', 'sessionFile'], ['fAuthJsonFile', 'authJsonFile']]) {
       const v = $(el).value.trim();
       if (v) auth[key] = v;
     }
+  } else {
+    const f = $('fCopilotFile').value.trim();
+    if (f) auth.tokenFile = f;
   }
   const models = { source: $('fModelSource').value };
   if (models.source === 'static') models.list = $('fModels').value;
